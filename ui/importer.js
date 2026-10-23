@@ -139,16 +139,23 @@ function showReport(ctx, report, skipped) {
  */
 export async function openImportDialog(ctx, options = {}) {
   const { repository, nativeWorlds } = ctx;
+  const dialogTitle = options.title ?? '导入原生世界书';
+  // 先把浮层开出来，再去问宿主"有哪些原生书"。否则请求慢一点（或卡住）时，
+  // 用户点了按钮什么也看不到——这正是最难描述的那种故障："点了没反应"。
+  ctx.openOverlay(dialogTitle, [el('p', { class: 'ilb-empty', text: '正在读取原生世界书列表…' })]);
   const settings = repository.getSettings();
   let files;
   try {
     files = await nativeWorlds.list();
   } catch (err) {
-    ctx.toast(`读不到原生世界书列表：${err?.message ?? err}`, 'error');
+    const message = `读不到原生世界书列表：${err?.message ?? err}`;
+    ctx.toast(message, 'error');
+    ctx.openOverlay(dialogTitle, [el('p', { class: 'ilb-error', text: message })]);
     return;
   }
   if (!files.length) {
     ctx.toast('原生世界书目录里没有文件', 'warn');
+    ctx.openOverlay(dialogTitle, [el('p', { class: 'ilb-empty', text: '原生世界书目录里没有文件。先在 SillyTavern 里建一本，再回来导入。' })]);
     return;
   }
 

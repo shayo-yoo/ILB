@@ -64,6 +64,40 @@ export function closeOverlay() {
 }
 
 /**
+ * 自愈：如果这一层浮层的样式没生效（浏览器缓存了旧 CSS、主题把它覆盖掉、
+ * 选择器被别的扩展改掉），浮层可能变成 0 尺寸或被 display:none 藏起来。
+ * 那时用户看到的就是"点了按钮没有任何反应"，而控制台一片安静——最难查的那种坏法。
+ * 所以这里不猜，量一次：真坏了就用内联样式把它撑起来，至少让人能看见内容。
+ */
+function ensureVisible(overlay, modal) {
+  if (typeof getComputedStyle !== 'function') return;
+  const check = () => {
+    try {
+      const rect = overlay.getBoundingClientRect();
+      const style = getComputedStyle(overlay);
+      const broken =
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.position !== 'fixed' ||
+        rect.width < 8 ||
+        rect.height < 8;
+      if (!broken) return;
+      console.warn('[ILB] 浮层样式没有生效（可能加载了旧的 style.css），已用内联样式兜底。建议强制刷新页面。');
+      overlay.style.cssText =
+        'position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;' +
+        'overflow-y:auto;box-sizing:border-box;padding:16px;background:rgba(0,0,0,0.55);z-index:2147483000';
+      modal.style.cssText =
+        'margin:auto;width:100%;max-width:min(92vw,640px);max-height:calc(100vh - 32px);overflow-y:auto;' +
+        'background:var(--SmartThemeBlurTintColor,#1e1e1e);color:inherit;border:1px solid #555;border-radius:8px';
+    } catch {
+      /* 量不出来就算了，不能因为兜底逻辑把浮层本身弄坏 */
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(check));
+  else setTimeout(check, 0);
+}
+
+/**
  * 弹一层浮层。节点自备，这里只负责"居中、可关、Esc 能走"。
  *
  * 关闭按钮用"×"而不是文字"关闭"：手机上文字按钮要么被挤到换行，
@@ -108,6 +142,8 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
     // 手机下落层后面的页面还能滚，手指一划就把浮层顶走；锁住（只在窄屏生效，见 style.css）。
     document.body.classList.add('ilb-locked');
     if (typeof modal.focus === 'function') modal.focus({ preventScroll: true });
+    console.info(`[ILB] 浮层已打开：${title || '(无标题)'}`);
+    ensureVisible(overlay, modal);
   } catch (err) {
     console.warn('[ILB] 浮层没能挂上', err);
   }

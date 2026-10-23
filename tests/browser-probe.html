@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ILB 浮层真机探针</title>
+  <!-- 用真实浏览器加载真实的 style.css，回答"浮层到底有没有被显示出来"。
+       不是单元测试的替代品，而是补上"假 DOM 量不出布局"这一块。 -->
+  <link rel="stylesheet" href="../style.css">
+  <style>
+    body { margin: 0; padding: 24px; font: 14px/1.5 system-ui, sans-serif; background: #14141a; color: #ddd; }
+    #result { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; }
+    .long { height: 40px; }
+  </style>
+</head>
+<body>
+  <h1>ILB 浮层探针</h1>
+  <p>这个页面只做一件事：用真的浏览器量一量浮层的位置和尺寸。没有 SillyTavern。</p>
+  <pre id="result">running…</pre>
+
+  <script type="module">
+    import { openOverlay, closeOverlay } from '../ui/help.js';
+
+    const out = [];
+    const log = (line) => out.push(line);
+
+    function measure(label, pick) {
+      const el = document.querySelector(pick);
+      if (!el) return log(`${label}: 找不到元素 ${pick}`);
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      log(
+        `${label}: x=${Math.round(r.x)} y=${Math.round(r.y)} w=${Math.round(r.width)} h=${Math.round(r.height)} ` +
+        `display=${cs.display} position=${cs.position} z=${cs.zIndex} visibility=${cs.visibility} opacity=${cs.opacity}`,
+      );
+      return { el, rect: r, cs };
+    }
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    log(`viewport: ${vw}×${vh}`);
+
+    // 造一个"内容很长"的导入式浮层：正是用户报告点开却看不到的那种
+    const nodes = [];
+    for (let i = 0; i < 24; i += 1) nodes.push(Object.assign(document.createElement('div'), { classList: 'long', textContent: `第 ${i + 1} 本世界书` }));
+    nodes.forEach((n) => n.classList.add('long'));
+    const body = document.createElement('div');
+    body.className = 'ilb-modal-body';
+    nodes.forEach((n) => body.appendChild(n));
+    const foot = document.createElement('div');
+    foot.className = 'ilb-modal-foot';
+    foot.textContent = '导入选中的 12 本';
+    body.appendChild(foot);
+    const head = document.createElement('div');
+    head.className = 'ilb-modal-head';
+    head.innerHTML = '<strong class="ilb-modal-title">导入原生世界书</strong><button class="ilb-modal-x" aria-label="关闭">×</button>';
+    const modal = document.createElement('div');
+    modal.className = 'ilb-modal';
+    modal.appendChild(head);
+    modal.appendChild(body);
+    const overlay = document.createElement('div');
+    overlay.className = 'ilb-overlay';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const ov = measure('overlay', '.ilb-overlay');
+    measure('modal', '.ilb-modal');
+    const x = measure('close-button', '.ilb-modal-x');
+    measure('head', '.ilb-modal-head');
+
+    if (x) {
+      const inside = x.rect.top >= 0 && x.rect.bottom <= vh && x.rect.left >= 0 && x.rect.right <= vw;
+      log(`关闭按钮在视口内: ${inside ? '是' : '否'}`);
+      log(`关闭按钮尺寸: ${Math.round(x.rect.width)}×${Math.round(x.rect.height)}（触控建议 ≥44）`);
+    }
+    if (ov) {
+      const covers = Math.round(ov.rect.width) >= vw - 1 && Math.round(ov.rect.height) >= vh - 1;
+      log(`浮层铺满视口: ${covers ? '是' : '否'}`);
+    }
+
+    // 再走一次真正的 openOverlay，确认它自己的结果一样
+    closeOverlay();
+    document.querySelectorAll('.ilb-overlay').forEach((n) => n.remove());
+    openOverlay({ title: '真·openOverlay', nodes: [document.createElement('p')] });
+    const real = measure('openOverlay 结果', '.ilb-overlay');
+
+    const verdict =
+      real && real.rect.width >= vw - 1 && real.rect.height >= vh - 1 && getComputedStyle(real.el).display !== 'none'
+        ? 'PASS'
+        : 'FAIL';
+    log(`判定: ${verdict}`);
+
+    // 再跑一次自检，确认它在真实浏览器里也能给出正确结论
+    closeOverlay();
+    document.querySelectorAll('.ilb-overlay').forEach((n) => n.remove());
+    const { runSelfTest } = await import('../ui/selftest.js');
+    const checks = runSelfTest();
+    log('--- 自检 ---');
+    checks.forEach((c) => log(`${c.ok ? '✓' : '✗'} ${c.text}`));
+    const unexpected = checks.filter((c) => !c.ok && !/window\.ILB|管线|存档/.test(c.text));
+    log(`自检里非预期的失败: ${unexpected.length}`);
+    document.getElementById('result').textContent = out.join('\n');
+    document.title = `ILB-PROBE ${verdict} ${unexpected.length === 0 ? 'SELFTEST-OK' : 'SELFTEST-BAD'}`;
+    const pre = document.getElementById('result');
+    pre.setAttribute('data-verdict', verdict);
+    pre.setAttribute('data-selftest', unexpected.length === 0 ? 'ok' : 'bad');
+  </script>
+</body>
+</html>

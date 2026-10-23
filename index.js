@@ -16,9 +16,10 @@ import { createPanel } from './ui/panel.js';
 import { createSettingsCard } from './ui/settings-card.js';
 import { createFloatingWindow } from './ui/floating.js';
 import { loadHelp } from './ui/help.js';
+import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.4.2';
+const VERSION = '0.4.3';
 
 function notify(message, kind = 'info') {
   try {
@@ -229,6 +230,7 @@ async function boot() {
     card,
     describeLastRun: () => pipeline.describeLastRun(),
     describeUi: () => floating.describe(),
+    selftest: () => runSelfTest(),
     runOnce,
   };
 
@@ -236,6 +238,24 @@ async function boot() {
 }
 
 function start() {
+  // 让坏了的东西出声。点击处理器里抛的错、没 await 的 promise 失败，本来只会安静地
+  // 写进控制台，用户看到的是"点了按钮没有任何反应"——最难描述、也最难查的一类故障。
+  // 这里兜一层：至少 toast 一句，原始错误仍然完整留在控制台。
+  if (!globalThis.__ILB_ERROR_HOOKED) {
+    globalThis.__ILB_ERROR_HOOKED = true;
+    const report = (label, err) => {
+      const text = (err && (err.message || String(err))) || String(err);
+      notify(`ILB 出错了：${text}（详情见浏览器控制台）`, 'error');
+      console.error(`[ILB] ${label}`, err);
+    };
+    window.addEventListener('error', (event) => {
+      if (event && event.error) report('未捕获错误', event.error);
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      report('未处理的异步错误', event && event.reason);
+    });
+  }
+
   boot().catch((err) => {
     console.error('[ILB] 启动时出现未捕获错误', err);
   });

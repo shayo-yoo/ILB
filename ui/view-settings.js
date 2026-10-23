@@ -3,6 +3,7 @@
 import { DEFAULT_SETTINGS } from '../core/settings-defaults.js';
 import { IMPORT_POLICIES, IMPORT_POLICY_LABEL } from '../core/import-plan.js';
 import { el, field, hint, button, checkbox, selectBox, badge } from './widgets.js';
+import { showSelfTest } from './selftest.js';
 
 const POLICY_HINT = {
   ask: '每次导入都先问你（默认）',
@@ -109,6 +110,12 @@ export function renderSettings(ctx) {
         el('span', { class: 'ilb-sub', text: '在注入内容之间加分隔线' }),
       ]),
       hint('有些模型对分隔线比较敏感。默认不加。'),
+    ]),
+
+    el('div', { class: 'ilb-card' }, [
+      el('h5', { class: 'ilb-section-title', text: '出问题时' }),
+      el('p', { class: 'ilb-hint', text: '如果点了按钮没有反应、或者界面看着不对劲，先点这里。它会当场检查"样式有没有加载、浮层能不能开、宿主有没有接上"，并给出可以整段复制的结论。' }),
+      button('运行自检', () => showSelfTest(), { primary: true }),
     ]),
 
     hint('这些设置只影响"怎么判定、怎么注入"，不会改动你的书和规则本身。'),
