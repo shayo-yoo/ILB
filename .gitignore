@@ -12,3 +12,6 @@ desktop.ini
 *.log
 *.tmp
 *.bak
+
+# 浏览器探针生成的量测结果（每次跑都会变，不进版本库）
+tests/last-report.json
