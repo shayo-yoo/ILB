@@ -93,8 +93,83 @@ function syncLayoutClass() {
 }
 
 /**
+ * 给浮层套一套"内置样式"：不依赖 style.css，也不用主题变量以外的东西。
+ * 为什么需要这一步：只修好浮层的几何还不够。用户报过"不薄了，但点了什么都没显示"——
+ * 那一层浮层与弹窗其实都开出来了、位置也对，只是**背景是透明的、边框和文字颜色也丢了**，
+ * 于是在深色聊天页上看过去就像什么都没发生。判断"看不看得见"不能只量尺寸，还要看底色。
+ */
+function applySkin(overlay, modal, isMobile, why) {
+  console.warn(`[ILB] 浮层样式没有生效（${why}），已用内置样式兜底。若反复出现，说明 style.css 没有被加载。`);
+  overlay.style.position = 'fixed';
+  overlay.style.inset = '0';
+  overlay.style.display = 'flex';
+  overlay.style.justifyContent = 'center';
+  overlay.style.alignItems = isMobile ? 'flex-end' : 'flex-start';
+  overlay.style.padding = isMobile ? '0' : '16px';
+  overlay.style.boxSizing = 'border-box';
+  overlay.style.overflowY = 'auto';
+  overlay.style.background = 'rgba(0,0,0,0.55)';
+  overlay.style.zIndex = '2147483000';
+
+  modal.style.margin = 'auto';
+  modal.style.width = '100%';
+  modal.style.maxWidth = isMobile ? '100%' : 'min(92vw, 640px)';
+  modal.style.minHeight = isMobile ? '45vh' : '160px';
+  modal.style.maxHeight = isMobile ? 'calc(100vh - 12px)' : 'calc(100vh - 32px)';
+  modal.style.display = 'flex';
+  modal.style.flexDirection = 'column';
+  modal.style.overflow = 'hidden';
+  modal.style.background = 'var(--SmartThemeBlurTintColor, #1e1e1e)';
+  modal.style.color = 'var(--SmartThemeBodyColor, #eaeaea)';
+  modal.style.border = '1px solid rgba(255,255,255,0.25)';
+  modal.style.borderRadius = isMobile ? '14px 14px 0 0' : '8px';
+  modal.style.boxShadow = '0 8px 32px rgba(0,0,0,0.5)';
+
+  // 头、正文、关闭按钮也补上最低限度：只给弹窗加底色的话，用户会看到一块
+  // 有底色的板子里挤着没有间距的文字，还是会觉得"没显示好"。
+  const head = modal.querySelector('.ilb-modal-head');
+  if (head) {
+    head.style.display = 'flex';
+    head.style.alignItems = 'center';
+    head.style.justifyContent = 'space-between';
+    head.style.gap = '8px';
+    head.style.padding = '10px 12px';
+    head.style.borderBottom = '1px solid rgba(255,255,255,0.15)';
+  }
+  const body = modal.querySelector('.ilb-modal-body');
+  if (body) {
+    body.style.padding = '12px';
+    body.style.flex = '1 1 auto';
+    body.style.minHeight = '0';
+    body.style.overflowY = 'auto';
+  }
+  const x = modal.querySelector('.ilb-modal-x');
+  if (x) {
+    x.style.fontSize = '22px';
+    x.style.lineHeight = '1';
+    x.style.background = 'transparent';
+    x.style.border = '0';
+    x.style.color = 'inherit';
+    x.style.padding = '8px 10px';
+    x.style.cursor = 'pointer';
+  }
+}
+
+/** 背景是不是"什么都没有"。不同浏览器对透明色的写法不一样，所以不比较字符串相等。 */
+function isTransparentBackground(value) {
+  if (!value) return true;
+  if (value === 'transparent') return true;
+  const m = /rgba?\(([^)]+)\)/.exec(value);
+  if (!m) return false;
+  const parts = m[1].split(',').map((s) => Number.parseFloat(s.trim()));
+  if (parts.length < 3) return false;
+  return parts.length === 4 ? !(parts[3] > 0.01) : false;
+}
+
+/**
  * 自愈：如果这一层浮层的样式没生效（浏览器缓存了旧 CSS、主题把它覆盖掉、
- * 选择器被别的扩展改掉），浮层可能变成 0 尺寸或被 display:none 藏起来。
+ * 选择器被别的扩展改掉），浮层可能变成 0 尺寸、被 display:none 藏起来、或者
+ * 干脆变成"透明的一层"——位置尺寸都对，但看不见。
  * 那时用户看到的就是"点了按钮没有任何反应"，而控制台一片安静——最难查的那种坏法。
  * 所以这里不猜，量一次：真坏了就用内联样式把它撑起来，至少让人能看见内容。
  */
@@ -115,19 +190,7 @@ function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
       if (rect.width < 8) reasons.push(`宽 ${Math.round(rect.width)}px`);
       if (rect.height < 8) reasons.push(`高 ${Math.round(rect.height)}px`);
       if (reasons.length > 0) {
-        console.warn(
-          `[ILB] 浮层样式没有生效（${reasons.join('，')}），已用内联样式兜底。建议强制刷新页面。`,
-        );
-        overlay.style.cssText =
-          'position:fixed;inset:0;display:flex;justify-content:center;overflow-y:auto;box-sizing:border-box;' +
-          'background:rgba(0,0,0,0.55);z-index:2147483000;' +
-          (isMobile ? 'align-items:flex-end;padding:0' : 'align-items:flex-start;padding:16px');
-        modal.style.cssText =
-          'margin:auto;width:100%;overflow-y:auto;color:inherit;' +
-          'background:var(--SmartThemeBlurTintColor,#1e1e1e);border:1px solid #555;' +
-          (isMobile
-            ? 'max-width:100%;min-height:45vh;max-height:calc(100vh - 12px);border-radius:14px 14px 0 0;'
-            : 'max-width:min(92vw,640px);min-height:160px;max-height:calc(100vh - 32px);border-radius:8px;');
+        applySkin(overlay, modal, isMobile, reasons.join('，'));
         return;
       }
 
@@ -144,6 +207,19 @@ function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
         );
         modal.style.minHeight = floor;
       }
+
+      // 第四种坏法：弹窗"在，但看不见"。尺寸可能完全正常，只是底色、边框、
+      // 文字颜色全是默认值——在深色页面上就是一片透明。用户原话：
+      // "现在不是一小条了，但是点击按钮后，没有页面弹出，或者单纯没有显示。"
+      const modalStyle = getComputedStyle(modal);
+      const modalReasons = [];
+      if (isTransparentBackground(modalStyle.backgroundColor)) {
+        modalReasons.push(`弹窗背景是透明的（${modalStyle.backgroundColor}）`);
+      }
+      if (modalRect.width < 40) modalReasons.push(`弹窗宽 ${Math.round(modalRect.width)}px`);
+      if (modalRect.height < 8) modalReasons.push(`弹窗高 ${Math.round(modalRect.height)}px`);
+      if (modalReasons.length > 0) applySkin(overlay, modal, isMobile, modalReasons.join('，'));
+
       if (bodyNode && bodyNode.children && bodyNode.children.length === 0) {
         bodyNode.appendChild(el('p', {
           class: 'ilb-empty',

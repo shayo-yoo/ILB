@@ -15,6 +15,44 @@
 
 ---
 
+## v0.4.8-code · 2026-10-24 · "渲染出来了"不等于"看得见"：给浮层准备一套不依赖样式表的皮肤（含规格 v2.5.5）
+
+**一句话**：v0.4.7 之后用户回报"不是一小条了，但是点击按钮后，没有页面弹出，或者单纯没有显示"。查下来是上一轮只修好了"浮层看不看得见"（内联几何），却没人管"**弹窗**看不看得见"：几何与尺寸全对，但底色、边框、文字颜色仍来自那份**没生效的样式表**，屏幕上是"透明容器里套一个透明盒子"。于是补一套内置皮肤，并让自检把两个底色也报出来。
+
+**修正**
+
+| 位置 | 内容 |
+|---|---|
+| `ui/help.js` | 新增 `applySkin(overlay, modal, isMobile, why)`：不依赖 `style.css` 的最小皮肤——浮层半透明黑底与层级；弹窗 `display:flex` 纵排、背景 `var(--SmartThemeBlurTintColor,#1e1e1e)`、文字 `var(--SmartThemeBodyColor,#eaeaea)`、边框、圆角、阴影、`min-height`（手机 `45vh` / 电脑 `160px`）、`max-height`、`overflow:hidden`；标题栏左右分布与下边框；正文区内边距与滚动；关闭按钮最小可点面积 |
+| `ui/help.js` | 新增 `isTransparentBackground(value)`：不用字符串相等（`transparent` 与 `rgba(0,0,0,0)` 写法不同），解析 `rgb()`/`rgba()`，四分量要求 alpha > 0.01 |
+| `ui/help.js` | `ensureVisible` 增加"看得见"判定：①浮层尺寸/定位都对但**背景透明** → 套皮肤并 return ②通过薄条检查后，弹窗背景透明 / 宽 < 40 / 高 < 8 → 套皮肤；全部通过才 `console.debug` 记一行"浮层可见性检查通过：弹窗 W×H，背景 …，layout" |
+| `ui/help.js` | 兜底提示从"已用内联样式兜底"改为"浮层样式没有生效（命中的具体项），已用内置样式兜底。若反复出现，说明 style.css 没有被加载" |
+| `ui/selftest.js` | 新增两条：`浮层底色 rgba(...)`、`弹窗底色 rgb(...)`，透明即判问题；并加本地 `isTransparent()` 辅助 |
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `tests/nocss-probe.html` | 真实浏览器探针：**故意不加载** `../style.css`，只 import `ui/help.js`，打开带标题与两段正文的浮层，等 600ms 后量尺寸与两个底色，断言八条（铺满 / 浮层有底色 / 弹窗有底色 / 弹窗高 ≥120 / 宽 ≥min(280, 视口-40) / 正文在 / 关闭按钮在 / 控制台说明原因），`POST /report` 回传 |
+| `tests/selftest-probe.html` | 断言增加"报出浮层底色""报出弹窗底色"两条 |
+
+**实测（真实 Chrome，`--headless=new`，静态服务器 `node tests/serve.mjs 8794`）**
+
+| 项 | 结果 |
+|---|---|
+| `tests/nocss-probe.html` @390×844（视口 500×693） | **PASS**：浮层 500×693 背景 `rgba(0,0,0,0.55)` `position=fixed`；弹窗 500×314 背景 `rgb(30,30,30)` 边框 1px；正文 2 段；八条 ✓ |
+| `tests/selftest-probe.html` | **PASS**：`style.css 里数到 144 条 .ilb- 规则`、`弹窗高度 314px`、`浮层底色 rgba(0, 0, 0, 0.55)`、`弹窗底色 rgb(30, 30, 30)` |
+| `tests/sizing-probe.html` @390×844 | **PASS**：`emptyH=314`、`inlineMin=45vh`，warns 只有预期的"正文是空的"——**样式表正常时没有误触发皮肤兜底** |
+| `node --test tests/*.test.mjs` / `linkcheck` / `smoke-dom` | 102/102、37 模块全通过、17 步 0 失败 |
+
+**仍未被证明**
+
+- 真实 SillyTavern + SillyDroid 里 `style.css` 到底有没有加载：这次只是证明了"没加载也不会看不见"，没有证明"一定会加载"。用户自检里的两个底色能直接分辨。
+- 主题变量 `--SmartThemeBlurTintColor` / `--SmartThemeBodyColor` 缺失时退回 `#1e1e1e` / `#eaeaea` 的观感只在 Chromium 里看过。
+- 皮肤兜底的触发条件用的是 `getComputedStyle`，在极旧 WebView 上的表现未验证（已用 `typeof getComputedStyle !== 'function'` 防御，但没实测）。
+
+---
+
 ## v0.4.7-code · 2026-10-24 · 兜底自己也掉了链子：把"绝不能失效"的四条几何内联钉死（含规格 v2.5.4）
 
 **一句话**：用户回报浮层依旧只有顶上很薄一排，并贴出了那层浮层的 DOM——浮层与弹窗上带着整串 `style="position: fixed; inset: 0px; …"`。这串内联样式本身就是证据：说明当时走的是 **"样式没生效 → 内联兜底"** 这条路，而当时的兜底**没有写 `min-height`**，于是兜底把用户送回了"一条缝"。教训不是"再调一次 CSS"，而是：**兜底必须比样式表更保守地保证"看得见"**。

@@ -83,6 +83,13 @@ import { el } from './dom.js';
           Boolean(modal.style.minHeight),
           modal.style.minHeight ? `已就地固定最小高度 ${modal.style.minHeight}` : '没有就地固定最小高度（只靠样式表）',
         );
+
+        // 3.6) "看得见"不等于"尺寸对"。用户报过"不薄了，但点了什么都没显示"：
+        // 尺寸全对、位置也对，只是底色是透明的。所以底色也当成一条检查。
+        const overlayBg = getComputedStyle(overlay).backgroundColor;
+        const modalBg = getComputedStyle(modal).backgroundColor;
+        add(!isTransparent(overlayBg), `浮层底色 ${overlayBg}${isTransparent(overlayBg) ? '（透明，等于没开）' : ''}`);
+        add(!isTransparent(modalBg), `弹窗底色 ${modalBg}${isTransparent(modalBg) ? '（透明，等于没显示）' : ''}`);
       }
 
       // 最容易被忽略的一种坏法：浮层开出来了，但被别的东西盖在上面。
@@ -131,8 +138,18 @@ export function showSelfTest() {
   return lines;
 }
 
-/** 把"盖住浮层的那个东西"描述成人能看懂的样子，便于用户回报。 */
-function describeNode(node) {
+/** 背景是不是"什么都没有"。透明色在不同浏览器里写法不同，不比较字符串相等。 */
+function isTransparent(value) {
+  if (!value) return true;
+  if (value === 'transparent') return true;
+  const m = /rgba?\(([^)]+)\)/.exec(value);
+  if (!m) return false;
+  const parts = m[1].split(',').map((s) => Number.parseFloat(s.trim()));
+  if (parts.length < 3) return false;
+  return parts.length === 4 ? !(parts[3] > 0.01) : false;
+}
+
+/** 把"盖住浮层的那个东西"描述成人能看懂的样子，便于用户回报。 */function describeNode(node) {
   if (!node || node.nodeType !== 1) return '未知元素';
   const id = node.id ? `#${node.id}` : '';
   const cls = typeof node.className === 'string' && node.className.trim()

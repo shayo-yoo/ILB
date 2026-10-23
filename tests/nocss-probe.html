@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ILB 无样式探针</title>
+  <!-- 故意**不**加载 ../style.css：复现"样式表没生效"时的浮层 -->
+  <style>
+    body { background: #101010; color: #ddd; font: 14px/1.6 system-ui, sans-serif; padding: 16px; }
+    .pass { color: #6f6; }
+    .fail { color: #f66; }
+  </style>
+</head>
+<body>
+  <h1>无样式探针</h1>
+  <p>这一页<strong>没有</strong>引入 <code>style.css</code>。它会打开一层浮层，检查"用户到底看不看得见"：
+    浮层有没有底色、弹窗有没有底色与尺寸、正文文字在不在。</p>
+  <pre id="out"></pre>
+  <pre id="result"></pre>
+
+  <script type="module">
+    import { openOverlay } from '../ui/help.js';
+    import { el } from '../ui/dom.js';
+
+    const out = document.getElementById('out');
+    const resultEl = document.getElementById('result');
+    const lines = [];
+    const warns = [];
+    const warn0 = console.warn.bind(console);
+    console.warn = (...args) => {
+      warns.push(args.map((a) => String(a)).join(' '));
+      warn0(...args);
+    };
+
+    function say(line) {
+      lines.push(line);
+      out.textContent = lines.join('\n');
+      console.log(line);
+    }
+    function report(payload) {
+      try {
+        fetch('/report', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        say(`回报失败：${err && err.message}`);
+      }
+    }
+    const transparent = (value) => {
+      if (!value) return true;
+      if (value === 'transparent') return true;
+      const m = /rgba?\(([^)]+)\)/.exec(value);
+      if (!m) return false;
+      const p = m[1].split(',').map((s) => Number.parseFloat(s.trim()));
+      return p.length === 4 ? !(p[3] > 0.01) : false;
+    };
+
+    async function main() {
+      openOverlay({
+        title: '检查原件',
+        nodes: [
+          el('p', { text: '这一层浮层是在没有 style.css 的情况下打开的。' }),
+          el('p', { text: '如果你能看到这行字和右侧的 ×，说明兜底样式生效了。' }),
+        ],
+      });
+
+      // 自愈在两次 rAF（或 400ms 定时器）之后才跑，所以等够再量。
+      await new Promise((r) => setTimeout(r, 600));
+
+      const overlay = document.querySelector('.ilb-overlay');
+      const modal = document.querySelector('.ilb-modal');
+      const body = document.querySelector('.ilb-modal-body');
+      if (!overlay || !modal) {
+        say('✗ 浮层没有出现在页面里');
+        report({ pass: false, reason: 'no-overlay' });
+        return;
+      }
+      const or = overlay.getBoundingClientRect();
+      const mr = modal.getBoundingClientRect();
+      const ocs = getComputedStyle(overlay);
+      const mcs = getComputedStyle(modal);
+
+      say(`视口 ${window.innerWidth}x${window.innerHeight}`);
+      say(`浮层 ${Math.round(or.width)}x${Math.round(or.height)} 背景=${ocs.backgroundColor} position=${ocs.position}`);
+      say(`弹窗 ${Math.round(mr.width)}x${Math.round(mr.height)} 背景=${mcs.backgroundColor} 边框=${mcs.borderTopWidth}`);
+      say(`正文 ${body ? body.children.length : 0} 段，文字="${(body?.textContent ?? '').slice(0, 20)}…"`);
+
+      const checks = [
+        { name: '浮层铺满视口', ok: or.width >= window.innerWidth - 2 && or.height >= window.innerHeight - 2 },
+        { name: '浮层有底色', ok: !transparent(ocs.backgroundColor) },
+        { name: '弹窗有底色', ok: !transparent(mcs.backgroundColor) },
+        { name: '弹窗有可读高度', ok: mr.height >= 120 },
+        { name: '弹窗有可读宽度', ok: mr.width >= Math.min(280, window.innerWidth - 40) },
+        { name: '正文文字还在', ok: (body?.textContent ?? '').includes('检查原件') || (body?.textContent ?? '').includes('兜底') },
+        { name: '关闭按钮在', ok: Boolean(modal.querySelector('.ilb-modal-x')) },
+        { name: '控制台说明了兜底原因', ok: warns.some((w) => w.includes('浮层样式没有生效')) },
+      ];
+      for (const c of checks) say(`${c.ok ? '✓' : '✗'} ${c.name}`);
+
+      const pass = checks.every((c) => c.ok);
+      resultEl.textContent = `判定: ${pass ? 'PASS' : 'FAIL'}`;
+      resultEl.className = pass ? 'pass' : 'fail';
+      resultEl.dataset.verdict = pass ? 'PASS' : 'FAIL';
+      report({ pass, checks, lines, warns, viewport: `${window.innerWidth}x${window.innerHeight}` });
+    }
+
+    main();
+  </script>
+</body>
+</html>

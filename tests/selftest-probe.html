@@ -64,6 +64,8 @@
         { name: '报出弹窗高度', ok: /弹窗高度 \d+px/.test(text) },
         { name: '报出布局', ok: /(手机布局|电脑布局)/.test(text) },
         { name: '报出内联最小高度', ok: /(已就地固定最小高度|没有就地固定最小高度)/.test(text) },
+        { name: '报出浮层底色', ok: /浮层底色 (rgba?\()/.test(text) },
+        { name: '报出弹窗底色', ok: /弹窗底色 (rgba?\()/.test(text) },
       ];
       for (const c of checks) say(`${c.ok ? '✓' : '✗'} ${c.name}`);
 
