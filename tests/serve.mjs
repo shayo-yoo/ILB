@@ -18,6 +18,26 @@ const TYPES = {
 
 const server = http.createServer((req, res) => {
   const url = decodeURIComponent((req.url || '/').split('?')[0]);
+
+  // 探针把量到的数字 POST 回来，落成文件。
+  // 为什么要这一步：无头浏览器在这台机器上不往 stdout 写任何东西（--dump-dom 拿到空串），
+  // 所以"把结果画在页面上再截图"或"POST 回来"才拿得到数据。
+  if (req.method === 'POST' && url === '/report') {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8');
+      const out = path.join(root, 'tests', 'last-report.json');
+      try {
+        fs.writeFileSync(out, body, 'utf8');
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, bytes: body.length }));
+      } catch (err) {
+        res.writeHead(500).end(String(err));
+      }
+    });
+    return;
+  }
+
   const file = path.join(root, url === '/' ? '/' : url);
   if (!file.startsWith(root)) {
     res.writeHead(403).end('forbidden');

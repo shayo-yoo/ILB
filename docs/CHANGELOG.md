@@ -15,6 +15,45 @@
 
 ---
 
+## v0.4.6-code · 2026-10-24 · 手机上浮层只剩"很薄一排"：两把钥匙 + 薄条自愈（含规格 v2.5.3）
+
+**一句话**：用户报"点按钮后页面会正常弹出，可是只有高度非常小的一排，大概只覆盖了原本顶部的几个选项按钮"，并补充"PC 端没有任何问题，只有手机端"。根因是两件事叠加：**手机那套样式根本没生效**（SillyDroid 的 WebView 按桌面宽度排版，`@media (max-width: 768px)` 不成立），加上**浮层正文还没到（或渲染失败）导致高度由内容决定** → 桌面规则下顶对齐 + 空内容 = 一条细缝。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `style.css` | `.ilb-mobile` 类规则块（与 `@media (max-width:768px)` 同一套规则的"第二把钥匙"）：贴底、整宽、`min-height: 45vh`、安全区 padding、关闭按钮 44×44 |
+| `ui/help.js` | `syncLayoutClass()`：按 `ui/layout.js` 的 `pickLayout()`（宽度 + 是否粗指针）给 `body` 切 `ilb-mobile` |
+| `ui/help.js` | `ensureVisible` 新增两条自愈：弹窗高度 `< min(180, 视口×0.2)` → 内联 `min-height: 45vh` 并 warn；正文无子节点 → 插入"这一层浮层没有内容（可能是渲染时出错了）……"并 warn |
+| `ui/help.js` | 自愈检查加定时兜底 `setTimeout(run, 400)` + 「只跑一次」标记：`requestAnimationFrame` 在后台标签页/部分 WebView/无头浏览器里会被节流甚至不触发 |
+| `tests/sizing-probe.html` | 真实浏览器尺寸探针（加载真实 `style.css` 与 `ui/help.js`）：短内容 / 长内容+底栏 / 空内容 / 强制手机布局 四组，量 overlay、modal、head、body 的实际尺寸；结果 POST 回本地服务器 |
+| `tests/empty-probe.html` | 只测一件事的探针：空浮层等 800ms，看自愈有没有插入提示（sizing-probe 四组连跑时有 rAF 串扰，需要隔离验证） |
+| `tests/serve.mjs` | 新增 `POST /report`：把探针结果写成 `tests/last-report.json`（本机无头 Chrome 不往 stdout 写任何东西） |
+
+**修订**
+
+| 位置 | 内容 |
+|---|---|
+| `style.css` | `.ilb-modal` 的 `min-height: 0` → `min-height: 160px`（内容为空时也不能塌成一条缝，ILB-6.17.2） |
+| `参考文档.md` | 升 **2.5.3**；新增 **§6.17 浮层不能变成"很薄的一排"**（ILB-6.17.1–6.17.6：两把钥匙、高度下限、量高度自愈、空正文必须说明、定时兜底、探针验收）；§9.3 增三条验收 |
+| `index.js` / `manifest.json` | 版本 `0.4.5` → `0.4.6`（用 `[System.IO.File]::WriteAllText` + UTF8 无 BOM，避免重演 v0.4.4 的乱码事故） |
+
+**实测**
+
+- `tests/sizing-probe.html`：`--window-size=390,844`（实际视口 500×749）四组全 PASS；`--window-size=1280,800`（1264×705）四组全 PASS。空内容那组：手机 177px（head 61 + body 116，含说明文字），桌面 162px——修复前是 87px。
+- `node --test tests/*.test.mjs`：102/102 通过。
+- `node tests/linkcheck.mjs`：37 个模块全部通过（含 `index.js`）。
+- `node tests/smoke-dom.mjs`：17 步，失败 0。
+
+**仍未被证明**
+
+- 没有 SillyDroid 真机验证：探针用的是桌面 Chrome 改窗口尺寸，只能证明"CSS 与自愈在 Chromium 下行为正确"，不能证明该 WebView 的宽度/像素比与 `pointer: coarse` 判定一致。
+- 用户看到的"薄条"没有拿到他的实际截图与视口尺寸，所以"是这两件事叠加"目前是从两个特征（顶部、一排高）反推的，不是从他的环境里量出来的。
+- 探针只量尺寸，不判断内容是否可点、可滚。
+
+---
+
 ## v0.4.5-code · 2026-10-24 · 入口文件被我改坏了：整个扩展不加载（含规格 v2.5.2）
 
 **一句话**：用户报"连悬浮球都没有显示"。根因不是功能，是 **`index.js` 变成了乱码并吃掉一个引号**，`node --check` 报 `SyntaxError: missing ) after argument list`（第 60 行）。SillyTavern 加载入口失败 → 整个扩展不启动 → 悬浮球、设置卡片、面板全部消失。而当时所有检查都通过，因为链接检查**跳过了入口文件**。

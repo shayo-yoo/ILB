@@ -263,7 +263,7 @@
   max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 160px;
   outline: none;
 }
 
@@ -382,6 +382,45 @@
   body.ilb-locked {
     overflow: hidden;
   }
+}
+
+/* ------------------------------------------------------------------
+   手机布局的"第二把钥匙"：body.ilb-mobile
+   为什么媒体查询不够：SillyDroid 这类手机客户端的 WebView 常按"桌面宽度"排版
+   （例如 980px），`@media (max-width: 768px)` 根本不成立，手机上会拿到电脑那套
+   规则——弹窗从顶部出现、按桌面宽度算，看起来像"一条细缝"。
+   所以 ui/help.js 用"宽度 + 是不是触屏"判断后给 body 加 .ilb-mobile，
+   这里把上面那套手机规则再写一遍（两把钥匙都能开同一扇门）。
+   ------------------------------------------------------------------ */
+
+.ilb-mobile .ilb-overlay {
+  align-items: flex-end;
+  padding: 0;
+}
+
+.ilb-mobile .ilb-modal {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  min-height: 45vh;
+  border-radius: 14px 14px 0 0;
+  max-height: calc(100dvh - 12px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.ilb-mobile .ilb-modal-head {
+  border-radius: 14px 14px 0 0;
+}
+
+.ilb-mobile .ilb-modal-x {
+  width: 44px;
+  height: 44px;
+  font-size: 26px;
+}
+
+.ilb-mobile.ilb-locked,
+body.ilb-mobile.ilb-locked {
+  overflow: hidden;
 }
 
 .ilb-help-what,

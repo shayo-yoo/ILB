@@ -3,6 +3,7 @@
 // 文案不写在这里：全部来自 data/help/<locale>.json，改文案不用动代码。
 
 import { el } from './dom.js';
+import { pickLayout } from './layout.js';
 
 const DEFAULT_LOCALE = 'zh-cn';
 
@@ -65,12 +66,37 @@ export function closeOverlay() {
 }
 
 /**
+ * 把"该用哪套布局"写到 body 上，CSS 据此切换（.ilb-mobile）。
+ *
+ * 为什么不能只靠 CSS 媒体查询：SillyDroid 之类的手机客户端里，WebView 常常按
+ * "桌面宽度"排版（例如 980px）。这时 `@media (max-width: 768px)` **根本不成立**，
+ * 手机上拿到的是电脑那套规则——弹窗从顶部出现、宽度按桌面算，看起来就不像手机界面。
+ * 判定改用"宽度 + 是不是触屏"（ui/layout.js 的 pickLayout），它同时认得
+ * "触屏但偏宽"的平板/WebView。
+ */
+function syncLayoutClass() {
+  try {
+    if (!document.body || typeof document.body.classList?.toggle !== 'function') return;
+    const layout = pickLayout({
+      width: typeof window !== 'undefined' ? window.innerWidth : 1024,
+      height: typeof window !== 'undefined' ? window.innerHeight : 768,
+      touch: typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(pointer: coarse)').matches
+        : false,
+    });
+    document.body.classList.toggle('ilb-mobile', layout === 'mobile');
+  } catch {
+    /* 认不出就按默认样式来，不能因此让浮层开不了 */
+  }
+}
+
+/**
  * 自愈：如果这一层浮层的样式没生效（浏览器缓存了旧 CSS、主题把它覆盖掉、
  * 选择器被别的扩展改掉），浮层可能变成 0 尺寸或被 display:none 藏起来。
  * 那时用户看到的就是"点了按钮没有任何反应"，而控制台一片安静——最难查的那种坏法。
  * 所以这里不猜，量一次：真坏了就用内联样式把它撑起来，至少让人能看见内容。
  */
-function ensureVisible(overlay, modal) {
+function ensureVisible(overlay, modal, bodyNode) {
   if (typeof getComputedStyle !== 'function') return;
   const check = () => {
     try {
@@ -93,6 +119,26 @@ function ensureVisible(overlay, modal) {
         return;
       }
 
+      // 样式生效了，但还有第三种坏法：**弹窗被压成薄薄一条**。
+      // 手机上报过"点了按钮，弹出来的只有顶上很薄的一排"。原因通常是内容还在路上
+      // （例如导入列表正在读），或者某条主题规则把高度吃掉了。这时给它一个下限，
+      // 至少让人看得出"这是一层浮层，不是页面抽了一下"。
+      const modalRect = modal.getBoundingClientRect();
+      const minBeauty = Math.min(180, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.2);
+      if (modalRect.height < minBeauty) {
+        console.warn(
+          `[ILB] 浮层太扁（高 ${Math.round(modalRect.height)}px，视口 ${window.innerWidth}x${window.innerHeight}），已撑到可读高度。`,
+        );
+        modal.style.minHeight = '45vh';
+      }
+      if (bodyNode && bodyNode.children && bodyNode.children.length === 0) {
+        bodyNode.appendChild(el('p', {
+          class: 'ilb-empty',
+          text: '这一层浮层没有内容（可能是渲染时出错了）。请把浏览器控制台里的报错发给开发者。',
+        }));
+        console.warn('[ILB] 浮层打开了，但正文是空的。');
+      }
+
       // 样式没问题，但"看得见"还有第二种坏法：浮层开出来了，却**被别的东西盖在上面**。
       // 手机上最典型：ILB 自己的浮窗是整屏的（z-index 4500），一旦它压在浮层上面，
       // 用户看到的就是"点了按钮什么都没出现"，而在桌面上（浮窗只占一小块）却像是正常的。
@@ -110,8 +156,18 @@ function ensureVisible(overlay, modal) {
       /* 量不出来就算了，不能因为兜底逻辑把浮层本身弄坏 */
     }
   };
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(check));
-  else setTimeout(check, 0);
+  // 为什么还要一个定时器：requestAnimationFrame 在后台标签页、部分 WebView、
+  // 以及无头浏览器里会被节流甚至完全不触发。自愈逻辑本身很便宜，多跑一次没关系，
+  // 但不能"因为没等到下一帧就永远不自愈"。
+  let ran = false;
+  const run = () => {
+    if (ran) return;
+    ran = true;
+    check();
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(run));
+  else setTimeout(run, 0);
+  setTimeout(run, 400);
 }
 
 /** 给"盖住浮层的那个东西"起个人能听懂的名字，便于用户回报。 */
@@ -167,6 +223,8 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
 
   try {
     document.body.appendChild(overlay);
+    // 手机／电脑两套布局：媒体查询在 SillyDroid 这类 WebView 里可能不成立，所以用 JS 判定后写 class。
+    syncLayoutClass();
     // 手机下落层后面的页面还能滚，手指一划就把浮层顶走；锁住（只在窄屏生效，见 style.css）。
     document.body.classList.add('ilb-locked');
     // 浮层开着的时候，把 ILB 自己的浮窗与悬浮球让开（见 style.css 里 body.ilb-overlay-open 的规则）。
@@ -174,7 +232,7 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
     document.body.classList.add('ilb-overlay-open');
     if (typeof modal.focus === 'function') modal.focus({ preventScroll: true });
     console.info(`[ILB] 浮层已打开：${title || '(无标题)'}`);
-    ensureVisible(overlay, modal);
+    ensureVisible(overlay, modal, body);
   } catch (err) {
     console.warn('[ILB] 浮层没能挂上', err);
   }

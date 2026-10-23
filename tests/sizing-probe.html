@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ILB 浮层尺寸探针</title>
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+  <pre id="out" style="position:fixed;inset:0;z-index:2;background:#000;color:#0f0;margin:0;padding:12px;font:12px monospace;white-space:pre-wrap;overflow:auto"></pre>
+  <script type="module">
+    // 目的：在真实浏览器里量"浮层打开后到底有多高"，覆盖四种情况：
+    //   1 短内容（帮助型）  2 长内容 + 底栏（导入/编辑器型）  3 空内容（渲染出错）
+    //   4 强制手机布局（模拟"桌面宽度其实是手机"的 WebView）
+    // 关于时序：ui/help.js 的自愈检查要等 rAF，无头浏览器里 rAF 会被节流，
+    // 所以这里不猜时间，轮询到"该出现的都出现了"再量（最多 1.5 秒）。
+    // 关于取结果：本机无头 Chrome 不往 stdout 写东西，所以结果 POST 回 tests/serve.mjs。
+    import { openOverlay, closeOverlay } from '../ui/help.js';
+    import { el } from '../ui/dom.js';
+
+    const out = document.getElementById('out');
+    const log = [];
+    const warns = [];
+    const warn0 = console.warn.bind(console);
+    console.warn = (...args) => {
+      warns.push(args.map((a) => String(a)).join(' '));
+      warn0(...args);
+    };
+    function say(line) {
+      log.push(line);
+      console.log(line);
+    }
+
+    function rect(node) {
+      if (!node) return { w: 0, h: 0, display: 'none', position: '', maxHeight: '', overflowY: '', scrollHeight: 0, clientHeight: 0 };
+      const r = node.getBoundingClientRect();
+      const s = getComputedStyle(node);
+      return {
+        w: Math.round(r.width), h: Math.round(r.height),
+        display: s.display, position: s.position, flex: s.flex,
+        maxHeight: s.maxHeight, overflowY: s.overflowY,
+        scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
+      };
+    }
+
+    /** 打开一层浮层，等它稳定，量出四块的实际尺寸。 */
+    async function measure(title, nodes, footer, { forceMobile = false } = {}) {
+      closeOverlay();
+      document.body.classList.toggle('ilb-mobile', forceMobile);
+      openOverlay({ title, nodes, footer });
+      // openOverlay 里会按真实视口重新判定一次布局（syncLayoutClass），
+      // 所以"强制手机"必须在它之后再补一次 class，否则测的就不是 .ilb-mobile 那套规则。
+      document.body.classList.toggle('ilb-mobile', forceMobile);
+      if (forceMobile) document.body.classList.add('ilb-locked');
+      for (let k = 0; k < 25; k += 1) {
+        await new Promise((r) => setTimeout(r, 60));
+        const bb = document.querySelector('.ilb-modal-body');
+        if (!bb) continue;
+        if (nodes.length > 0 || bb.children.length > 0) break;
+      }
+      const overlay = document.querySelector('.ilb-overlay');
+      const modal = document.querySelector('.ilb-modal');
+      const body = document.querySelector('.ilb-modal-body');
+      const head = document.querySelector('.ilb-modal-head');
+      const o = rect(overlay), m = rect(modal), b = rect(body), h = rect(head);
+      const ok = o.h > innerHeight * 0.9 && m.h > 120 && b.h > 24;
+      say(`\n[${title}] viewport=${innerWidth}x${innerHeight} forceMobile=${forceMobile}`);
+      say(`  overlay ${o.w}x${o.h} pos=${o.position} display=${o.display}`);
+      say(`  modal   ${m.w}x${m.h} display=${m.display} maxH=${m.maxHeight} minH=${m.minHeight || ''}`);
+      say(`  head    ${h.w}x${h.h}`);
+      say(`  body    ${b.w}x${b.h} scrollH=${b.scrollHeight} clientH=${b.clientHeight} overflowY=${b.overflowY}`);
+      say(`  bodyChildren=${body.children.length} bodyText=${JSON.stringify((body.textContent || '').slice(0, 40))}`);
+      say(`  结论: ${ok ? 'PASS' : 'FAIL'}`);
+      document.body.classList.remove('ilb-mobile');
+      return { ok, o, m, b, h, bodyText: body.textContent || '', bodyChildren: body.children.length };
+    }
+
+    say(`viewport=${innerWidth}x${innerHeight} coarse=${matchMedia('(pointer: coarse)').matches} bodyClass=${[...document.body.classList].join(',')}`);
+
+    // 1) 短内容
+    await measure('短内容', [
+      el('div', { class: 'ilb-help-what' }, [el('p', { text: '这是帮助浮层的正文，通常只有两三段。' })]),
+      el('div', { class: 'ilb-help-how' }, [el('p', { text: '第二段。' })]),
+    ]);
+
+    // 2) 长内容 + 底栏
+    const rows = [];
+    for (let i = 0; i < 12; i += 1) {
+      rows.push(el('div', { class: 'ilb-file-row' }, [
+        el('label', { class: 'ilb-inline' }, [el('input', { type: 'checkbox' }), el('span', { text: `原生世界书-${i + 1}.json` })]),
+        el('span', { class: 'ilb-badge', text: '已导入' }),
+      ]));
+    }
+    const longNodes = [
+      el('div', { class: 'ilb-filterbar' }, [el('input', { class: 'ilb-input', placeholder: '搜索' })]),
+      el('div', { class: 'ilb-file-list' }, rows),
+    ];
+    const longResult = await measure('长内容 + 底栏', longNodes, [el('button', { class: 'ilb-btn ilb-btn-primary', text: '开始导入' })]);
+
+    // 3) 空内容：自愈必须把它撑起来，并写明"这层没有内容"
+    const emptyResult = await measure('空内容', []);
+    const emptyNotice = emptyResult.bodyText.includes('没有内容');
+
+    // 4) 桌面宽度但其实是手机：媒体查询不成立，靠 body.ilb-mobile 兜住
+    const mobileResult = await measure('强制手机 + 长内容', longNodes, [el('button', { class: 'ilb-btn', text: '按钮' })], { forceMobile: true });
+    const mobileIsSheet = mobileResult.m.w >= innerWidth - 2 && mobileResult.m.h > innerHeight * 0.4;
+
+    const pass = longResult.ok && emptyResult.ok && emptyNotice && mobileResult.ok && mobileIsSheet;
+    say(`\n最终: ${pass ? 'PASS' : 'FAIL'}（空内容被撑起并说明=${emptyNotice}；强制手机贴底整宽=${mobileIsSheet}；warns=${warns.length}）`);
+    warns.forEach((w) => say(`  W ${w}`));
+
+    out.textContent = log.join('\n');
+    const dump = JSON.stringify({
+      pass,
+      viewport: `${innerWidth}x${innerHeight}`,
+      long: { m: longResult.m, b: longResult.b },
+      empty: { m: emptyResult.m, notice: emptyNotice, children: emptyResult.bodyChildren },
+      mobile: { m: mobileResult.m, isSheet: mobileIsSheet },
+      warns,
+      log,
+    }, null, 2);
+    await fetch('/report', { method: 'POST', body: dump }).catch(() => {});
+  </script>
+</body>
+</html>

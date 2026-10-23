@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ILB 空浮层探针</title>
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+  <pre id="out" style="position:fixed;inset:0;z-index:1;background:#000;color:#0f0;margin:0;padding:12px;font:12px monospace;white-space:pre-wrap"></pre>
+  <script type="module">
+    // 只做一件事：开一个"没有任何内容"的浮层，等足够久，看自愈有没有插入提示。
+    // 单独一个页面，避免时序被别的用例干扰（sizing-probe 里四个用例连跑时，
+    // 上一个浮层的延迟回调会串到下一个用例上，读出来的结论不可靠）。
+    const out = document.getElementById('out');
+    const lines = [];
+    const warns = [];
+    const warn0 = console.warn.bind(console);
+    console.warn = (...a) => { warns.push(a.map(String).join(' ')); warn0(...a); };
+    function say(s) { lines.push(s); }
+
+    const { openOverlay, closeOverlay } = await import('../ui/help.js');
+    const { el } = await import('../ui/dom.js');
+
+    say(`viewport=${innerWidth}x${innerHeight} coarse=${matchMedia('(pointer: coarse)').matches}`);
+    say(`stylesheet links=${document.querySelectorAll('link[rel=stylesheet]').length} sheets=${document.styleSheets.length}`);
+
+    openOverlay({ title: '空内容', nodes: [] });
+    const body = document.querySelector('.ilb-modal-body');
+    say(`t=0 bodyChildren=${body.children.length}`);
+
+    for (const ms of [50, 150, 400, 800]) {
+      await new Promise((r) => setTimeout(r, ms));
+      say(`t+${ms} bodyChildren=${body.children.length} text=${JSON.stringify((body.textContent || '').slice(0, 24))} modalH=${Math.round(document.querySelector('.ilb-modal').getBoundingClientRect().height)}`);
+    }
+    say(`classList body=${[...document.body.classList].join(',')}`);
+    say(`warns=${warns.length}`);
+    warns.forEach((w) => say('  W ' + w));
+
+    const pass = body.children.length > 0 && (body.textContent || '').includes('没有内容');
+    say(`\n判定: ${pass ? 'PASS' : 'FAIL'}`);
+    out.textContent = lines.join('\n');
+    await fetch('/report', { method: 'POST', body: JSON.stringify({ pass, lines, warns }) }).catch(() => {});
+  </script>
+</body>
+</html>
