@@ -84,8 +84,28 @@
     openOverlay({ title: '真·openOverlay', nodes: [document.createElement('p')] });
     const real = measure('openOverlay 结果', '.ilb-overlay');
 
+    // 复现手机上那种坏法：ILB 自己的浮窗是整屏的（z-index 4500）。
+    // 如果它压在浮层上面，用户看到的就是"点了按钮什么都没出现"——桌面看不出来，手机上一试就中。
+    closeOverlay();
+    document.querySelectorAll('.ilb-overlay').forEach((n) => n.remove());
+    const fakeWin = document.createElement('div');
+    fakeWin.className = 'ilb-window ilb-window-mobile';
+    fakeWin.style.display = 'flex';
+    fakeWin.textContent = '（模拟整屏浮窗，z-index 4500）';
+    document.body.appendChild(fakeWin);
+    openOverlay({ title: '模拟手机上的次级菜单', nodes: [document.createElement('p')] });
+    const overlayNode = document.querySelector('.ilb-overlay');
+    const hit = document.elementFromPoint(Math.round(vw / 2), Math.round(vh / 2));
+    const topIsOverlay = Boolean(hit) && Boolean(overlayNode) && overlayNode.contains(hit);
+    log(`浮窗开着时，屏幕正中命中的是: ${hit ? `${hit.tagName.toLowerCase()}.${hit.className || ''}` : 'null'}`);
+    log(`浮层在最上层: ${topIsOverlay ? '是' : '否'}`);
+    log(`浮窗让开了吗: visibility=${getComputedStyle(fakeWin).visibility}`);
+    closeOverlay();
+    fakeWin.remove();
+    document.querySelectorAll('.ilb-overlay').forEach((n) => n.remove());
+
     const verdict =
-      real && real.rect.width >= vw - 1 && real.rect.height >= vh - 1 && getComputedStyle(real.el).display !== 'none'
+      real && real.rect.width >= vw - 1 && real.rect.height >= vh - 1 && getComputedStyle(real.el).display !== 'none' && topIsOverlay
         ? 'PASS'
         : 'FAIL';
     log(`判定: ${verdict}`);

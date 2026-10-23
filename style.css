@@ -247,7 +247,9 @@
   padding: 16px;
   padding-top: max(16px, env(safe-area-inset-top, 0px));
   padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
-  z-index: 4000;
+  /* 浮层必须在最上层：手机上浮窗是整屏的（z-index 4500），只比它高一点不够稳。
+     用接近 int32 上限的值，任何主题、任何别的扩展都压不过它。 */
+  z-index: 2147483000;
 }
 
 .ilb-modal {
@@ -507,10 +509,20 @@
 
 /* ---- 浮窗 ---- */
 
-/* 浮层（帮助、导入结果）必须盖在浮窗之上，否则从窗里点开的说明会被窗挡住。
-   这里覆盖前面 .ilb-overlay 的 4000：同优先级、后出现者生效。 */
+/* 浮层（帮助、导入结果、试一句）必须盖在浮窗之上。
+   0.4.4 之前这里靠"比浮窗高 100"（4600 vs 4500），在桌面上够用，
+   但手机上浮窗是整屏的，只要有一条规则把浮层压回 4000（旧缓存、别的扩展、
+   主题覆盖），整块浮层就被浮窗吃掉，表现成"点了按钮没反应"。 */
 .ilb-overlay {
-  z-index: 4600;
+  z-index: 2147483000;
+}
+
+/* 浮层开着时让开自家浮窗与悬浮球：不赌 z-index，直接让它们不可见。
+   隐藏（visibility）而不是移除（display:none），关掉浮层后它们原样回来。 */
+body.ilb-overlay-open .ilb-window,
+body.ilb-overlay-open .ilb-fab,
+body.ilb-overlay-open .ilb-backdrop {
+  visibility: hidden !important;
 }
 
 .ilb-backdrop {

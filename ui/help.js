@@ -57,6 +57,7 @@ export function closeOverlay() {
     document.removeEventListener('keydown', current.onKey);
     current.overlay.remove();
     document.body.classList.remove('ilb-locked');
+    document.body.classList.remove('ilb-overlay-open');
   } catch {
     /* ignore */
   }
@@ -81,20 +82,47 @@ function ensureVisible(overlay, modal) {
         style.position !== 'fixed' ||
         rect.width < 8 ||
         rect.height < 8;
-      if (!broken) return;
-      console.warn('[ILB] 浮层样式没有生效（可能加载了旧的 style.css），已用内联样式兜底。建议强制刷新页面。');
-      overlay.style.cssText =
-        'position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;' +
-        'overflow-y:auto;box-sizing:border-box;padding:16px;background:rgba(0,0,0,0.55);z-index:2147483000';
-      modal.style.cssText =
-        'margin:auto;width:100%;max-width:min(92vw,640px);max-height:calc(100vh - 32px);overflow-y:auto;' +
-        'background:var(--SmartThemeBlurTintColor,#1e1e1e);color:inherit;border:1px solid #555;border-radius:8px';
+      if (broken) {
+        console.warn('[ILB] 浮层样式没有生效（可能加载了旧的 style.css），已用内联样式兜底。建议强制刷新页面。');
+        overlay.style.cssText =
+          'position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;' +
+          'overflow-y:auto;box-sizing:border-box;padding:16px;background:rgba(0,0,0,0.55);z-index:2147483000';
+        modal.style.cssText =
+          'margin:auto;width:100%;max-width:min(92vw,640px);max-height:calc(100vh - 32px);overflow-y:auto;' +
+          'background:var(--SmartThemeBlurTintColor,#1e1e1e);color:inherit;border:1px solid #555;border-radius:8px';
+        return;
+      }
+
+      // 样式没问题，但"看得见"还有第二种坏法：浮层开出来了，却**被别的东西盖在上面**。
+      // 手机上最典型：ILB 自己的浮窗是整屏的（z-index 4500），一旦它压在浮层上面，
+      // 用户看到的就是"点了按钮什么都没出现"，而在桌面上（浮窗只占一小块）却像是正常的。
+      // 判断方法不猜 z-index，直接问浏览器："屏幕正中间那个点，最上面是谁？"
+      if (typeof document.elementFromPoint !== 'function') return;
+      const hit = document.elementFromPoint(
+        Math.round(window.innerWidth / 2),
+        Math.round(window.innerHeight / 2),
+      );
+      if (!hit || overlay.contains(hit)) return;
+      const cover = hit.closest?.('.ilb-window, .ilb-fab, .ilb-backdrop') ? 'ILB 自己的浮窗/悬浮球' : describeCover(hit);
+      console.warn(`[ILB] 浮层被「${cover}」盖住了，已把浮层提到最上层。`);
+      overlay.style.zIndex = '2147483000';
     } catch {
       /* 量不出来就算了，不能因为兜底逻辑把浮层本身弄坏 */
     }
   };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(check));
   else setTimeout(check, 0);
+}
+
+/** 给"盖住浮层的那个东西"起个人能听懂的名字，便于用户回报。 */
+function describeCover(node) {
+  if (!node || node.nodeType !== 1) return '未知元素';
+  const id = node.id ? `#${node.id}` : '';
+  const cls = typeof node.className === 'string' && node.className.trim()
+    ? `.${node.className.trim().split(/\s+/).slice(0, 3).join('.')}`
+    : '';
+  const z = typeof getComputedStyle === 'function' ? getComputedStyle(node).zIndex : '';
+  return `${node.tagName.toLowerCase()}${id}${cls}${z && z !== 'auto' ? `（z-index ${z}）` : ''}`;
 }
 
 /**
@@ -141,6 +169,9 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
     document.body.appendChild(overlay);
     // 手机下落层后面的页面还能滚，手指一划就把浮层顶走；锁住（只在窄屏生效，见 style.css）。
     document.body.classList.add('ilb-locked');
+    // 浮层开着的时候，把 ILB 自己的浮窗与悬浮球让开（见 style.css 里 body.ilb-overlay-open 的规则）。
+    // 理由：整屏浮窗在手机上会盖住浮层，而在桌面上只盖住一角，表现为"只有手机点不开"。
+    document.body.classList.add('ilb-overlay-open');
     if (typeof modal.focus === 'function') modal.focus({ preventScroll: true });
     console.info(`[ILB] 浮层已打开：${title || '(无标题)'}`);
     ensureVisible(overlay, modal);

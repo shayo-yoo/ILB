@@ -9,8 +9,7 @@ import { el } from './dom.js';
 /**
  * 跑一组只读检查。不写存档、不改设置、失败不抛。
  * @returns {Array<{ok:boolean, text:string}>}
- */
-export function runSelfTest() {
+ */export function runSelfTest() {
   const lines = [];
   const add = (ok, text) => lines.push({ ok, text });
 
@@ -49,6 +48,20 @@ export function runSelfTest() {
       add(full, full ? `浮层已铺满视口（${Math.round(r.width)}×${Math.round(r.height)}）` : `浮层开了但尺寸不对（${Math.round(r.width)}×${Math.round(r.height)}）`);
       const x = overlay.querySelector('.ilb-modal-x');
       add(Boolean(x), x ? '关闭按钮存在' : '关闭按钮不存在（样式或结构被改过）');
+
+      // 最容易被忽略的一种坏法：浮层开出来了，但被别的东西盖在上面。
+      // 手机上 ILB 自己的浮窗是整屏的，它压在上面时，用户看到的就是"点了没反应"。
+      const win = document.querySelector('.ilb-window');
+      if (win) {
+        const wz = Number.parseInt(getComputedStyle(win).zIndex || '0', 10) || 0;
+        const oz = Number.parseInt(getComputedStyle(overlay).zIndex || '0', 10) || 0;
+        add(oz > wz, oz > wz ? `浮层层级 ${oz} 高于浮窗 ${wz}` : `浮层层级 ${oz} 不高于浮窗 ${wz}，会被挡住`);
+        if (typeof document.elementFromPoint === 'function') {
+          const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), Math.round(window.innerHeight / 2));
+          const top = Boolean(hit) && overlay.contains(hit);
+          add(top, top ? '屏幕正中那一点，最上层是浮层（没被挡住）' : `屏幕正中那一点被 ${describeNode(hit)} 盖住了`);
+        }
+      }
     }
     closeOverlay();
   } catch (err) {
@@ -80,4 +93,21 @@ export function showSelfTest() {
     wide: true,
   });
   return lines;
+}
+
+/** 把"盖住浮层的那个东西"描述成人能看懂的样子，便于用户回报。 */
+function describeNode(node) {
+  if (!node || node.nodeType !== 1) return '未知元素';
+  const id = node.id ? `#${node.id}` : '';
+  const cls = typeof node.className === 'string' && node.className.trim()
+    ? `.${node.className.trim().split(/\s+/).slice(0, 3).join('.')}`
+    : '';
+  let z = '';
+  try {
+    const cs = getComputedStyle(node);
+    if (cs && cs.zIndex && cs.zIndex !== 'auto') z = `（z-index ${cs.zIndex}）`;
+  } catch {
+    /* ignore */
+  }
+  return `${node.tagName.toLowerCase()}${id}${cls}${z}`;
 }
