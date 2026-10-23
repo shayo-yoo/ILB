@@ -23,6 +23,25 @@ import { el } from './dom.js';
   add(links.length > 0, links.length > 0 ? `找到 ${links.length} 个 style.css` : '页面里没有找到 style.css 的 <link>，样式肯定没生效');
   add(links.some((l) => l.sheet), links.some((l) => l.sheet) ? '样式表已解析（能读到规则）' : '样式表没有解析出来（文件缺失或被拦截）');
 
+  // 1.5) 这份样式表里到底有没有 ILB 的规则。
+  // "文件在" 和 "规则在" 是两件事：缓存里可能是某个中间版本，或者被合并成了一份空的。
+  // 数是数出来的，不是猜的。
+  let ruleCount = 0;
+  let ruleErr = '';
+  try {
+    for (const sheet of Array.from(document.styleSheets)) {
+      if (!/style\.css/i.test(sheet.href ?? '')) continue;
+      const rules = sheet.cssRules;
+      for (const rule of Array.from(rules ?? [])) {
+        if (rule.selectorText && /\.ilb-/.test(rule.selectorText)) ruleCount += 1;
+      }
+    }
+  } catch (err) {
+    ruleErr = err?.message ?? String(err);
+  }
+  if (ruleErr) add(false, `读样式规则被浏览器拦住了：${ruleErr}`);
+  else add(ruleCount > 20, `style.css 里数到 ${ruleCount} 条 .ilb- 规则${ruleCount > 20 ? '' : '（偏少，可能是旧版本或被截断）'}`);
+
   // 2) 关键规则是否真的生效：插一个 .ilb-overlay 探针，量它的定位方式
   let cssOk = false;
   try {
@@ -48,6 +67,23 @@ import { el } from './dom.js';
       add(full, full ? `浮层已铺满视口（${Math.round(r.width)}×${Math.round(r.height)}）` : `浮层开了但尺寸不对（${Math.round(r.width)}×${Math.round(r.height)}）`);
       const x = overlay.querySelector('.ilb-modal-x');
       add(Boolean(x), x ? '关闭按钮存在' : '关闭按钮不存在（样式或结构被改过）');
+
+      // 3.5) 弹窗本体有多高。这是用户报的"只有很薄一排"的直接指标，
+      // 所以不描述现象、只报数字：高多少、最小高度是多少、是手机布局还是电脑布局。
+      const modal = overlay.querySelector('.ilb-modal');
+      if (modal) {
+        const mr = modal.getBoundingClientRect();
+        const mcs = getComputedStyle(modal);
+        const tall = mr.height >= Math.min(180, window.innerHeight * 0.2);
+        add(
+          tall,
+          `弹窗高度 ${Math.round(mr.height)}px（最小高度 ${mcs.minHeight || '未设置'}，${document.body.classList.contains('ilb-mobile') ? '手机布局' : '电脑布局'}）`,
+        );
+        add(
+          Boolean(modal.style.minHeight),
+          modal.style.minHeight ? `已就地固定最小高度 ${modal.style.minHeight}` : '没有就地固定最小高度（只靠样式表）',
+        );
+      }
 
       // 最容易被忽略的一种坏法：浮层开出来了，但被别的东西盖在上面。
       // 手机上 ILB 自己的浮窗是整屏的，它压在上面时，用户看到的就是"点了没反应"。

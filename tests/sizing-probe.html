@@ -38,7 +38,8 @@
       return {
         w: Math.round(r.width), h: Math.round(r.height),
         display: s.display, position: s.position, flex: s.flex,
-        maxHeight: s.maxHeight, overflowY: s.overflowY,
+        maxHeight: s.maxHeight, minHeight: s.minHeight, overflowY: s.overflowY,
+        inlineMin: node.style?.minHeight || '',
         scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
       };
     }
@@ -66,7 +67,7 @@
       const ok = o.h > innerHeight * 0.9 && m.h > 120 && b.h > 24;
       say(`\n[${title}] viewport=${innerWidth}x${innerHeight} forceMobile=${forceMobile}`);
       say(`  overlay ${o.w}x${o.h} pos=${o.position} display=${o.display}`);
-      say(`  modal   ${m.w}x${m.h} display=${m.display} maxH=${m.maxHeight} minH=${m.minHeight || ''}`);
+      say(`  modal   ${m.w}x${m.h} display=${m.display} maxH=${m.maxHeight} minH=${m.minHeight || '(none)'} inlineMinH=${m.inlineMin || '(none)'}`);
       say(`  head    ${h.w}x${h.h}`);
       say(`  body    ${b.w}x${b.h} scrollH=${b.scrollHeight} clientH=${b.clientHeight} overflowY=${b.overflowY}`);
       say(`  bodyChildren=${body.children.length} bodyText=${JSON.stringify((body.textContent || '').slice(0, 40))}`);

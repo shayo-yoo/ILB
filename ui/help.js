@@ -75,9 +75,10 @@ export function closeOverlay() {
  * "触屏但偏宽"的平板/WebView。
  */
 function syncLayoutClass() {
+  let layout = 'desktop';
   try {
-    if (!document.body || typeof document.body.classList?.toggle !== 'function') return;
-    const layout = pickLayout({
+    if (!document.body || typeof document.body.classList?.toggle !== 'function') return layout;
+    layout = pickLayout({
       width: typeof window !== 'undefined' ? window.innerWidth : 1024,
       height: typeof window !== 'undefined' ? window.innerHeight : 768,
       touch: typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -88,6 +89,7 @@ function syncLayoutClass() {
   } catch {
     /* 认不出就按默认样式来，不能因此让浮层开不了 */
   }
+  return layout;
 }
 
 /**
@@ -96,26 +98,36 @@ function syncLayoutClass() {
  * 那时用户看到的就是"点了按钮没有任何反应"，而控制台一片安静——最难查的那种坏法。
  * 所以这里不猜，量一次：真坏了就用内联样式把它撑起来，至少让人能看见内容。
  */
-function ensureVisible(overlay, modal, bodyNode) {
+function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
   if (typeof getComputedStyle !== 'function') return;
+  const isMobile = layout === 'mobile';
   const check = () => {
     try {
+      // 已经被关掉了就别再管它：延迟回调可能在浮层移除之后才跑，
+      // 那时量到的一定是 0×0、position 也会是 static，会误判成"样式没生效"。
+      if (overlay.isConnected === false) return;
       const rect = overlay.getBoundingClientRect();
       const style = getComputedStyle(overlay);
-      const broken =
-        style.display === 'none' ||
-        style.visibility === 'hidden' ||
-        style.position !== 'fixed' ||
-        rect.width < 8 ||
-        rect.height < 8;
-      if (broken) {
-        console.warn('[ILB] 浮层样式没有生效（可能加载了旧的 style.css），已用内联样式兜底。建议强制刷新页面。');
+      const reasons = [];
+      if (style.display === 'none') reasons.push('display=none');
+      if (style.visibility === 'hidden') reasons.push('visibility=hidden');
+      if (style.position !== 'fixed') reasons.push(`position=${style.position}`);
+      if (rect.width < 8) reasons.push(`宽 ${Math.round(rect.width)}px`);
+      if (rect.height < 8) reasons.push(`高 ${Math.round(rect.height)}px`);
+      if (reasons.length > 0) {
+        console.warn(
+          `[ILB] 浮层样式没有生效（${reasons.join('，')}），已用内联样式兜底。建议强制刷新页面。`,
+        );
         overlay.style.cssText =
-          'position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;' +
-          'overflow-y:auto;box-sizing:border-box;padding:16px;background:rgba(0,0,0,0.55);z-index:2147483000';
+          'position:fixed;inset:0;display:flex;justify-content:center;overflow-y:auto;box-sizing:border-box;' +
+          'background:rgba(0,0,0,0.55);z-index:2147483000;' +
+          (isMobile ? 'align-items:flex-end;padding:0' : 'align-items:flex-start;padding:16px');
         modal.style.cssText =
-          'margin:auto;width:100%;max-width:min(92vw,640px);max-height:calc(100vh - 32px);overflow-y:auto;' +
-          'background:var(--SmartThemeBlurTintColor,#1e1e1e);color:inherit;border:1px solid #555;border-radius:8px';
+          'margin:auto;width:100%;overflow-y:auto;color:inherit;' +
+          'background:var(--SmartThemeBlurTintColor,#1e1e1e);border:1px solid #555;' +
+          (isMobile
+            ? 'max-width:100%;min-height:45vh;max-height:calc(100vh - 12px);border-radius:14px 14px 0 0;'
+            : 'max-width:min(92vw,640px);min-height:160px;max-height:calc(100vh - 32px);border-radius:8px;');
         return;
       }
 
@@ -126,10 +138,11 @@ function ensureVisible(overlay, modal, bodyNode) {
       const modalRect = modal.getBoundingClientRect();
       const minBeauty = Math.min(180, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.2);
       if (modalRect.height < minBeauty) {
+        const floor = isMobile ? '45vh' : '160px';
         console.warn(
-          `[ILB] 浮层太扁（高 ${Math.round(modalRect.height)}px，视口 ${window.innerWidth}x${window.innerHeight}），已撑到可读高度。`,
+          `[ILB] 浮层太扁（高 ${Math.round(modalRect.height)}px，视口 ${window.innerWidth}x${window.innerHeight}，${layout}），已撑到 ${floor}。`,
         );
-        modal.style.minHeight = '45vh';
+        modal.style.minHeight = floor;
       }
       if (bodyNode && bodyNode.children && bodyNode.children.length === 0) {
         bodyNode.appendChild(el('p', {
@@ -223,16 +236,24 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
 
   try {
     document.body.appendChild(overlay);
+    // 先钉上几条"绝不能失效"的几何：位置、铺满、层级、最小高度。
+    // 为什么用内联而不是靠 CSS：这几条一旦失效，用户看到的就是"点了没反应"或"一条缝"，
+    // 而它们恰恰最容易被主题/别的扩展/旧缓存改掉。内联样式谁也抢不走；其余观感仍交给 CSS。
+    overlay.style.position = 'fixed';
+    overlay.style.inset = '0';
+    overlay.style.display = 'flex';
+    overlay.style.zIndex = '2147483000';
     // 手机／电脑两套布局：媒体查询在 SillyDroid 这类 WebView 里可能不成立，所以用 JS 判定后写 class。
-    syncLayoutClass();
+    const layout = syncLayoutClass();
+    modal.style.minHeight = layout === 'mobile' ? '45vh' : '160px';
     // 手机下落层后面的页面还能滚，手指一划就把浮层顶走；锁住（只在窄屏生效，见 style.css）。
     document.body.classList.add('ilb-locked');
     // 浮层开着的时候，把 ILB 自己的浮窗与悬浮球让开（见 style.css 里 body.ilb-overlay-open 的规则）。
     // 理由：整屏浮窗在手机上会盖住浮层，而在桌面上只盖住一角，表现为"只有手机点不开"。
     document.body.classList.add('ilb-overlay-open');
     if (typeof modal.focus === 'function') modal.focus({ preventScroll: true });
-    console.info(`[ILB] 浮层已打开：${title || '(无标题)'}`);
-    ensureVisible(overlay, modal, body);
+    console.info(`[ILB] 浮层已打开：${title || '(无标题)'}（${layout}）`);
+    ensureVisible(overlay, modal, body, layout);
   } catch (err) {
     console.warn('[ILB] 浮层没能挂上', err);
   }
