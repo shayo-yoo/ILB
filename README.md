@@ -1,5 +1,8 @@
 # Independent Lorebook (ILB)
 
+[![checks](https://github.com/shayo-yoo/ILB/actions/workflows/checks.yml/badge.svg)](https://github.com/shayo-yoo/ILB/actions/workflows/checks.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 给 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 的世界书加两样东西：**一条可以自己搭的判定流程**，和**多本世界书的管理方式**。全程不需要写任何语法。
 
 > 状态：**早期版本**。扩展能在 SillyTavern 中加载、能导入原生世界书；核心判定逻辑有 102 个单元测试（全过）。但注入效果、手机端布局、不同主题下的显示仍需要更多实机验证。详见 [已知限制](#已知限制)。
@@ -38,8 +41,10 @@ ILB 分别对应三件事：**节点式判定**、**多书启用与总条目池*
 
 ```bash
 cd SillyTavern/public/scripts/extensions/third-party
-git clone <本仓库地址> ILB
+git clone https://github.com/shayo-yoo/ILB.git ILB
 ```
+
+更新时进这个目录 `git pull`，然后刷新页面即可。
 
 ### 方式二：下载压缩包
 
@@ -143,6 +148,10 @@ node tests/smoke-dom.mjs
 ## 许可
 
 [MIT](LICENSE)。你可以自由使用、修改、再发布。
+
+## 反馈
+
+发现问题或有想法，欢迎开 [Issue](https://github.com/shayo-yoo/ILB/issues)。如果遇到"某条规则没出现"，请附上：规则的触发词、当时的诊断页截图、以及 SillyTavern 的版本号——这三样能省掉大半来回。
 
 ## 免责声明
 
