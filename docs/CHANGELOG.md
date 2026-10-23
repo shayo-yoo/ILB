@@ -29,6 +29,7 @@
 | `ui/help.js` | `syncLayoutClass()` 改为**返回**判定结果（`'mobile' \| 'desktop'`），供内联几何与自愈分支复用同一份判断 |
 | `ui/selftest.js` | 新增三项"报数"检查：①`style.css` 里数到多少条 `.ilb-` 规则（< 20 条即旧版本或被截断）②弹窗实测高度 + 计算出的 `min-height` + 当前是手机还是电脑布局③弹窗上有没有就地固定的最小高度 |
 | `tests/sizing-probe.html` | 量测字段补 `minHeight` 与 `inlineMin`，日志同时打印计算值与内联值——否则"兜底到底有没有生效"只能靠猜 |
+| `tests/selftest-probe.html` | 新增探针：在真实浏览器里跑一遍真的 `runSelfTest()`，并额外检查"报数"的四项是否真的带数字（规则条数 / 弹窗高度 / 布局 / 内联最小高度） |
 
 **修订**
 
@@ -45,6 +46,7 @@
 | `node tests/linkcheck.mjs` | 37 个模块全通过（含入口 `index.js`） |
 | `tests/sizing-probe.html` `390×844`（视口 500×693） | 短内容 314 / 长内容 682 / 空内容 314 / 强制手机 682 贴底整宽 → PASS；`inlineMin=45vh`、计算值 `311.85px` |
 | `tests/sizing-probe.html` `1280×800`（视口 1264×649） | 短 238 / 长 619 / 空 162 / 强制手机 1264 整宽 → PASS；`inlineMin=160px` |
+| `tests/selftest-probe.html` `390×844` | PASS。自检实际输出：`样式表已解析`、`style.css 里数到 144 条 .ilb- 规则`、`浮层已铺满视口（500×693）`、`弹窗高度 314px（最小高度 311.85px，手机布局）`、`已就地固定最小高度 45vh`；三条"未加载宿主"为预期失败 |
 
 **仍未被证明**
 

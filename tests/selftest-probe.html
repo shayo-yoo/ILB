@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ILB 自检探针</title>
+  <!-- 加载真实样式表：自检里"数到多少条 .ilb- 规则"这一项就是数它 -->
+  <link rel="stylesheet" href="../style.css" />
+  <style>
+    body { background: #141414; color: #ddd; font: 14px/1.6 system-ui, sans-serif; padding: 16px; }
+    pre { white-space: pre-wrap; }
+    .pass { color: #6f6; }
+    .fail { color: #f66; }
+  </style>
+</head>
+<body>
+  <h1>ILB 自检探针</h1>
+  <p>它做两件事：跑一遍真的 <code>runSelfTest()</code>，然后检查"报数"的那几项有没有真的报出数字。</p>
+  <pre id="out"></pre>
+  <pre id="result"></pre>
+
+  <script type="module">
+    import { runSelfTest } from '../ui/selftest.js';
+
+    const out = document.getElementById('out');
+    const resultEl = document.getElementById('result');
+    const lines = [];
+
+    function say(line) {
+      lines.push(line);
+      out.textContent = lines.join('\n');
+      console.log(line);
+    }
+
+    function report(payload) {
+      try {
+        fetch('/report', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        say(`回报失败：${err && err.message}`);
+      }
+    }
+
+    async function main() {
+      let items = [];
+      try {
+        items = runSelfTest();
+      } catch (err) {
+        say(`runSelfTest 抛错：${err && err.message}`);
+        report({ pass: false, reason: 'threw', error: String(err) });
+        return;
+      }
+
+      for (const item of items) say(`${item.ok ? '✓' : '✗'} ${item.text}`);
+
+      // 自检里有三条是"必须报数"的（ILB-6.17.8）。这里不只检查 ok，
+      // 还检查文字里真的有数字——否则"通过"可能只是没量而已。
+      const text = items.map((i) => i.text).join('\n');
+      const checks = [
+        { name: '数到 .ilb- 规则', ok: /style\.css 里数到 \d+ 条 \.ilb- 规则/.test(text) },
+        { name: '报出弹窗高度', ok: /弹窗高度 \d+px/.test(text) },
+        { name: '报出布局', ok: /(手机布局|电脑布局)/.test(text) },
+        { name: '报出内联最小高度', ok: /(已就地固定最小高度|没有就地固定最小高度)/.test(text) },
+      ];
+      for (const c of checks) say(`${c.ok ? '✓' : '✗'} ${c.name}`);
+
+      const pass = checks.every((c) => c.ok);
+      const bad = items.filter((i) => !i.ok).map((i) => i.text);
+      // "没加载宿主"在这个探针里是预期结果：这里没有 SillyTavern。
+      const unexpected = bad.filter((t) => !/找不到 window\.ILB|判定管线不可用|存档端口不可用/.test(t));
+
+      const verdict = pass && unexpected.length === 0;
+      resultEl.textContent = `判定: ${verdict ? 'PASS' : 'FAIL'}`;
+      resultEl.className = verdict ? 'pass' : 'fail';
+      resultEl.dataset.verdict = verdict ? 'PASS' : 'FAIL';
+      report({ pass: verdict, checks, unexpected, lines });
+    }
+
+    main();
+  </script>
+</body>
+</html>
