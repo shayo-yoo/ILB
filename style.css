@@ -1,0 +1,957 @@
+/* ILB 界面样式。所有类名以 ilb- 开头，避免和宿主或别的扩展打架。 */
+
+.ilb-root {
+  margin-top: 8px;
+}
+
+.ilb-block {
+  border: 1px solid var(--SmartThemeBorderColor, #444);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--SmartThemeBlurTintColor, transparent);
+}
+
+.ilb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ilb-help {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--SmartThemeBorderColor, #666);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+
+.ilb-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.ilb-tab {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.ilb-tab-active {
+  opacity: 1;
+  border-bottom: 2px solid var(--SmartThemeQuoteColor, #7aa7ff);
+  font-weight: 600;
+}
+
+.ilb-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+/* 按钮一律"浅色底 + 继承主题文字色"。
+   早先的写法是 background 与 color 都取 --SmartThemeQuoteColor：
+   同一个颜色画字又画底，按钮看起来就是一块空白的"蒙板"，只有 hover 换背景后才看得见字。 */
+.ilb-btn {
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  line-height: 1.4;
+}
+
+.ilb-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ilb-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ilb-btn-ghost {
+  background: transparent;
+  color: inherit;
+}
+
+.ilb-link {
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ilb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.ilb-table th,
+.ilb-table td {
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #333);
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ilb-table-compact {
+  font-size: 0.85em;
+}
+
+.ilb-center {
+  text-align: center;
+}
+
+.ilb-row-fail td {
+  opacity: 0.72;
+}
+
+.ilb-row-pass td {
+  font-weight: 500;
+}
+
+.ilb-title {
+  font-weight: 600;
+}
+
+.ilb-sub,
+.ilb-hint,
+.ilb-empty {
+  opacity: 0.7;
+  font-size: 0.86em;
+}
+
+.ilb-empty {
+  padding: 12px 0;
+}
+
+.ilb-error {
+  color: #ff8080;
+  font-size: 0.88em;
+}
+
+.ilb-badge {
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 0.8em;
+}
+
+.ilb-badge-ok {
+  background: rgba(80, 200, 120, 0.2);
+}
+
+.ilb-badge-warn {
+  background: rgba(255, 190, 60, 0.22);
+}
+
+.ilb-select,
+.ilb-input,
+.ilb-textarea,
+.ilb-num {
+  background: var(--SmartThemeInputColor, #1b1b1b);
+  color: inherit;
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.ilb-num {
+  width: 64px;
+}
+
+.ilb-textarea {
+  width: 100%;
+  font-family: inherit;
+}
+
+.ilb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+  flex: 1;
+}
+
+.ilb-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ilb-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ilb-summary {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 0.88em;
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+
+.ilb-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4000;
+}
+
+.ilb-modal {
+  background: var(--SmartThemeBlurTintColor, #1e1e1e);
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  border-radius: 8px;
+  max-width: 640px;
+  width: min(92vw, 640px);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ilb-modal-head,
+.ilb-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+}
+
+.ilb-modal-foot {
+  border-bottom: none;
+  border-top: 1px solid var(--SmartThemeBorderColor, #444);
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ilb-modal-body {
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.ilb-help-what,
+.ilb-help-why,
+.ilb-help-how {
+  margin: 0 0 10px;
+  line-height: 1.55;
+}
+
+.ilb-help-what::before {
+  content: "它是什么：";
+  font-weight: 600;
+}
+
+.ilb-help-why::before {
+  content: "为什么这样设计：";
+  font-weight: 600;
+}
+
+.ilb-help-how::before {
+  content: "怎么用：";
+  font-weight: 600;
+}
+
+.ilb-warn-list {
+  padding-left: 18px;
+  line-height: 1.6;
+}
+
+.ilb-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ------------------------------------------------------------------
+   v0.2.0：悬浮球 + 浮窗 + 设置卡片
+   命名前缀统一 ilb-，Z 轴分层：
+     3900 悬浮球（最低，永远能点到）
+     4000 浮层（帮助、导入结果）
+     4500 浮窗（盖住页面内容）
+   ------------------------------------------------------------------ */
+
+.ilb-tabs-fill {
+  flex: 1 1 auto;
+}
+
+.ilb-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* ---- 悬浮球 ---- */
+
+.ilb-fab {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 52px;
+  height: 52px;
+  z-index: 3900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
+  border-radius: 50%;
+  background: var(--SmartThemeBlurTintColor, rgba(28, 28, 34, 0.92));
+  color: var(--SmartThemeQuoteColor, #8ab4f8);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+
+.ilb-fab:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.ilb-fab:active {
+  transform: scale(0.96);
+}
+
+.ilb-fab-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ilb-fab-glyph {
+  line-height: 1;
+}
+
+/* 小球上的状态点：绿=这轮有内容，黄=这轮空，红=出错 */
+.ilb-fab-dot {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  background: rgba(160, 160, 160, 0.9);
+}
+
+.ilb-dot-idle {
+  background: rgba(160, 160, 160, 0.9);
+}
+
+.ilb-dot-ok {
+  background: #4caf7d;
+}
+
+.ilb-dot-warn {
+  background: #d9a441;
+}
+
+.ilb-dot-error {
+  background: #d95757;
+}
+
+/* ---- 浮窗 ---- */
+
+/* 浮层（帮助、导入结果）必须盖在浮窗之上，否则从窗里点开的说明会被窗挡住。
+   这里覆盖前面 .ilb-overlay 的 4000：同优先级、后出现者生效。 */
+.ilb-overlay {
+  z-index: 4600;
+}
+
+.ilb-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 4450;
+  background: rgba(0, 0, 0, 0.45);
+  display: none;
+}
+
+.ilb-backdrop-open {
+  display: block;
+}
+
+.ilb-window {
+  position: fixed;
+  z-index: 4500;
+  display: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
+  border-radius: 12px;
+  background: var(--SmartThemeBlurTintColor, rgba(24, 24, 30, 0.97));
+  color: var(--SmartThemeBodyColor, inherit);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.ilb-window-open {
+  display: flex;
+}
+
+.ilb-window-desktop {
+  resize: both;
+}
+
+.ilb-window-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  cursor: move;
+  touch-action: none;
+  flex: 0 0 auto;
+}
+
+.ilb-window-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ilb-window-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ilb-window-sub {
+  font-size: 0.78em;
+  opacity: 0.65;
+}
+
+.ilb-window-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.ilb-window-x {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ilb-window-x:hover {
+  border-color: var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.2));
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ilb-window-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- 设置页里的小卡片 ---- */
+
+.ilb-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ilb-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ilb-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ilb-card-summary {
+  font-size: 0.86em;
+  opacity: 0.78;
+}
+
+.ilb-card-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ilb-card-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ilb-card-label {
+  flex: 0 0 auto;
+  min-width: 96px;
+  opacity: 0.9;
+}
+
+.ilb-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.ilb-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.ilb-btn-primary {
+  border-color: var(--SmartThemeQuoteColor, #8ab4f8);
+  background: rgba(122, 167, 255, 0.2);
+  color: inherit;
+  font-weight: 600;
+}
+
+.ilb-btn-primary:hover {
+  background: rgba(122, 167, 255, 0.32);
+}
+
+/* ---- 手机布局：窗口整屏、按钮变大、表格可横向滑动 ---- */
+
+.ilb-window-mobile {
+  left: 0 !important;
+  top: 0 !important;
+  width: 100vw !important;
+  height: 100vh;
+  height: 100dvh;
+  border-radius: 0;
+  border: none;
+  resize: none;
+}
+
+.ilb-window-mobile .ilb-window-head {
+  cursor: default;
+  padding: 12px 14px;
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+}
+
+.ilb-window-mobile .ilb-window-body {
+  padding: 10px 10px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+.ilb-window-mobile .ilb-window-x {
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
+}
+
+.ilb-window-mobile .ilb-tab {
+  padding: 8px 12px;
+}
+
+/* 手机上不强制表格最小宽度：规则页已经改成卡片式，
+   再留 520px 会让用户必须左右滑动，正好是这一轮要修掉的问题（ILB-6.10.7）。 */
+
+.ilb-window-mobile .ilb-btn,
+.ilb-window-mobile .ilb-select,
+.ilb-window-mobile .ilb-input {
+  min-height: 34px;
+}
+
+/* 触屏设备上不要有"悬停才出现"的东西；同时把点击热区做大一点 */
+@media (hover: none) {
+  .ilb-fab:hover {
+    transform: none;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ilb-fab {
+    transition: none;
+  }
+}
+
+/* ===== 规则卡片 / 筛选 / 批量 / 快照 / 编辑器（v0.3.0） ===== */
+/* 一条原则：所有横向排列的容器都允许换行（flex-wrap）；
+   宽度一律用 min-width:0 + flex-basis，让它先缩再换行，而不是撑出横向滚动条。 */
+
+.ilb-view,
+.ilb-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ilb-section-title {
+  margin: 8px 0 2px;
+  font-size: 0.95em;
+  opacity: 0.9;
+}
+
+.ilb-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ilb-rule-list,
+.ilb-cardlist,
+.ilb-booklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ilb-rule-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ilb-rule-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 140px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.ilb-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ilb-meta {
+  display: flex;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+  font-size: 0.86em;
+  opacity: 0.82;
+  word-break: break-word;
+}
+
+.ilb-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.ilb-card-off {
+  opacity: 0.6;
+}
+
+.ilb-book-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ilb-book-controls .ilb-select {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.ilb-filterbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.ilb-search {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.ilb-select {
+  max-width: 100%;
+}
+
+.ilb-counter {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.ilb-batchbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 6px;
+  border-top: 1px dashed var(--SmartThemeBorderColor, #444);
+  margin-top: 6px;
+}
+
+.ilb-cond {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--SmartThemeBorderColor, #444);
+  min-width: 0;
+}
+
+.ilb-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ilb-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ilb-preview-pass {
+  color: var(--SmartThemeQuoteColor, #7aa7ff);
+  font-weight: 600;
+  margin: 0;
+}
+
+.ilb-preview-fail {
+  color: #e08b8b;
+  font-weight: 600;
+  margin: 0;
+}
+
+.ilb-file-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #33333355);
+}
+
+.ilb-file-name {
+  flex: 1 1 130px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.ilb-loglist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ilb-logrow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.88em;
+}
+
+.ilb-check {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--SmartThemeQuoteColor, #7aa7ff);
+}
+
+/* 窄屏：按钮不再并排挤成一条，允许各占一行 */
+@media (max-width: 640px) {
+  .ilb-actions .ilb-btn {
+    flex: 1 1 auto;
+  }
+
+  .ilb-rule-titles {
+    flex-basis: 100%;
+  }
+
+  .ilb-meta {
+    font-size: 0.8em;
+  }
+}
+
+/* —— 判定流程编辑器（ILB-6.13）：一层套一层的卡片，不画连线 —— */
+.ilb-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ilb-flow-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.ilb-flow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ilb-flow-node {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--SmartThemeBorderColor, #555555);
+  border-left: 3px solid var(--SmartThemeQuoteColor, #7aa7ff);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ilb-flow-node-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.ilb-flow-kind {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(122, 167, 255, 0.18);
+  font-size: 0.86em;
+  white-space: nowrap;
+}
+
+.ilb-flow-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ilb-flow-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 2px dashed var(--SmartThemeBorderColor, #555555);
+}
+
+.ilb-flow-branch-title {
+  font-size: 0.84em;
+  opacity: 0.85;
+}
+
+.ilb-flow-add {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ilb-flow-expr,
+.ilb-flow-operand,
+.ilb-flow-cond,
+.ilb-flow-cond-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.ilb-flow-cond-row {
+  padding-left: 6px;
+  border-left: 2px solid var(--SmartThemeBorderColor, #555555);
+}
+
+.ilb-flow-check {
+  white-space: normal;
+}
+
+.ilb-flow-kind-select {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.ilb-flow-op {
+  flex: 0 0 auto;
+  max-width: 76px;
+}
+
+.ilb-flow-host {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ilb-flow .ilb-input {
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+@media (max-width: 640px) {
+  .ilb-flow-node {
+    padding: 6px;
+  }
+
+  .ilb-flow-branch {
+    padding-left: 6px;
+  }
+
+  .ilb-flow-kind-select {
+    flex-basis: 100%;
+  }
+
+  .ilb-flow-expr .ilb-input,
+  .ilb-flow-cond .ilb-input {
+    flex: 1 1 100%;
+  }
+}
+
+
