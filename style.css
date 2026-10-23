@@ -319,6 +319,18 @@
   overscroll-behavior: contain;
 }
 
+/* 底部按钮跟手：导入浮层、规则编辑器的"开始导入/保存"原本在滚动区最下方，
+   手机上要一路滑到底才够得着。让它固定在正文底部，正文自己滚。
+   （只对直接放在正文里的底栏生效；标题栏用同样思路钉在顶部。） */
+.ilb-modal-body > .ilb-modal-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 8px -12px -12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--SmartThemeBlurTintColor, #1e1e1e);
+}
+
 /* 手机：浮层改成从底部升起的整宽面板。
    手机上居中弹窗的问题不是"好不好看"，是"够不够得着"：
    屏幕越大，居中弹窗的关闭按钮越往屏幕上半部跑；贴底则永远在拇指附近。

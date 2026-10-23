@@ -29,6 +29,7 @@
 | `ui/help.js` | 浮层打开后，背景页面还能跟着手指滚，滚着滚着弹层就被顶走 | 打开时给 `body` 加 `ilb-locked`，关闭时在 `closeOverlay()` 里成对移除；CSS 只在 ≤768px 生效，避免桌面布局跳动 |
 | `style.css` `@media (max-width: 768px)` | 手机上的弹窗居中，屏幕越大关闭按钮越往屏幕上半部跑 | 改为从底部升起的整宽面板（`align-items: flex-end`、`width: 100%`、`max-height: calc(100dvh - 12px)`、`border-radius` 只留上面两角、底部安全区） |
 | `style.css` | `.ilb-modal-wide` 被 `help.js` 引用但从未定义，宽浮层并不宽 | 补 `.ilb-modal-wide { width: min(96vw, 900px) }` |
+| `ui/importer.js` / `ui/editor.js` + `style.css` | 同一类"够不着"：这两处的「开始导入/保存」按钮放在浮层正文的最下方，正文一长就要一路滚到底才能按 | `.ilb-modal-body > .ilb-modal-foot` 改 `position: sticky; bottom: 0`（含底部安全区），让底栏钉住、正文自己滚 |
 
 **新增**
 
