@@ -15,6 +15,45 @@
 
 ---
 
+## v0.4.2-code · 2026-10-23 · 手机上浮层"太靠上、关闭按钮点不到"（含规格 v2.4.1）
+
+**一句话**：真机测试发现，手机上从「试一句」「导入原生世界书」「导入记录」等处弹出的次级菜单位置过于靠上，右上角关闭按钮点不到。根因不是某个弹层写错，而是**定位策略**：`align-items: center` + 内容比屏幕高时，溢出部分会被平均顶到上方，标题栏和关闭按钮一起被顶出可视区。改成"所有浮层走同一个出口 + 顶对齐可滚动 + 手机贴底面板 + 固定标题栏 + 触控够大的 ×"。
+
+**修正**
+
+| 位置 | 问题 | 修法 |
+|---|---|---|
+| `style.css` `.ilb-overlay` / `.ilb-modal` | `align-items: center` 且 `max-height: 82vh`；手机上 `vh` 按地址栏收起后的高度算，内容又撑破 `max-height`（flex 子项默认 `min-height:auto` 不肯缩），整块弹层向上溢出，关闭按钮跑到屏幕外 | 容器改 `align-items: flex-start` + `overflow-y: auto` + 安全区 padding，弹层 `margin: auto`（短时居中、长时从顶开始）；`max-height` 用 `calc(100dvh - 32px)`；`.ilb-modal-body` 补 `min-height: 0` 让它真正滚动 |
+| `style.css` | 关闭按钮是文字「关闭」，长标题下会被挤到换行 | 新增 `.ilb-modal-x`：`×` + `aria-label="关闭"`；桌面 32px，手机 44×44 |
+| `ui/help.js` | 标题栏会随正文一起滚走 | `.ilb-modal-head` 改 `position: sticky; top: 0` 且给不透明背景 |
+| `ui/help.js` | 浮层打开后，背景页面还能跟着手指滚，滚着滚着弹层就被顶走 | 打开时给 `body` 加 `ilb-locked`，关闭时在 `closeOverlay()` 里成对移除；CSS 只在 ≤768px 生效，避免桌面布局跳动 |
+| `style.css` `@media (max-width: 768px)` | 手机上的弹窗居中，屏幕越大关闭按钮越往屏幕上半部跑 | 改为从底部升起的整宽面板（`align-items: flex-end`、`width: 100%`、`max-height: calc(100dvh - 12px)`、`border-radius` 只留上面两角、底部安全区） |
+| `style.css` | `.ilb-modal-wide` 被 `help.js` 引用但从未定义，宽浮层并不宽 | 补 `.ilb-modal-wide { width: min(96vw, 900px) }` |
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `docs/参考文档.md` §6.14（ILB-6.14.1–6.14.8） | 浮层与次级菜单的硬约束：统一出口、顶对齐、× 与触控尺寸、固定标题栏、手机贴底、锁背景滚动、必须挂 `document.body`、375px 验收 |
+| `docs/参考文档.md` §9.3 | 两条验收：全部次级菜单在 375px 下关闭按钮首屏可点；浮层开着时背景不滚 |
+| `tests/smoke-dom.mjs` | 新增一步：真的走 `openOverlay()` 开一层，检查 `ilb-overlay → ilb-modal-head → ilb-modal-x` 的结构、`aria-label`、`×` 文案，点一下确认浮层被移除且 `ilb-locked` 已解除（第 17 步） |
+
+**实测结果（2026-10-23 本机）**
+
+```
+node --test tests/*.test.mjs     → tests 102, pass 102, fail 0
+node tests/linkcheck.mjs         → 共 36 个模块：通过 35、跳过 1、失败 0
+node tests/smoke-dom.mjs         → 界面冒烟：失败 0（17 步）
+```
+
+**待验证**
+
+1. 这是按"手机上为什么点不到"推导出的修法，**没有在真机上复测过**——修的是成因，但真机行为（尤其 iOS 的 `dvh` 与安全区）仍需一次确认。
+2. 贴底面板在横屏手机上是否过高（`88vh`），未验证。
+3. 锁背景滚动依赖 `body` 是滚动容器；若 SillyTavern 的主题把滚动放在内层 `#chat` 上，本条不生效（不影响关闭按钮可用）。
+
+---
+
 ## v0.4.1-code · 2026-10-23 · 第一次真的跑起来：102 个测试全过，连锁触发修好一处真 bug
 
 **一句话**：这台机器上 `node` 突然能用了（此前一直报 `0xC0000142`）。于是把之前"写好了但没跑"的东西全部跑了一遍：单元测试 102 个、模块链接检查 36 个、假 DOM 界面冒烟 16 步。**跑出了 3 个失败，全在连锁触发上，根因是真的写错了。** 仍然没有在真实 SillyTavern 里跑过。

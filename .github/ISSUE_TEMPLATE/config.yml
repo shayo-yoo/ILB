@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 先看看文档（安装、判定流程、已知限制）
+    url: https://github.com/shayo-yoo/ILB#readme
+    about: 安装步骤、界面在哪、判定流程怎么搭、以及已知的六条限制
+  - name: 最近改了什么
+    url: https://github.com/shayo-yoo/ILB/blob/main/docs/CHANGELOG.md
+    about: 每个版本改了什么、为什么改；如果问题是刚出现的，这里可能已经有说明
+  - name: 某个设计为什么是这样
+    url: https://github.com/shayo-yoo/ILB/blob/main/docs/决策记录.md
+    about: 重要选择的背景与"为什么否决了另一种做法"

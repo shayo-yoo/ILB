@@ -211,13 +211,27 @@
   opacity: 0.85;
 }
 
+/* 浮层（帮助 / 导入 / 快照命名 / 各种次级菜单）的定位规则，来自一次真机事故：
+   手机上弹层"太靠上、右上角关闭按钮点不到"。原因是 align-items:center + 内容比屏幕高时，
+   溢出的部分会平均顶到屏幕上方，标题和关闭按钮正好一起被顶出去。
+   现在的做法：
+   1) 顶对齐 + 自身可滚动 + 弹层 margin:auto —— 内容短时仍居中，内容长时从顶部开始，永远不往上溢出；
+   2) 标题栏 sticky，滚动正文时关闭按钮一直留在原地；
+   3) 关闭按钮改成"×"，并且给足触控高度（ILB-6.14）。 */
 .ilb-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box;
+  padding: 16px;
+  padding-top: max(16px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
   z-index: 4000;
 }
 
@@ -225,11 +239,19 @@
   background: var(--SmartThemeBlurTintColor, #1e1e1e);
   border: 1px solid var(--SmartThemeBorderColor, #555);
   border-radius: 8px;
-  max-width: 640px;
+  max-width: 100%;
   width: min(92vw, 640px);
+  margin: auto;
   max-height: 82vh;
+  max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  outline: none;
+}
+
+.ilb-modal-wide {
+  width: min(96vw, 900px);
 }
 
 .ilb-modal-head,
@@ -237,8 +259,48 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+  flex: 0 0 auto;
+}
+
+.ilb-modal-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-radius: 8px 8px 0 0;
+  background: var(--SmartThemeBlurTintColor, #1e1e1e);
+}
+
+.ilb-modal-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ilb-modal-x {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ilb-modal-x:hover {
+  border-color: var(--SmartThemeBorderColor, #555);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .ilb-modal-foot {
@@ -249,8 +311,48 @@
 }
 
 .ilb-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 12px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* 手机：浮层改成从底部升起的整宽面板。
+   手机上居中弹窗的问题不是"好不好看"，是"够不够得着"：
+   屏幕越大，居中弹窗的关闭按钮越往屏幕上半部跑；贴底则永远在拇指附近。
+   max-height 用 dvh 并留出 12px，保证不会高过可视区（地址栏收起时 vh 会算大）。 */
+@media (max-width: 768px) {
+  .ilb-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .ilb-modal {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-radius: 14px 14px 0 0;
+    max-height: 88vh;
+    max-height: calc(100dvh - 12px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .ilb-modal-head {
+    border-radius: 14px 14px 0 0;
+  }
+
+  .ilb-modal-x {
+    width: 44px;
+    height: 44px;
+    font-size: 26px;
+  }
+
+  /* 浮层开着的时候，底下的页面还能跟着手指滚，滚着滚着浮层就被顶走了 */
+  body.ilb-locked {
+    overflow: hidden;
+  }
 }
 
 .ilb-help-what,

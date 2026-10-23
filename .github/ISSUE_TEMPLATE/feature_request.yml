@@ -1,0 +1,59 @@
+name: 提一个想法
+description: 新功能、操作习惯、界面建议
+title: "[想法] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ILB 的判断标准很朴素：**这个功能能不能让"不写语法"的人多做到一件事**。
+        所以请先说说你现在的做法是什么、卡在哪，再说你想要的方案——很多时候"想要的方案"未必是最省事的那个。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你现在想做什么，但做不到
+      description: 用你实际遇到的场景描述，不要先想技术方案
+      placeholder: |
+        我有一本文风书、一本背景书，想让文风书永远开着，背景书只在某些角色卡下开，
+        但现在只能一本一本手动切，切完还记不住上次是哪种组合。
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 你现在怎么绕过它
+      description: 没有绕过办法就写"没办法"
+    validations:
+      required: false
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望它怎么工作
+      description: 越像"用户看到的界面"越好，不需要写代码
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 你觉得它属于哪一类
+      options:
+        - 判定逻辑（什么时候出现）
+        - 多本书的管理与切换
+        - 导入 / 导出
+        - 界面与操作手感（尤其手机）
+        - 诊断与"为什么没出现"
+        - 说不清
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 请确认
+      options:
+        - label: 我接受这个功能可能被拒绝——ILB 优先保持"不写语法也能用"，复杂功能会先问能不能再简单一点
+          required: true

@@ -1,0 +1,92 @@
+name: 报告一个问题
+description: 规则没出现、按钮点不到、导入出错……都从这里开始
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢反馈。**请先确认你已经照着 [README](https://github.com/shayo-yoo/ILB#安装) 把文件夹放对位置**（`third-party/ILB/manifest.json` 必须在同一层）。
+
+        对"某条规则没出现"这类问题，下面第 4、5 项填得越具体，修起来越快——大多数这类问题最后都落在"触发词写法"或"流程里「不成立时」留空"上。
+
+  - type: input
+    id: st-version
+    attributes:
+      label: SillyTavern 版本
+      description: 在酒馆界面底部或 `git log -1` 里能看到；填分支名（release / staging）也有帮助
+      placeholder: "例如：1.13.2 release"
+    validations:
+      required: true
+
+  - type: input
+    id: ilb-version
+    attributes:
+      label: ILB 版本
+      description: 扩展列表里显示的版本号，或浏览器控制台里 `[ILB] 已启动 v…` 那一行
+      placeholder: "例如：0.4.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 你是在哪用的
+      options:
+        - 电脑浏览器
+        - 手机浏览器
+        - 手机上的其他客户端（请在下文补充）
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么复现
+      description: 从打开酒馆开始，一步一步写。能稳定复现最好；偶发也请写清楚"大概几次出一次"
+      placeholder: |
+        1. 打开悬浮球 → 规则 → 编辑「王城」
+        2. 触发词填「王城」，画了一个「检测：最近 5 条含钟声」
+        3. 发一条「我走进王城」
+        4. 打开诊断页
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你期待什么，实际发生了什么
+      placeholder: |
+        期待：这条规则应该出现
+        实际：诊断页显示卡在「判定流程」，但那句话里明明有「钟声」
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断页截图或文字
+      description: 悬浮球 → 诊断。这张表会说清"哪条规则、卡在哪一步、为什么"，是排查的主要依据
+      placeholder: 截图直接拖进来即可（粘贴图片），或把表格文字贴在这里
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: 控制台日志（按 F12 → Console）
+      description: 尤其是有没有 `[ILB]` 开头的报错。请把完整报错堆栈贴上来，不要只写"报错了"
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: 请确认
+      options:
+        - label: 我已经看过 README 的「已知限制」，确认这不是已经写明的限制
+          required: true
+        - label: 这不是"注入没生效"但实际是没在真实对话里测（README 已说明注入尚未完整验证）
+          required: false

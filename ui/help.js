@@ -56,6 +56,7 @@ export function closeOverlay() {
   try {
     document.removeEventListener('keydown', current.onKey);
     current.overlay.remove();
+    document.body.classList.remove('ilb-locked');
   } catch {
     /* ignore */
   }
@@ -64,6 +65,10 @@ export function closeOverlay() {
 
 /**
  * 弹一层浮层。节点自备，这里只负责"居中、可关、Esc 能走"。
+ *
+ * 关闭按钮用"×"而不是文字"关闭"：手机上文字按钮要么被挤到换行，
+ * 要么在标题很长时把标题压成一条缝（ILB-6.14.3）。
+ *
  * @param {{title?:string, nodes?:Array, footer?:Array, wide?:boolean}} options
  */
 export function openOverlay({ title = '', nodes = [], footer = [], wide = false } = {}) {
@@ -71,13 +76,20 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
 
   const body = el('div', { class: 'ilb-modal-body' }, nodes);
   const head = el('div', { class: 'ilb-modal-head' }, [
-    el('strong', { text: title }),
-    el('button', { type: 'button', class: 'ilb-btn ilb-btn-ghost', text: '关闭', onclick: () => closeOverlay() }),
+    el('strong', { class: 'ilb-modal-title', text: title }),
+    el('button', {
+      type: 'button',
+      class: 'ilb-modal-x',
+      text: '×',
+      title: '关闭',
+      'aria-label': '关闭',
+      onclick: () => closeOverlay(),
+    }),
   ]);
   const parts = [head, body];
   if (Array.isArray(footer) && footer.length > 0) parts.push(el('div', { class: 'ilb-modal-foot' }, footer));
 
-  const modal = el('div', { class: wide ? 'ilb-modal ilb-modal-wide' : 'ilb-modal', role: 'dialog', 'aria-modal': 'true' }, parts);
+  const modal = el('div', { class: wide ? 'ilb-modal ilb-modal-wide' : 'ilb-modal', role: 'dialog', 'aria-modal': 'true', tabindex: '-1' }, parts);
   const overlay = el('div', { class: 'ilb-overlay' }, [modal]);
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeOverlay();
@@ -93,6 +105,9 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
 
   try {
     document.body.appendChild(overlay);
+    // 手机下落层后面的页面还能滚，手指一划就把浮层顶走；锁住（只在窄屏生效，见 style.css）。
+    document.body.classList.add('ilb-locked');
+    if (typeof modal.focus === 'function') modal.focus({ preventScroll: true });
   } catch (err) {
     console.warn('[ILB] 浮层没能挂上', err);
   }

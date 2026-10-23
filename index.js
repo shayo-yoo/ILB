@@ -18,7 +18,7 @@ import { createFloatingWindow } from './ui/floating.js';
 import { loadHelp } from './ui/help.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.4.0';
+const VERSION = '0.4.2';
 
 function notify(message, kind = 'info') {
   try {

@@ -167,6 +167,7 @@ const { createRepository } = await import('../adapters/repository.js');
 const { createPipeline } = await import('../runtime/pipeline.js');
 const { createRegistry } = await import('../runtime/registry.js');
 const { createPanel } = await import('../ui/panel.js');
+const { openOverlay } = await import('../ui/help.js');
 
 let failures = 0;
 function step(name, fn) {
@@ -318,6 +319,22 @@ step('导入选择浮层能打开并渲染', async () => {
   const el = openImportDialog(ctx, { preselect: 'new' });
   if (!el) throw new Error('导入浮层没有返回元素');
   body.appendChild(el);
+});
+
+step('浮层有关闭按钮，点一下能关掉', () => {
+  openOverlay({ title: '测试浮层', nodes: [makeElement('p')] });
+  const overlay = body.children[body.children.length - 1];
+  if (!String(overlay.className).includes('ilb-overlay')) throw new Error('浮层没有挂到 body 上');
+  const modal = overlay.children[0];
+  const head = modal.children[0];
+  if (!String(head.className).includes('ilb-modal-head')) throw new Error('标题栏不是第一块，滚动时关闭按钮会被卷走');
+  const x = head.children.find((n) => String(n.className).includes('ilb-modal-x'));
+  if (!x) throw new Error('找不到关闭按钮');
+  if (x.getAttribute('aria-label') !== '关闭') throw new Error('关闭按钮缺少 aria-label');
+  if (x.textContent !== '×') throw new Error('关闭按钮不是 ×');
+  x.dispatch('click');
+  if (body.children.includes(overlay)) throw new Error('点了关闭按钮，浮层还在');
+  if (body.classList.contains('ilb-locked')) throw new Error('关掉浮层之后页面还锁着滚动');
 });
 
 step('设置卡片能挂载', async () => {
