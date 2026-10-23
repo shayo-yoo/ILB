@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>ILB 手机界面探针</title>
+    <style>
+      body { margin: 0; background: #0e0e12; color: #eaeaea; font: 13px/1.5 ui-monospace, monospace; }
+      h1 { font-size: 14px; margin: 12px; }
+      pre { margin: 0 12px 12px; white-space: pre-wrap; }
+      iframe { border: 0; }
+    </style>
+  </head>
+  <body>
+    <h1>ILB 手机界面探针：375 / 500 / 820 宽，带样式与无样式各一轮</h1>
+    <pre id="out">跑着…</pre>
+    <script type="module">
+      // 外层：用 iframe 造出真实的窄视口（Chrome 无头窗口最小 500px 宽，没法直接压到 375）。
+      // 每一轮都是真实模块 + 真实点击，结果由内层挂在 window.__ILB_PROBE_REPORT 上。
+      const out = document.getElementById('out');
+      const cases = [
+        { w: 375, h: 780, nocss: 0, expect: 'mobile' },
+        { w: 375, h: 780, nocss: 1, expect: 'mobile' },
+        { w: 500, h: 900, nocss: 0, expect: 'mobile' },
+        { w: 820, h: 620, nocss: 0, expect: 'desktop' },
+      ];
+
+      const blocks = [];
+      let bad = 0;
+
+      for (const c of cases) {
+        const frame = document.createElement('iframe');
+        // 放在屏幕内但盖住：离屏 iframe 在部分浏览器里不做布局，量出来的 rect 会是 0。
+        frame.style.cssText = `position:fixed;left:0;top:0;width:${c.w}px;height:${c.h}px;opacity:0.01;pointer-events:none`;
+        frame.src = `./mobile-ui-run.html?nocss=${c.nocss}&expect=${c.expect}`;
+        document.body.appendChild(frame);
+        let report = null;
+        try {
+          report = await new Promise((resolve, reject) => {
+            const started = Date.now();
+            const tick = () => {
+              try {
+                if (frame.contentWindow?.__ILB_PROBE_REPORT) return resolve(frame.contentWindow.__ILB_PROBE_REPORT);
+              } catch {
+                /* 跨域不可能，忽略 */
+              }
+              if (Date.now() - started > 20000) return reject(new Error('等不到内层结果（20 秒）'));
+              setTimeout(tick, 100);
+            };
+            tick();
+          });
+        } catch (err) {
+          report = { tag: `${c.w}×${c.h}`, lines: [`FAIL ${err.message}`], notes: [], errors: [err.message], ok: false };
+        }
+        frame.remove();
+        if (!report.ok) bad += 1;
+        // __PROBE_STOP__ 是内层"这一轮不测手机界面"的哨兵，不是故障，别显示出来。
+        const realErrors = (report.errors ?? []).filter((e) => !String(e).includes('__PROBE_STOP__'));
+        blocks.push([`=== ${report.tag} ===`, ...report.lines, ...(report.notes?.length ? [`备注：${report.notes.join(' | ')}`] : []), ...(realErrors.length ? [`错误：${realErrors.join(' | ')}`] : [])].join('\n'));
+        out.textContent = blocks.join('\n\n');
+      }
+
+      const text = [`共 ${cases.length} 轮：通过 ${cases.length - bad}、失败 ${bad}`, ...blocks].join('\n\n');
+      out.textContent = text;
+      try {
+        await fetch('/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ probe: 'mobile-ui', bad, text }) });
+      } catch {
+        /* 直接开文件（没有服务器）时忽略 */
+      }
+      window.__ILB_PROBE_DONE = true;
+    </script>
+  </body>
+</html>

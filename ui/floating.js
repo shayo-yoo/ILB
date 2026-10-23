@@ -1,8 +1,12 @@
-// ui/floating.js —— 常驻的"悬浮球 + 浮窗"。
+// ui/floating.js —— 常驻的"悬浮球 + 浮窗"（电脑专用，v0.5.0 起不再管手机）。
 // 为什么要有它：扩展设置页里塞满四个面板，用起来像在翻一个后台管理网站；
 // 而"看书、改规则、看诊断"是高频操作，应该随手就能打开、随手就能关。
 // 分工：这个文件只管"壳"（球在哪、窗多大、怎么拖动、什么时候关），
 //       里面装什么由 panel.js 决定。所以换界面不用动这里。
+//
+// v0.5.0：手机不再走这里（手机是 ui/mobile.js 的整屏界面）。原先散在这个文件里的
+// 手机分支——整屏 class、隐藏悬浮球、遮罩、锁背景滚动——全部删掉了，
+// 因为那套"一套 DOM 掰成两种形状"的做法正是手机上反复出问题的来源。
 
 import { el, on } from './dom.js';
 import { helpButton, closeOverlay, isOverlayOpen } from './help.js';
@@ -13,7 +17,6 @@ import {
   defaultFabPosition,
   clampFabPosition,
   viewportOf,
-  isMobileLayout,
   describeLayout,
 } from './layout.js';
 
@@ -52,10 +55,9 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
   let fabPos = clampFabPosition(saved.fab ?? defaultFabPosition(layout, initialViewport), initialViewport);
   let open = saved.open === true;
   let mounted = false;
+  let visible = true;
   let saveTimer = null;
   let resizeTimer = null;
-  let lockedScroll = false;
-  let previousOverflow = '';
   let lastFocus = null;
 
   // ---- 元素 ----
@@ -85,7 +87,6 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     { class: 'ilb-window', role: 'dialog', 'aria-label': '世界书 ILB 控制器', 'aria-hidden': 'true' },
     [head, body],
   );
-  const backdrop = el('div', { class: 'ilb-backdrop', 'aria-hidden': 'true' });
 
   // ---- 状态保存 ----
   function persistNow() {
@@ -107,13 +108,6 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
 
   // ---- 摆放 ----
   function applyGeometry() {
-    if (isMobileLayout(layout)) {
-      win.style.left = '';
-      win.style.top = '';
-      win.style.width = '';
-      win.style.height = '';
-      return;
-    }
     win.style.left = `${geometry.x}px`;
     win.style.top = `${geometry.y}px`;
     win.style.width = `${geometry.w}px`;
@@ -130,20 +124,6 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     win.classList.toggle('ilb-window-open', open);
     win.setAttribute('aria-hidden', open ? 'false' : 'true');
     fab.setAttribute('aria-expanded', open ? 'true' : 'false');
-    fab.classList.toggle('ilb-fab-hidden', open && isMobileLayout(layout));
-    backdrop.classList.toggle('ilb-backdrop-open', open && isMobileLayout(layout));
-
-    // 手机上打开整屏窗时要锁住背后的滚动，否则手指一滑背景跟着跑。
-    const shouldLock = open && isMobileLayout(layout);
-    if (shouldLock && !lockedScroll) {
-      previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      lockedScroll = true;
-    } else if (!shouldLock && lockedScroll) {
-      document.body.style.overflow = previousOverflow || '';
-      previousOverflow = '';
-      lockedScroll = false;
-    }
   }
 
   function applyLayout() {
@@ -151,8 +131,7 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     layout = pickLayout(viewport);
     geometry = clampGeometry(geometry, layout, viewport);
     fabPos = clampFabPosition(fabPos, viewport);
-    win.classList.toggle('ilb-window-mobile', isMobileLayout(layout));
-    win.classList.toggle('ilb-window-desktop', !isMobileLayout(layout));
+    win.classList.add('ilb-window-desktop');
     applyGeometry();
     applyFab();
     applyOpenState();
@@ -264,7 +243,7 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
       },
     });
 
-    // 窗口标题栏：只有电脑布局才允许拖（手机上整屏，拖没意义）。
+    // 窗口标题栏：拖动挪位置。
     let winBase = null;
     makeDrag(head, {
       skipInteractive: true,
@@ -272,7 +251,7 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
         winBase = { ...geometry };
       },
       onMove: (dx, dy) => {
-        if (!winBase || isMobileLayout(layout)) return;
+        if (!winBase) return;
         geometry = clampGeometry({ ...winBase, x: winBase.x + dx, y: winBase.y + dy }, layout, viewportOf());
         applyGeometry();
       },
@@ -288,7 +267,7 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     if (typeof ResizeObserver === 'function') {
       try {
         const observer = new ResizeObserver(() => {
-          if (!mounted || !open || isMobileLayout(layout)) return;
+          if (!mounted || !open || !visible) return;
           const w = Math.round(win.offsetWidth);
           const h = Math.round(win.offsetHeight);
           if (!w || !h) return;
@@ -320,7 +299,6 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     // 注意：悬浮球"点一下打开"是靠 pointerup 里判断"有没有拖动"实现的，
     // 这里不要再加 click 监听，否则一次点击会开关两次。
     on(closeBtn, 'click', closeWindow);
-    on(backdrop, 'click', closeWindow);
     on(document, 'keydown', (event) => {
       if (event.key !== 'Escape' || !open) return;
       if (isOverlayOpen()) return; // 先关浮层，再关窗口
@@ -337,7 +315,6 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
       return false;
     }
     try {
-      document.body.appendChild(backdrop);
       document.body.appendChild(win);
       document.body.appendChild(fab);
     } catch (err) {
@@ -380,6 +357,19 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     }
   }
 
+  /**
+   * 整壳显隐。手机布局下电脑这套要整体让位——不是销毁，切回电脑布局时位置和状态原样还在。
+   * 用内联 display 而不是 hidden：.ilb-window-open / .ilb-fab 这些类里的 display 会盖过 [hidden]。
+   */
+  function setVisible(next) {
+    visible = Boolean(next);
+    if (!visible && open) closeWindow();
+    for (const node of [win, fab]) {
+      if (node) node.style.display = visible ? '' : 'none';
+    }
+    return visible;
+  }
+
   return {
     mount,
     attachPanel,
@@ -390,9 +380,11 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     layout: () => layout,
     body,
     setStatus,
+    setVisible,
     refresh,
     describe: () => ({
       open,
+      visible,
       layout,
       geometry: { ...geometry },
       fab: { ...fabPos },

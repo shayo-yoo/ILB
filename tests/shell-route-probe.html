@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>ILB 双壳路由探针</title>
+    <style>
+      body { margin: 0; background: #0e0e12; color: #eaeaea; font: 13px/1.5 ui-monospace, monospace; }
+      h1 { font-size: 14px; margin: 12px; }
+      pre { margin: 0 12px 12px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>ILB 双壳路由探针：同一套装配分别落在手机视口与电脑视口</h1>
+    <pre id="out">跑着…</pre>
+    <script type="module">
+      // 外层只做一件事：用 iframe 造 375 与 900 两个视口，各跑一次"完整装配"（createShell + 面板）。
+      // 这回答的是"index.js 装的那套在真浏览器里到底挑了哪一套壳、另一套有没有让位"。
+      const out = document.getElementById('out');
+      const cases = [
+        { w: 375, h: 780, expect: 'mobile', nocss: 0 },
+        { w: 375, h: 780, expect: 'mobile', nocss: 1 },
+        { w: 900, h: 700, expect: 'desktop', nocss: 0 },
+      ];
+      const blocks = [];
+      let bad = 0;
+
+      for (const c of cases) {
+        const frame = document.createElement('iframe');
+        frame.style.cssText = `position:fixed;left:0;top:0;width:${c.w}px;height:${c.h}px;opacity:0.01;pointer-events:none`;
+        frame.src = `./shell-route-run.html?expect=${c.expect}&nocss=${c.nocss}`;
+        document.body.appendChild(frame);
+        let report = null;
+        try {
+          report = await new Promise((resolve, reject) => {
+            const started = Date.now();
+            const tick = () => {
+              const r = frame.contentWindow?.__ILB_PROBE_REPORT;
+              if (r) return resolve(r);
+              if (Date.now() - started > 20000) return reject(new Error('等不到内层结果（20 秒）'));
+              setTimeout(tick, 100);
+            };
+            tick();
+          });
+        } catch (err) {
+          report = { tag: `${c.w}×${c.h}`, lines: [`FAIL ${err.message}`], notes: [], errors: [err.message], ok: false };
+        }
+        frame.remove();
+        if (!report.ok) bad += 1;
+        blocks.push([`=== ${report.tag} ===`, ...report.lines, ...(report.notes?.length ? [`备注：${report.notes.join(' | ')}`] : []), ...(report.errors?.length ? [`错误：${report.errors.join(' | ')}`] : [])].join('\n'));
+        out.textContent = blocks.join('\n\n');
+      }
+
+      const text = [`共 ${cases.length} 轮：通过 ${cases.length - bad}、失败 ${bad}`, ...blocks].join('\n\n');
+      out.textContent = text;
+      try {
+        await fetch('/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ probe: 'shell-route', bad, text }) });
+      } catch {
+        /* 直接开文件（没有服务器）时忽略 */
+      }
+    </script>
+  </body>
+</html>

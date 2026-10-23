@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>ILB 手机界面探针（内层）</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #14141a; color: #eaeaea; font: 14px/1.5 system-ui, sans-serif; }
+      #chat { height: 100%; overflow: auto; padding: 8px; }
+      p { margin: 0 0 8px; }
+    </style>
+  </head>
+  <body>
+    <div id="chat">
+      <p>王城的钟声在黄昏响起。</p>
+      <p>夜巡的队伍沿着城墙向西走。</p>
+    </div>
+    <script type="module">
+      // 手机界面的真实浏览器探针（内层）。
+      //
+      // 为什么要拆成"外层 + 内层"两个文件：Chrome 无头模式下窗口宽度最小 500px，
+      // 没法直接把视口压到 375。把界面放进一个 375px 宽的 iframe 里，
+      // iframe 内的 innerWidth 就是 375，CSS 与 JS 判定都会按真手机尺寸走。
+      //
+      // 这里点的每一个按钮都用真实模块（ui/panel.js、ui/mobile.js、ui/help.js），
+      // 只把"宿主"换成最小页面——要验证的正是"点了按钮界面出不出来"。
+
+      const params = new URLSearchParams(location.search);
+      const nocss = params.get('nocss') === '1';
+      const lines = [];
+      const errors = [];
+      const note = (ok, text) => lines.push({ ok, text });
+      window.addEventListener('error', (e) => errors.push(String(e.message ?? e.error ?? 'error')));
+      window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason?.message ?? e.reason)));
+
+      // 1) 可选加载真实样式表：nocss=1 用来验证"样式表整份没加载，手机界面也得能看"。
+      if (!nocss) {
+        await new Promise((resolve) => {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = '../style.css';
+          link.onload = resolve;
+          link.onerror = resolve;
+          document.head.appendChild(link);
+        });
+      }
+
+      const { createRepository } = await import('../adapters/repository.js');
+      const { createRegistry } = await import('../runtime/registry.js');
+      const { createPipeline } = await import('../runtime/pipeline.js');
+      const { createPanel } = await import('../ui/panel.js');
+      const { createMobileUi } = await import('../ui/mobile.js');
+      const { setOverlayBackend } = await import('../ui/help.js');
+      const { pickLayout, viewportOf, describeLayout } = await import('../ui/layout.js');
+      const { mobileSkinInfo } = await import('../ui/mobile-skin.js');
+
+      const buckets = { settings: {}, books: {}, manualState: {}, chatStates: {}, importLog: [], snapshots: [], ui: {} };
+      const repository = createRepository({ getContext: () => ({ extensionSettings: { independent_lorebook: buckets } }) });
+      repository.saveBook({
+        book_id: 'book-probe',
+        name: '王城秘史',
+        activation: { mode: 'always', characters: [], manual: true },
+        pool: { share: true },
+        entries: [
+          { id: 'e1', title: '王城', content: '王城的钟声', enabled: true, trigger: { any: ['王城'] } },
+          { id: 'e2', title: '夜巡', content: '夜巡开始', enabled: true, trigger: { any: ['夜晚'] } },
+        ],
+      });
+      const nativeWorlds = { list: async () => [], get: async () => null, isAvailable: () => true };
+      const registry = createRegistry();
+      const pipeline = createPipeline({ repository, injector: { apply: () => true, clear() {} }, registry });
+      const notes = [];
+      const record = (message, kind = 'info') => notes.push(`${kind}:${message}`);
+
+      const panel = createPanel({ repository, nativeWorlds, pipeline, notify: record });
+      const ui = createMobileUi({ repository, notify: record, onOpen: () => panel.render() });
+      ui.mount();
+      await ui.attachPanel(panel);
+      // 这是关键一行：面板里所有次级菜单（帮助、导入、编辑…）都走 ui/help.js 的 openOverlay，
+      // 把它指到手机界面之后，面板才真的把二级页画在手机这套壳里。
+      setOverlayBackend(ui);
+
+      const viewport = viewportOf();
+      const expect = params.get('expect') ?? 'mobile';
+      const actual = pickLayout(viewport);
+      note(actual === expect, `布局判定：${describeLayout(actual)}（视口 ${viewport.width}×${viewport.height}，期望 ${describeLayout(expect)}）`);
+      if (actual !== 'mobile') {
+        // 宽 768 以上且不是触屏时是电脑布局：手机这套界面本来就不该接管。
+        // 这里只确认"判定对了"，然后在壳里由 ui/floating.js 那套上（见 tests/browser-probe.html）。
+        note(ui.fab && getComputedStyle(ui.fab).display !== 'none', '这一轮不测手机界面（电脑布局），只记录判定');
+        window.__ILB_PROBE_REPORT = {
+          tag: `${viewport.width}×${viewport.height}（期望电脑布局）`,
+          lines: lines.map((l) => `${l.ok ? 'PASS' : 'FAIL'} ${l.text}`),
+          notes,
+          errors,
+          ok: lines.every((l) => l.ok) && errors.length === 0,
+        };
+        throw new Error('__PROBE_STOP__');
+      }
+
+      function info(node) {
+        if (!node) return { missing: true };
+        const r = node.getBoundingClientRect();
+        const cs = typeof getComputedStyle === 'function' ? getComputedStyle(node) : null;
+        return {
+          x: Math.round(r.width ? r.left : 0),
+          y: Math.round(r.width ? r.top : 0),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+          display: cs?.display ?? '',
+          visibility: cs?.visibility ?? '',
+          position: cs?.position ?? '',
+          z: cs?.zIndex ?? '',
+          bg: cs?.backgroundColor ?? '',
+        };
+      }
+      const show = (label, node) => {
+        const i = info(node);
+        return `${label}: ${i.missing ? '找不到节点' : `${i.w}×${i.h} @${i.x},${i.y} display=${i.display} z=${i.z} bg=${i.bg}`}`;
+      };
+      function opaque(value) {
+        const m = /rgba?\(([^)]+)\)/.exec(value ?? '');
+        if (!m) return false;
+        const parts = m[1].split(',').map((s) => Number.parseFloat(s.trim()));
+        return parts.length === 4 ? parts[3] > 0.01 : parts.length === 3;
+      }
+      function click(node, label) {
+        if (!node) throw new Error(`找不到要点的节点：${label}`);
+        if (typeof node.click === 'function') node.click();
+        else node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      }
+      function byText(root, selector, text) {
+        return Array.from(root.querySelectorAll(selector)).find((n) => (n.textContent ?? '').includes(text)) ?? null;
+      }
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      // 2) 悬浮球在、能点
+      const fab = ui.fab;
+      const fabInfo = info(fab);
+      note(fabInfo.w >= 44 && fabInfo.h >= 44 && fabInfo.display !== 'none', show('悬浮球', fab));
+      const fabBottomGap = Math.round(viewport.height - (fabInfo.y + fabInfo.h));
+      note(fabBottomGap > 0 && fabBottomGap < 200, `悬浮球距底 ${fabBottomGap}px（要落在拇指区，且不能被手势条吃掉）`);
+
+      // 3) 点悬浮球 → 整屏界面
+      click(fab, '悬浮球');
+      await wait(120);
+      const dialog = ui.dialog;
+      const dInfo = info(dialog);
+      note(dialog.open === true || dialog.hasAttribute('open'), `点悬浮球后 dialog 状态：open=${dialog.open} attr=${dialog.hasAttribute('open')} modal=${typeof dialog.showModal === 'function'}`);
+      note(dInfo.w >= viewport.width - 1 && dInfo.h >= viewport.height - 1, show('整屏界面', dialog));
+      note(dInfo.display === 'flex' && dInfo.visibility === 'visible', `整屏界面 display=${dInfo.display} visibility=${dInfo.visibility}`);
+      note(opaque(dInfo.bg), `整屏界面底色 ${dInfo.bg}${opaque(dInfo.bg) ? '' : '（透明，等于没显示）'}`);
+
+      const root = dialog.querySelector('.ilb-root');
+      const rootInfo = info(root);
+      note(rootInfo.w > 100 && rootInfo.h > 100, show('面板 .ilb-root', root));
+      note((root?.textContent ?? '').includes('王城秘史'), `面板里能看到书名：${(root?.textContent ?? '').includes('王城秘史')}`);
+
+      // 4) 中心点有没有被别的东西盖住（"开了但看不见"的典型原因）
+      if (typeof document.elementFromPoint === 'function') {
+        const hit = document.elementFromPoint(Math.round(viewport.width / 2), Math.round(viewport.height / 2));
+        const inside = Boolean(hit) && dialog.contains(hit);
+        note(inside, `屏幕正中命中的是 ${hit ? `${hit.tagName.toLowerCase()}.${String(hit.className ?? '').split(' ')[0]}` : '空'}（在手机界面内：${inside}）`);
+      }
+
+      // 5) 切标签（真实点击路径）
+      const tab = byText(dialog, '.ilb-tab', '规则');
+      click(tab, '「规则」标签');
+      await wait(80);
+      const cards = dialog.querySelectorAll('.ilb-rule-list .ilb-card, .ilb-rule-list .ilb-card-row, .ilb-card');
+      note(cards.length > 0, `点「规则」之后卡片 ${cards.length} 张`);
+      const tabBody = dialog.querySelector('.ilb-tab-body');
+      note((tabBody?.textContent ?? '').includes('王城'), '规则页正文里能看到条目文字');
+
+      // 6) 点「?」→ 二级页（这就是用户报"点了没反应"的那类按钮）
+      const help = dialog.querySelector('.ilb-tabs .ilb-help') ?? byText(dialog, '.ilb-help', '?');
+      click(help, '「?」帮助按钮');
+      await wait(120);
+      const sheet = dialog.querySelector('.ilb-m-sheet');
+      const sInfo = info(sheet);
+      note(Boolean(sheet), '帮助二级页弹出来了');
+      note(sInfo.h >= 180, show('二级页', sheet));
+      note(opaque(sInfo.bg), `二级页底色 ${sInfo.bg}${opaque(sInfo.bg) ? '' : '（透明，等于没显示）'}`);
+      note((sheet?.textContent ?? '').length > 20, `二级页正文 ${(sheet?.textContent ?? '').length} 字（不能是空的）`);
+      const sheetX = dialog.querySelector('.ilb-m-sheet .ilb-m-x');
+      const xInfo = info(sheetX);
+      note(xInfo.w >= 44 && xInfo.h >= 44, `关闭按钮热区 ${xInfo.w}×${xInfo.h}`);
+      note(xInfo.y < viewport.height, `关闭按钮在首屏内（y=${xInfo.y}，视口高 ${viewport.height}）`);
+      if (typeof document.elementFromPoint === 'function') {
+        const hx = Math.round(xInfo.x + xInfo.w / 2);
+        const hy = Math.round(xInfo.y + xInfo.h / 2);
+        const hit = document.elementFromPoint(hx, hy);
+        const mine = Boolean(hit) && (hit === sheetX || sheetX?.contains(hit));
+        note(mine, `关闭按钮位置命中的是不是它自己：${mine}（${hit?.tagName?.toLowerCase?.() ?? '空'}）`);
+      }
+
+      // 7) 关掉二级页，回面板，再开一个"内容型"二级页
+      click(sheetX, '二级页的 ×');
+      await wait(80);
+      note(!dialog.querySelector('.ilb-m-sheet:not([hidden])'), '点 × 之后二级页收起了');
+
+      click(byText(dialog, '.ilb-tab', '书架') ?? dialog.querySelector('.ilb-tab'), '「书架」标签');
+      await wait(80);
+      const logBtn = byText(dialog, '.ilb-btn', '导入记录');
+      click(logBtn, '「导入记录」按钮');
+      await wait(120);
+      const sheet2 = dialog.querySelector('.ilb-m-sheet');
+      note(Boolean(sheet2), '「导入记录」弹出了二级页');
+      note((sheet2?.textContent ?? '').length > 4, `「导入记录」正文 ${(sheet2?.textContent ?? '').length} 字（空列表也要有人话）`);
+      ui.closeOverlay();
+      await wait(60);
+      note(!ui.isOverlayOpen(), '二级页全部关掉之后 isOverlayOpen=false');
+
+      // 8) 不许横向滚动（ILB-7.15 / ILB-6.10.7）：375px 下最容易出现
+      const docOverflow = Math.round(document.documentElement.scrollWidth - viewport.width);
+      note(docOverflow <= 1, `页面横向溢出 ${docOverflow}px（要 ≤1）`);
+      const widest = Array.from(dialog.querySelectorAll('*'))
+        .map((n) => Math.round(n.getBoundingClientRect().right))
+        .reduce((a, b) => Math.max(a, b), 0);
+      note(widest <= viewport.width + 1, `界面里最右边的元素 ${widest}px（视口 ${viewport.width}px）`);
+
+      // 9) 手机皮肤是否自带（nocss=1 时这是唯一保障）
+      const skin = mobileSkinInfo();
+      note(skin.installed && skin.rules > 20, `手机皮肤：注入=${skin.installed} 规则=${skin.rules} 条 版本=${skin.version}`);
+      if (nocss) {
+        const d2 = info(dialog);
+        note(opaque(d2.bg), `没有 style.css 时整屏界面底色 ${d2.bg}`);
+        note((root?.textContent ?? '').length > 10, '没有 style.css 时面板仍然有内容');
+      }
+
+      // 10) 关掉整屏界面，悬浮球要回来
+      ui.close();
+      await wait(80);
+      note(!ui.isOpen(), '整屏界面已关闭');
+      note(ui.fab.hidden === false, '关掉之后悬浮球回来了（fab.hidden=false）');
+
+      window.__ILB_PROBE_REPORT = {
+        tag: `${viewport.width}×${viewport.height}${nocss ? ' · 无 style.css' : ''}`,
+        lines: lines.map((l) => `${l.ok ? 'PASS' : 'FAIL'} ${l.text}`),
+        notes,
+        errors,
+        ok: lines.every((l) => l.ok) && errors.length === 0,
+      };
+    </script>
+  </body>
+</html>

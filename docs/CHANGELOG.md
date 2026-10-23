@@ -15,6 +15,68 @@
 
 ---
 
+## v0.5.0 · 2026-10-24 · 手机端换成独立界面：不再让同一套 UI 在手机上"变形"（含规格 v2.6.0）
+
+**一句话**：用户报"竖屏或手机比例下，点了按钮 UI 不显示"（m00002），而 v0.4.2–v0.4.8 四轮修补都在同一条路上加兜底、没有一次被真机确认。这一版停止修补这条路：手机改成**独立外壳**（`<dialog>` + `showModal()` 进 top layer、样式由 JS 自带、只认 `click`），电脑保持原样（悬浮球 + 可拖动浮窗 + `.ilb-overlay`），两套壳共用一个面板，由 `ui/shell.js` 按布局挑一套；同时把 `style.css` 与 `ui/floating.js` 里所有手机分支删掉。
+
+**依据（为什么换路而不是再补一条兜底）**：在合成环境里用真实 `style.css` + 真实模块跑 500×749 手机布局，浮窗、标签切换、帮助浮层全部正常（FAB 52×52 @430,613；浮窗 500×749 display=flex z=4500；浮层 500×749 z=2147483000、弹窗 500×410 底色 `rgb(30,30,30)`；0 错误）。也就是说故障**在该环境里无法复现**，根因只可能在"同一套 DOM 进入真机环境后被改形"这条路线上——继续在同一条路上加兜底，等于每次都在猜。决策见 D-0037、D-0038。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `ui/mobile.js` | 手机外壳：悬浮球（56×56、距底 76px+安全区）+ 整屏 `<dialog class="ilb-m">`（`showModal()`；不支持时退回内联固定层）+ 二级页栈（`pushSheet/popSheet/closeSheet/clearSheets`）+ 自己的 `toast()`（界面开着时画在界面里，否则退回宿主）+ `setStatus` + `setVisible`。同时导出 `openOverlay/closeOverlay/isOverlayOpen` 三个名字，直接充当 `ui/help.js` 的浮层后端 |
+| `ui/mobile-skin.js` | 手机专用皮肤：`ensureMobileSkin()` 往 `<head>` 注入 `<style id="ilb-mobile-skin">`（`.ilb-m` 前缀、55 条规则、不依赖 `style.css`）；`mobileSkinInfo()` 返回 `{installed, rules, version}` 供自检报数 |
+| `ui/shell.js` | 双壳路由：`createShell({repository, notify, onOpen})` 同时建两套壳，`pickLayout(viewportOf())` 决定用哪套，`switchTo` 换壳时把面板挪过去、让另一套让位；`setOverlayBackend()` 随布局切换；`notify` 转发到当前可用的出口；窗口 `resize`/`orientationchange` 防抖 150ms 后重判 |
+| `tests/mobile-ui-run.html` / `tests/mobile-ui-probe.html` | 手机界面真实浏览器探针：外层用 iframe 造出 375px 真窄视口（Chrome 无头窗口最窄 500px），内层跑真实模块 + 真实点击（悬浮球 → 整屏界面 → 切「规则」→ 点「?」→ 点 × → 点「导入记录」→ 关界面），四轮：375×780 带样式、375×780 不加载 `style.css`、500×900、820×620（期望电脑布局）。`POST /report` 回传 |
+| `tests/shell-route-run.html` / `tests/shell-route-probe.html` | 双壳路由探针：在同一套装配（`createShell` + 面板）下分别用 375 与 900 视口跑，断言"挑中的壳在场、另一套整体让位、面板挂在挑中的壳里、`shell.notify` 落在当前看得见的那套里"。三轮：375×780 带样式、375×780 不加载 `style.css`、900×700 期望电脑 |
+
+**修订**
+
+| 位置 | 内容 |
+|---|---|
+| `index.js` | 装配从 `createFloatingWindow` 改为 `createShell`；`v0.5.0`。新增 `notifyVia`/`notifyThrough` 间接层：壳拿**原始** `notify`，面板与设置卡片拿转发口，壳建好后再把转发口指向 `shell.notify`（否则手机上视图的 toast 会落在 top layer 底下；若壳也拿转发口则会无限递归）；`globalThis.ILB` 增加 `shell`/`mobile`，`floating` 仍指向电脑那套 |
+| `ui/help.js` | 只服务电脑：删 `pickLayout` 依赖、删 `syncLayoutClass()`、`applySkin`/`ensureVisible` 去掉 `isMobile` 分支（`min-height` 固定 160px、浮层固定顶对齐）、不再加/摘 `body.ilb-locked`；新增 `setOverlayBackend()/getOverlayBackend()`，有后端时 `openOverlay` 直接转交并返回关闭函数 |
+| `ui/floating.js` | 只服务电脑：删手机布局分支、删 `ilb-fab-hidden`/`ilb-backdrop-open`/锁滚动，遮罩元素整个删除；新增 `visible` 状态与 `setVisible()`（用内联 `display` 隐藏，不能用 `hidden`，因为类里的 `display` 会赢），`describe()` 报 `visible` |
+| `ui/shell.js` | `switchTo()` 换壳前先收干净手上的浮层（`closeOverlay()` + `mobile.clearOverlays()`）：否则屏幕转过来时，电脑那层 `.ilb-overlay` 会留在已经 `display:none` 的壳里，手机那边也可能挂着半截二级页——两种都表现为"点不开" |
+| `ui/selftest.js` | 按两套界面重写：先问 `describeUi()` 是哪套，手机量 `dialog.ilb-m[open]`、电脑量 `.ilb-overlay`；新增"手机皮肤已注入（N 条规则，版本）"、"关闭按钮热区 ≥44×44"；浮层/二级页高度、两个底色、`elementFromPoint(中心)` 归属都按当前壳报数；修掉原文件 `*/export` 粘连成一行的问题 |
+| `style.css` | 删掉全部手机分支：`@media (max-width:768px)` 贴底整宽、`.ilb-mobile` "第二把钥匙"、`body.ilb-locked`、`.ilb-window-mobile` 整块、`.ilb-fab-hidden`、`.ilb-backdrop(.ilb-backdrop-open)`；`body.ilb-overlay-open` 只保留让开 `.ilb-window`/`.ilb-fab`；`.ilb-modal-x` 从 32×32 改为 44×44（ILB-6.14.3 对两种布局同一标准）。`.ilb-` 规则从 149 条降到 130 条 |
+| `manifest.json` | `version` 0.5.0 |
+| `tests/smoke-dom.mjs` | 新增三步：手机界面开关与二级页栈（含"关掉上层不能连下层一起没了"）、双壳切换与 `describe()`；浮层关闭后改断言 `ilb-overlay-open` 已摘（`ilb-locked` 已不存在） |
+| `tests/browser-probe.html` | 模拟整屏浮窗改用 `.ilb-window` + 内联 100vw/100vh（`ilb-window-mobile` 已删）；结果 `POST /report`；自检预期失败项加上"问不到界面状态" |
+| `tests/selftest-probe.html` | 预期失败项加上"问不到界面状态（扩展可能还没启动完）" |
+| `README.md` | 测试计数更新（链接 40 模块、冒烟 19 步）；用 `mobile-ui-probe` 的说明替换 `sizing-probe`；"已知未完成"里关于 `ilb-mobile` 的条目改成双壳说明 |
+
+**废弃 / 删除**
+
+| 位置 | 内容 |
+|---|---|
+| `参考文档.md` §6.8.4 后半 | ⛔ 手机布局不再是同一套窗口的变体（替代 ILB-6.19.1/6.19.2） |
+| `参考文档.md` §6.14.5 | ⛔ 手机浮层贴底整宽作废（替代 ILB-6.19.7 的整屏二级页） |
+| `参考文档.md` §6.14.6 | ⛔ `body.ilb-locked` 不再使用；手机锁滚动由外壳直接写 `body.style.overflow`（替代 ILB-6.19.5） |
+| `参考文档.md` §6.17.1 | ⛔ "两把钥匙"作废（替代 ILB-6.19.3：手机样式自带） |
+| `参考文档.md` §6.17.7 | ⛔ 手机 `45vh` 分支作废；电脑四条几何仍有效 |
+| `参考文档.md` §6.17.6 | ⛔ `sizing-probe.html` 验收作废（替代 ILB-6.19.10） |
+| `参考文档.md` §6.16.2 | 🔁 遮罩已删，让开的是浮窗与悬浮球两项 |
+| `参考文档.md` §6.18.5 | 🔁 只覆盖电脑；手机对应验收在 `mobile-ui-probe` 的无样式轮 |
+| `tests/sizing-probe.html` | **删除**：它验的是 `.ilb-mobile` 两把钥匙那套，手机变体删除后已无意义 |
+| `tests/mobile-probe.html` | **删除**：v0.4.8 时期的临时探针，同样依赖旧手机变体 |
+| `参考文档.md` §6.19 | **新增十一节**：手机界面独立成套（共用面板、top layer、自带皮肤、只认 click、visualViewport、自己的 toast、二级页栈、375px 无横滚、自量兜底、验收、电脑那套不许再判断"是否手机"） |
+
+**实测（真实 Chrome，`--headless=new`，静态服务器 `node tests/serve.mjs 8799`）**
+
+- `tests/mobile-ui-probe.html`：**4 轮全 PASS**。375×780 带样式：悬浮球 56×56 @307,648（距底 76px）、整屏界面 375×780 @0,0 `bg=rgb(21,21,27)`、面板 351×780、屏幕正中命中界面内元素、点「规则」出 2 张卡片、帮助二级页 375×719 `bg=rgb(24,24,32)`、× 热区 44×44 在 y=67、点 × 收起、点「导入记录」出二级页且有人话、横向溢出 0px、手机皮肤 55 条规则 v0.5.0。375×780 **不加载 `style.css`**：同上全 PASS，最右元素 376px（视口 375）。500×900 全 PASS。820×620 判定为电脑布局、手机界面不接管。
+- `tests/shell-route-probe.html`：**3 轮全 PASS**。375×780：`shell.layout()=mobile`、手机悬浮球 `display=flex`、电脑悬浮球 `display=none`、电脑浮窗没同时打开、`shell.open()` 后 `dialog.open=true`、面板挂在手机壳里、`shell.notify` 落进 `.ilb-m-toasts`（真机上宿主 toastr 会被 top layer 压住）。900×700：反过来——电脑悬浮球在场、手机悬浮球 `display=none`、`shell.open()` 后 `.ilb-window` 打开、面板挂在电脑浮窗里。
+- `tests/browser-probe.html`：`verdict PASS`、自检非预期失败 **0**（浮层铺满 984×765、屏幕正中属于浮层、关闭按钮 44×44）。
+- `tests/nocss-probe.html`：八条全过（浮层 984×765 `rgba(0,0,0,0.55)`、弹窗 642×172 `rgb(30,30,30)`、一条"样式没生效已兜底"的 warn）。
+- `tests/selftest-probe.html`：PASS、非预期失败 0（`style.css 里数到 130 条 .ilb- 规则`、`弹窗高度 162px（最小高度 160px，电脑布局）`）。
+- `tests/empty-probe.html`：PASS（空正文在 t+400ms 被补上"这一层浮层没有内容"）。
+- `node --test` 单元 **102/102**、`node tests/linkcheck.mjs` **40 个模块全过（含 index.js）**、`node tests/smoke-dom.mjs` **19 步 0 失败**。
+
+**仍未验证**：SillyDroid 等手机 WebView 真机——`showModal()` 与宿主模态的叠加、安卓返回键是否走 `cancel` 事件、软键盘弹出时 `visualViewport` 的行为，目前都只有桌面 Chrome 的窄视口证据。
+
+---
+
 ## v0.4.8-code · 2026-10-24 · "渲染出来了"不等于"看得见"：给浮层准备一套不依赖样式表的皮肤（含规格 v2.5.5）
 
 **一句话**：v0.4.7 之后用户回报"不是一小条了，但是点击按钮后，没有页面弹出，或者单纯没有显示"。查下来是上一轮只修好了"浮层看不看得见"（内联几何），却没人管"**弹窗**看不看得见"：几何与尺寸全对，但底色、边框、文字颜色仍来自那份**没生效的样式表**，屏幕上是"透明容器里套一个透明盒子"。于是补一套内置皮肤，并让自检把两个底色也报出来。

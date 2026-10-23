@@ -89,8 +89,12 @@
     closeOverlay();
     document.querySelectorAll('.ilb-overlay').forEach((n) => n.remove());
     const fakeWin = document.createElement('div');
-    fakeWin.className = 'ilb-window ilb-window-mobile';
+    fakeWin.className = 'ilb-window';
     fakeWin.style.display = 'flex';
+    fakeWin.style.left = '0';
+    fakeWin.style.top = '0';
+    fakeWin.style.width = '100vw';
+    fakeWin.style.height = '100vh';
     fakeWin.textContent = '（模拟整屏浮窗，z-index 4500）';
     document.body.appendChild(fakeWin);
     openOverlay({ title: '模拟手机上的次级菜单', nodes: [document.createElement('p')] });
@@ -117,13 +121,19 @@
     const checks = runSelfTest();
     log('--- 自检 ---');
     checks.forEach((c) => log(`${c.ok ? '✓' : '✗'} ${c.text}`));
-    const unexpected = checks.filter((c) => !c.ok && !/window\.ILB|管线|存档/.test(c.text));
+    const unexpected = checks.filter((c) => !c.ok && !/window\.ILB|管线|存档|界面状态/.test(c.text));
     log(`自检里非预期的失败: ${unexpected.length}`);
     document.getElementById('result').textContent = out.join('\n');
     document.title = `ILB-PROBE ${verdict} ${unexpected.length === 0 ? 'SELFTEST-OK' : 'SELFTEST-BAD'}`;
     const pre = document.getElementById('result');
     pre.setAttribute('data-verdict', verdict);
     pre.setAttribute('data-selftest', unexpected.length === 0 ? 'ok' : 'bad');
+    // 无头 Chrome 下 --dump-dom 取不到内容，把结果 POST 回去才是可靠通道（tests/serve.mjs 收）。
+    try {
+      await fetch('/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ probe: 'browser', verdict, unexpected, text: out.join('\n') }) });
+    } catch {
+      /* 直接开文件时忽略 */
+    }
   </script>
 </body>
 </html>

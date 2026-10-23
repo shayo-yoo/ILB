@@ -2,8 +2,10 @@
 // 所以把这件事做成一份公共件，而不是每个界面各写一遍。
 // 文案不写在这里：全部来自 data/help/<locale>.json，改文案不用动代码。
 
+// v0.5.0 起：这里只剩**电脑**那套浮层。手机上不再复用（手机走 ui/mobile.js 的整屏二级页），
+// 通过 setOverlayBackend() 把"出口"换掉，调用方一行都不用改。
+
 import { el } from './dom.js';
-import { pickLayout } from './layout.js';
 
 const DEFAULT_LOCALE = 'zh-cn';
 
@@ -48,16 +50,47 @@ export function helpText(topic) {
 
 let current = null;
 
+/**
+ * 浮层的"出口"可以整个换掉。手机界面（ui/mobile.js）启动时会把自己注册进来，
+ * 于是面板、编辑器、导入、自检里那些直接调 openOverlay() 的地方不用改一行，
+ * 手机上就自动变成"整屏里叠一页"——不再有"弹窗太窄/太扁/跑到屏幕外"这些坏法。
+ * 传 null 恢复成下面这套内置的居中浮层。
+ */
+let backend = null;
+
+export function setOverlayBackend(next) {
+  backend = next && typeof next.openOverlay === 'function' ? next : null;
+  return backend;
+}
+
+export function getOverlayBackend() {
+  return backend;
+}
+
 export function isOverlayOpen() {
+  if (backend) {
+    try {
+      if (typeof backend.isOverlayOpen === 'function') return Boolean(backend.isOverlayOpen());
+    } catch {
+      /* 后端坏了就按内置浮层算 */
+    }
+  }
   return current !== null;
 }
 
 export function closeOverlay() {
+  if (backend) {
+    try {
+      if (typeof backend.closeOverlay === 'function') backend.closeOverlay();
+      return;
+    } catch (err) {
+      console.warn('[ILB] 手机浮层没关掉，改用内置浮层', err);
+    }
+  }
   if (!current) return;
   try {
     document.removeEventListener('keydown', current.onKey);
     current.overlay.remove();
-    document.body.classList.remove('ilb-locked');
     document.body.classList.remove('ilb-overlay-open');
   } catch {
     /* ignore */
@@ -66,46 +99,21 @@ export function closeOverlay() {
 }
 
 /**
- * 把"该用哪套布局"写到 body 上，CSS 据此切换（.ilb-mobile）。
- *
- * 为什么不能只靠 CSS 媒体查询：SillyDroid 之类的手机客户端里，WebView 常常按
- * "桌面宽度"排版（例如 980px）。这时 `@media (max-width: 768px)` **根本不成立**，
- * 手机上拿到的是电脑那套规则——弹窗从顶部出现、宽度按桌面算，看起来就不像手机界面。
- * 判定改用"宽度 + 是不是触屏"（ui/layout.js 的 pickLayout），它同时认得
- * "触屏但偏宽"的平板/WebView。
- */
-function syncLayoutClass() {
-  let layout = 'desktop';
-  try {
-    if (!document.body || typeof document.body.classList?.toggle !== 'function') return layout;
-    layout = pickLayout({
-      width: typeof window !== 'undefined' ? window.innerWidth : 1024,
-      height: typeof window !== 'undefined' ? window.innerHeight : 768,
-      touch: typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-        ? window.matchMedia('(pointer: coarse)').matches
-        : false,
-    });
-    document.body.classList.toggle('ilb-mobile', layout === 'mobile');
-  } catch {
-    /* 认不出就按默认样式来，不能因此让浮层开不了 */
-  }
-  return layout;
-}
-
-/**
  * 给浮层套一套"内置样式"：不依赖 style.css，也不用主题变量以外的东西。
  * 为什么需要这一步：只修好浮层的几何还不够。用户报过"不薄了，但点了什么都没显示"——
  * 那一层浮层与弹窗其实都开出来了、位置也对，只是**背景是透明的、边框和文字颜色也丢了**，
  * 于是在深色聊天页上看过去就像什么都没发生。判断"看不看得见"不能只量尺寸，还要看底色。
+ *
+ * 这套皮肤只服务电脑（手机上根本走不到这里：手机浮层由 ui/mobile.js 自己画）。
  */
-function applySkin(overlay, modal, isMobile, why) {
+function applySkin(overlay, modal, why) {
   console.warn(`[ILB] 浮层样式没有生效（${why}），已用内置样式兜底。若反复出现，说明 style.css 没有被加载。`);
   overlay.style.position = 'fixed';
   overlay.style.inset = '0';
   overlay.style.display = 'flex';
   overlay.style.justifyContent = 'center';
-  overlay.style.alignItems = isMobile ? 'flex-end' : 'flex-start';
-  overlay.style.padding = isMobile ? '0' : '16px';
+  overlay.style.alignItems = 'flex-start';
+  overlay.style.padding = '16px';
   overlay.style.boxSizing = 'border-box';
   overlay.style.overflowY = 'auto';
   overlay.style.background = 'rgba(0,0,0,0.55)';
@@ -113,16 +121,16 @@ function applySkin(overlay, modal, isMobile, why) {
 
   modal.style.margin = 'auto';
   modal.style.width = '100%';
-  modal.style.maxWidth = isMobile ? '100%' : 'min(92vw, 640px)';
-  modal.style.minHeight = isMobile ? '45vh' : '160px';
-  modal.style.maxHeight = isMobile ? 'calc(100vh - 12px)' : 'calc(100vh - 32px)';
+  modal.style.maxWidth = 'min(92vw, 640px)';
+  modal.style.minHeight = '160px';
+  modal.style.maxHeight = 'calc(100vh - 32px)';
   modal.style.display = 'flex';
   modal.style.flexDirection = 'column';
   modal.style.overflow = 'hidden';
   modal.style.background = 'var(--SmartThemeBlurTintColor, #1e1e1e)';
   modal.style.color = 'var(--SmartThemeBodyColor, #eaeaea)';
   modal.style.border = '1px solid rgba(255,255,255,0.25)';
-  modal.style.borderRadius = isMobile ? '14px 14px 0 0' : '8px';
+  modal.style.borderRadius = '8px';
   modal.style.boxShadow = '0 8px 32px rgba(0,0,0,0.5)';
 
   // 头、正文、关闭按钮也补上最低限度：只给弹窗加底色的话，用户会看到一块
@@ -173,9 +181,8 @@ function isTransparentBackground(value) {
  * 那时用户看到的就是"点了按钮没有任何反应"，而控制台一片安静——最难查的那种坏法。
  * 所以这里不猜，量一次：真坏了就用内联样式把它撑起来，至少让人能看见内容。
  */
-function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
+function ensureVisible(overlay, modal, bodyNode) {
   if (typeof getComputedStyle !== 'function') return;
-  const isMobile = layout === 'mobile';
   const check = () => {
     try {
       // 已经被关掉了就别再管它：延迟回调可能在浮层移除之后才跑，
@@ -190,20 +197,19 @@ function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
       if (rect.width < 8) reasons.push(`宽 ${Math.round(rect.width)}px`);
       if (rect.height < 8) reasons.push(`高 ${Math.round(rect.height)}px`);
       if (reasons.length > 0) {
-        applySkin(overlay, modal, isMobile, reasons.join('，'));
+        applySkin(overlay, modal, reasons.join('，'));
         return;
       }
 
       // 样式生效了，但还有第三种坏法：**弹窗被压成薄薄一条**。
-      // 手机上报过"点了按钮，弹出来的只有顶上很薄的一排"。原因通常是内容还在路上
-      // （例如导入列表正在读），或者某条主题规则把高度吃掉了。这时给它一个下限，
-      // 至少让人看得出"这是一层浮层，不是页面抽了一下"。
+      // 原因通常是内容还在路上（例如导入列表正在读），或者某条主题规则把高度吃掉了。
+      // 这时给它一个下限，至少让人看得出"这是一层浮层，不是页面抽了一下"。
       const modalRect = modal.getBoundingClientRect();
       const minBeauty = Math.min(180, (typeof window !== 'undefined' ? window.innerHeight : 800) * 0.2);
       if (modalRect.height < minBeauty) {
-        const floor = isMobile ? '45vh' : '160px';
+        const floor = '160px';
         console.warn(
-          `[ILB] 浮层太扁（高 ${Math.round(modalRect.height)}px，视口 ${window.innerWidth}x${window.innerHeight}，${layout}），已撑到 ${floor}。`,
+          `[ILB] 浮层太扁（高 ${Math.round(modalRect.height)}px，视口 ${window.innerWidth}x${window.innerHeight}），已撑到 ${floor}。`,
         );
         modal.style.minHeight = floor;
       }
@@ -218,7 +224,7 @@ function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
       }
       if (modalRect.width < 40) modalReasons.push(`弹窗宽 ${Math.round(modalRect.width)}px`);
       if (modalRect.height < 8) modalReasons.push(`弹窗高 ${Math.round(modalRect.height)}px`);
-      if (modalReasons.length > 0) applySkin(overlay, modal, isMobile, modalReasons.join('，'));
+      if (modalReasons.length > 0) applySkin(overlay, modal, modalReasons.join('，'));
 
       if (bodyNode && bodyNode.children && bodyNode.children.length === 0) {
         bodyNode.appendChild(el('p', {
@@ -229,8 +235,6 @@ function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
       }
 
       // 样式没问题，但"看得见"还有第二种坏法：浮层开出来了，却**被别的东西盖在上面**。
-      // 手机上最典型：ILB 自己的浮窗是整屏的（z-index 4500），一旦它压在浮层上面，
-      // 用户看到的就是"点了按钮什么都没出现"，而在桌面上（浮窗只占一小块）却像是正常的。
       // 判断方法不猜 z-index，直接问浏览器："屏幕正中间那个点，最上面是谁？"
       if (typeof document.elementFromPoint !== 'function') return;
       const hit = document.elementFromPoint(
@@ -238,7 +242,7 @@ function ensureVisible(overlay, modal, bodyNode, layout = 'desktop') {
         Math.round(window.innerHeight / 2),
       );
       if (!hit || overlay.contains(hit)) return;
-      const cover = hit.closest?.('.ilb-window, .ilb-fab, .ilb-backdrop') ? 'ILB 自己的浮窗/悬浮球' : describeCover(hit);
+      const cover = hit.closest?.('.ilb-window, .ilb-fab') ? 'ILB 自己的浮窗/悬浮球' : describeCover(hit);
       console.warn(`[ILB] 浮层被「${cover}」盖住了，已把浮层提到最上层。`);
       overlay.style.zIndex = '2147483000';
     } catch {
@@ -276,9 +280,21 @@ function describeCover(node) {
  * 关闭按钮用"×"而不是文字"关闭"：手机上文字按钮要么被挤到换行，
  * 要么在标题很长时把标题压成一条缝（ILB-6.14.3）。
  *
+ * v0.5.0 起：手机上这个函数会把请求转给 ui/mobile.js（整屏二级页），
+ * 自己只服务电脑。调用方不需要知道这件事。
+ *
  * @param {{title?:string, nodes?:Array, footer?:Array, wide?:boolean}} options
  */
-export function openOverlay({ title = '', nodes = [], footer = [], wide = false } = {}) {
+export function openOverlay(options = {}) {
+  if (backend) {
+    try {
+      backend.openOverlay(options);
+      return () => closeOverlay();
+    } catch (err) {
+      console.error('[ILB] 手机浮层没能打开，改用内置浮层', err);
+    }
+  }
+  const { title = '', nodes = [], footer = [], wide = false } = options;
   closeOverlay();
 
   const body = el('div', { class: 'ilb-modal-body' }, nodes);
@@ -319,17 +335,12 @@ export function openOverlay({ title = '', nodes = [], footer = [], wide = false 
     overlay.style.inset = '0';
     overlay.style.display = 'flex';
     overlay.style.zIndex = '2147483000';
-    // 手机／电脑两套布局：媒体查询在 SillyDroid 这类 WebView 里可能不成立，所以用 JS 判定后写 class。
-    const layout = syncLayoutClass();
-    modal.style.minHeight = layout === 'mobile' ? '45vh' : '160px';
-    // 手机下落层后面的页面还能滚，手指一划就把浮层顶走；锁住（只在窄屏生效，见 style.css）。
-    document.body.classList.add('ilb-locked');
-    // 浮层开着的时候，把 ILB 自己的浮窗与悬浮球让开（见 style.css 里 body.ilb-overlay-open 的规则）。
-    // 理由：整屏浮窗在手机上会盖住浮层，而在桌面上只盖住一角，表现为"只有手机点不开"。
+    modal.style.minHeight = '160px';
+    // 浮层开着的时候，让电脑那套浮窗让开（见 style.css 里 body.ilb-overlay-open 的规则）。
     document.body.classList.add('ilb-overlay-open');
     if (typeof modal.focus === 'function') modal.focus({ preventScroll: true });
-    console.info(`[ILB] 浮层已打开：${title || '(无标题)'}（${layout}）`);
-    ensureVisible(overlay, modal, body, layout);
+    console.info(`[ILB] 浮层已打开：${title || '(无标题)'}（电脑）`);
+    ensureVisible(overlay, modal, body);
   } catch (err) {
     console.warn('[ILB] 浮层没能挂上', err);
   }

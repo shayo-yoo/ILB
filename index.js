@@ -1,10 +1,14 @@
 // index.js —— 装配层。只做"把零件接起来"，不含任何业务判断。
 // 新增功能时的正确做法：写一个新模块 + 在 registry 里注册，而不是改这个文件。
 //
-// 界面结构（从 v0.2.0 起）：
+// 界面结构（v0.5.0 起）：
 //   扩展设置页  → 一张小卡片（ui/settings-card.js）：几个常用开关 + "打开控制器"
-//   页面右下角  → 悬浮球（ui/floating.js）：点开是浮窗，书架/规则/诊断/设置都在里面
-// 两块界面共用同一个 panel，所以不存在"两处显示不一致"。
+//   页面右下角  → 电脑：悬浮球 + 可拖动浮窗（ui/floating.js）
+//                手机：悬浮球 + 整屏界面（ui/mobile.js，自带 skin，用 <dialog> 进顶层）
+// 两套壳由 ui/shell.js 按 ui/layout.js 的判定挑一套，面板（ui/panel.js）是同一个。
+// 为什么手机要单独一套：从 v0.4.2 到 v0.4.8 都在给同一套 DOM 加手机变体（媒体查询、
+// body.ilb-mobile、内联兜底、皮肤自愈），手机上仍然反复出现"点了按钮界面不出来"。
+// 与其继续抽奖，不如把手机这条路彻底独立出来（决策记录 D-0037）。
 
 import { loadHost } from './host.js';
 import { createRepository } from './adapters/repository.js';
@@ -14,12 +18,12 @@ import { createPipeline } from './runtime/pipeline.js';
 import { createRegistry } from './runtime/registry.js';
 import { createPanel } from './ui/panel.js';
 import { createSettingsCard } from './ui/settings-card.js';
-import { createFloatingWindow } from './ui/floating.js';
+import { createShell } from './ui/shell.js';
 import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.4.8';
+const VERSION = '0.5.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -109,10 +113,24 @@ async function boot() {
   // 先读文案：帮助按钮点下去要立刻有反应，不能等 fetch。
   await loadHelp();
 
-  const panel = createPanel({ repository, nativeWorlds, pipeline, notify });
+  // 通知转发：面板与设置卡片先拿到这个函数，等壳建好后再把出口指过去。
+  // 为什么要绕一层：手机界面是 <dialog> 顶层模态，宿主的 toastr 画在它下面，用户看不见；
+  // 手机界面开着的时候提示必须画在界面自己的容器里（ui/mobile.js 的 toast）。
+  let notifyVia = notify;
+  const notifyThrough = (message, kind = 'info') => {
+    try {
+      notifyVia(message, kind);
+    } catch (err) {
+      console.info(`[ILB] ${message}`);
+      console.warn('[ILB] 提示没弹出来', err);
+    }
+  };
 
-  // 壳：悬浮球 + 浮窗。壳不认识书架，只认识"里面装一个 panel"。
-  const floating = createFloatingWindow({
+  const panel = createPanel({ repository, nativeWorlds, pipeline, notify: notifyThrough });
+
+  // 壳：电脑=悬浮球+可拖动浮窗，手机=悬浮球+整屏界面。挑哪套由 ui/layout.js 算，切换在 ui/shell.js。
+  // 壳不认识书架，只认识"里面装一个 panel"，所以两套壳共用同一个面板（ILB-6.1.3）。
+  const shell = createShell({
     repository,
     notify,
     onOpen: () => {
@@ -124,18 +142,19 @@ async function boot() {
     },
   });
 
-  const floatingReady = floating.mount();
+  const shellReady = shell.mount();
+  notifyVia = (message, kind = 'info') => shell.notify(message, kind);
   let panelReady = false;
-  if (floatingReady) {
-    panelReady = await floating.attachPanel(panel);
+  if (shellReady) {
+    panelReady = await shell.attachPanel(panel);
   }
 
-  // 万一浮窗挂了（比如没有 body），至少把面板塞回设置页，功能不能整个消失。
+  // 万一两套壳都没挂上（比如没有 body），至少把面板塞回设置页，功能不能整个消失。
   if (!panelReady) {
     const fallback = await waitFor('#extensions_settings');
     if (fallback) {
       panelReady = (await panel.mount(fallback)) !== false;
-      if (panelReady) console.warn('[ILB] 浮窗不可用，面板已退回扩展设置页');
+      if (panelReady) console.warn('[ILB] 悬浮球不可用，面板已退回扩展设置页');
     }
   }
 
@@ -143,13 +162,13 @@ async function boot() {
     repository,
     pipeline,
     openWindow: () => {
-      if (!floatingReady) {
-        notify('浮窗没挂上，界面暂时用设置页里的面板；刷新页面可以再试一次', 'warn');
+      if (!shellReady) {
+        notify('悬浮球没挂上，界面暂时用设置页里的面板；刷新页面可以再试一次', 'warn');
         return;
       }
-      floating.open();
+      shell.open();
     },
-    notify,
+    notify: notifyThrough,
   });
   const settingsHost = await waitFor('#extensions_settings');
   if (settingsHost) {
@@ -162,15 +181,15 @@ async function boot() {
     try {
       const info = pipeline.describeLastRun();
       if (info && info.error) {
-        floating.setStatus('error', info.error);
+        shell.setStatus('error', info.error);
         return;
       }
       if (info && info.skipped) {
-        floating.setStatus('idle', info.skipped);
+        shell.setStatus('idle', info.skipped);
         return;
       }
       const count = info && Array.isArray(info.activated) ? info.activated.length : 0;
-      floating.setStatus(injected && count > 0 ? 'ok' : 'wait', count > 0 ? `这一轮注入 ${count} 条` : '这一轮没有条目出现');
+      shell.setStatus(injected && count > 0 ? 'ok' : 'wait', count > 0 ? `这一轮注入 ${count} 条` : '这一轮没有条目出现');
     } catch {
       /* 圆点颜色不准不影响功能 */
     }
@@ -184,7 +203,7 @@ async function boot() {
     } catch (err) {
       console.error('[ILB] 判定失败，这一轮不注入', err);
       try {
-        floating.setStatus('error', String(err?.message ?? err));
+        shell.setStatus('error', String(err?.message ?? err));
       } catch {
         /* ignore */
       }
@@ -206,7 +225,7 @@ async function boot() {
           pipeline.reset();
           panel.render();
           card.render();
-          floating.setStatus('idle');
+          shell.setStatus('idle');
         } catch (err) {
           console.warn('[ILB] 切换对话后刷新界面失败', err);
         }
@@ -226,15 +245,19 @@ async function boot() {
     pipeline,
     host,
     panel,
-    floating,
+    shell,
+    floating: shell.desktop,
+    mobile: shell.mobile,
     card,
     describeLastRun: () => pipeline.describeLastRun(),
-    describeUi: () => floating.describe(),
+    describeUi: () => shell.describe(),
     selftest: () => runSelfTest(),
     runOnce,
   };
 
-  console.info(`[ILB] 已启动 v${VERSION}（通过 ${host.via} 拿到宿主；界面：${floatingReady ? '悬浮球' : '退回设置页'}）`);
+  console.info(
+    `[ILB] 已启动 v${VERSION}（通过 ${host.via} 拿到宿主；界面：${shellReady ? `悬浮球 · ${shell.label()}` : '退回设置页'}）`,
+  );
 }
 
 function start() {

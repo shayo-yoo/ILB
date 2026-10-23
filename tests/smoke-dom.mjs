@@ -334,7 +334,7 @@ step('浮层有关闭按钮，点一下能关掉', () => {
   if (x.textContent !== '×') throw new Error('关闭按钮不是 ×');
   x.dispatch('click');
   if (body.children.includes(overlay)) throw new Error('点了关闭按钮，浮层还在');
-  if (body.classList.contains('ilb-locked')) throw new Error('关掉浮层之后页面还锁着滚动');
+  if (body.classList.contains('ilb-overlay-open')) throw new Error('关掉浮层之后浮窗还让着位（ilb-overlay-open 没摘）');
 });
 
 step('设置卡片能挂载', async () => {
@@ -358,7 +358,40 @@ step('悬浮球与浮窗能开关', async () => {
   floating.close();
   floating.toggle();
   floating.close();
+  floating.setVisible(false);
+  floating.setVisible(true);
 });
+
+step('手机界面能开关，二级页能弹能关', async () => {
+  const { createMobileUi } = await import('../ui/mobile.js');
+  const ui = createMobileUi({ repository, notify: (t) => notes.push(`mobile:${t}`) });
+  ui.mount();
+  ui.open();
+  if (!ui.isOpen()) throw new Error('手机界面没打开');
+  ui.openOverlay({ title: '测试二级页', nodes: [makeElement('p')] });
+  if (!ui.isOverlayOpen()) throw new Error('二级页没弹出来');
+  ui.openOverlay({ title: '第二层', nodes: [makeElement('p')] });
+  ui.closeOverlay();
+  if (!ui.isOverlayOpen()) throw new Error('关掉上面一层时，下面那层也跟着没了（栈没管好）');
+  ui.closeOverlay();
+  if (ui.isOverlayOpen()) throw new Error('二级页没关干净');
+  ui.close();
+  if (ui.isOpen()) throw new Error('手机界面没关掉');
+});
+
+step('外壳按布局挑一套界面，另一套让位', async () => {
+  const { createShell } = await import('../ui/shell.js');
+  const shell = createShell({ repository, notify: (t) => notes.push(`shell:${t}`) });
+  shell.mount();
+  await shell.attachPanel(panel);
+  shell.open();
+  shell.close();
+  shell.setStatus('ok', '这一轮有内容');
+  const d = shell.describe();
+  if (!d.layout) throw new Error('describe() 没报布局');
+  if (!d.desktop || !d.mobile) throw new Error('describe() 没报两套壳');
+});
+
 
 console.log(`\n界面冒烟：失败 ${failures} 个；toast 记录 ${notes.length} 条`);
 if (notes.length) console.log(notes.slice(0, 8).join('\n'));
