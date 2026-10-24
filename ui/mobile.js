@@ -557,7 +557,7 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
       try {
         openStatus();
       } catch (err) {
-        console.error('[ILB] 账本没能打开', err);
+        console.error('[ILB] 变量坞没能打开状态页', err);
       }
     });
     on(dialog, 'cancel', (event) => {

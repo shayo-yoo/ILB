@@ -93,7 +93,7 @@ dialog.ilb-m * { box-sizing: border-box; }
 }
 .ilb-m-back[hidden] { display: none !important; }
 
-/* ---- 账本状态坞（只在叙事引擎开着时出现） ---- */
+/* ---- 变量坞（有聊天变量时出现；点一下进「状态」页） ---- */
 .ilb-m-dock {
   flex: 0 0 auto;
   display: flex;
