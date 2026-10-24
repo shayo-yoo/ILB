@@ -104,8 +104,14 @@ export function describeChanges(changes = []) {
 /** 状态摘要：一行，给"状态坞"或消息徽章用。 */
 export function summarize(state, ctx) {
   const rows = renderLines(state, ctx);
-  const lists = rows.filter((row) => row.type === 'list' || row.type === 'map');
+  // 容器只在"有内容、或有容量上限"时才算进来：空的关系表不值一行字，
+  // 但"背包（0/8）"必须留下——剩余格数正是模型最需要知道的约束。
+  const containers = rows.filter((row) => {
+    if (row.type !== 'list' && row.type !== 'map') return false;
+    if (row.type === 'map') return !/：无$/.test(row.text);
+    return !/：空$/.test(row.text) || /（/.test(row.text);
+  });
   const scalars = rows.filter((row) => row.type === 'number' || row.type === 'enum');
-  const bits = [...scalars.map((r) => r.text), ...(lists.length ? [`${lists.length} 个容器`] : [])];
+  const bits = [...scalars.map((r) => r.text), ...containers.map((r) => r.text)];
   return bits.join(' · ') || '暂无状态';
 }

@@ -22,7 +22,9 @@ import { compileDeclaration, describeDeclaration, readNarrativeSettings } from '
 
 export const INJECT_KEY = 'ILB_NARRATIVE';
 const INJECT_POSITION_IN_CHAT = 1;
-const INJECT_DEPTH = 1;
+// 放在"最后一条消息之后"：深度 0。账本是当下状态，越靠近生成点越好；
+// 深度 1 会插在最新一条用户消息之前，那条消息里的新事实就落在账本外面了。
+const INJECT_DEPTH = 0;
 const INJECT_ROLE_SYSTEM = 0;
 const REFRESH_DELAY = 280;
 
@@ -59,6 +61,11 @@ export function createNarrativeRuntime(deps = {}) {
   let mounted = false;
   let cache = { key: '', narrative: null, error: '' };
   let plan = null;
+  // 重放缓存：只在"同一条聊天 + 同一份声明 + 前缀没变"时复用，编辑/滑动/删楼层
+  // 会让对应位置之后的部分重算（见 plan.js 的 replay）。
+  let ledgerCache = null;
+  let ledgerCacheChat = null;
+  let ledgerCacheDecl = '';
   let timer = null;
   let lastError = '';
   const warned = new Set();
@@ -84,12 +91,19 @@ export function createNarrativeRuntime(deps = {}) {
     return readNarrativeSettings(repository.getSettings());
   }
 
-  /** 聊天记录 → 纯文本数组。索引必须与 mesid 对齐，所以系统消息也保留（它们没有标记）。 */
-  function entries() {
+  /** 聊天记录 → 纯文本数组（连同 chat 数组本身，用于判断"是不是换了一条聊天"）。 */
+  function chatSnapshot() {
     const ctx = safe(() => getContext(), null);
     const chat = ctx?.chat;
-    if (!Array.isArray(chat)) return [];
-    return chat.map((message) => (message && typeof message.mes === 'string' ? message.mes : ''));
+    if (!Array.isArray(chat)) return { list: [], chat: null };
+    return {
+      list: chat.map((message) => (message && typeof message.mes === 'string' ? message.mes : '')),
+      chat,
+    };
+  }
+
+  function entries() {
+    return chatSnapshot().list;
   }
 
   function compiled() {
@@ -152,9 +166,15 @@ export function createNarrativeRuntime(deps = {}) {
       clearAll();
       return null;
     }
-    const list = entries();
+    const { list, chat } = chatSnapshot();
+    if (chat !== ledgerCacheChat || cache.key !== ledgerCacheDecl) {
+      ledgerCache = null;
+      ledgerCacheChat = chat;
+      ledgerCacheDecl = cache.key;
+    }
     try {
-      plan = planLedger(narrative, list, { budget: s.budget, inject: s.inject });
+      plan = planLedger(narrative, list, { budget: s.budget, inject: s.inject, cache: ledgerCache });
+      ledgerCache = plan.cache ?? null;
     } catch (err) {
       plan = null;
       warnOnce(`账本重放失败：${err?.message ?? err}`);
@@ -185,7 +205,9 @@ export function createNarrativeRuntime(deps = {}) {
     const list = entries();
     if (index >= list.length) return;
     try {
-      const partial = planLedger(narrative, list.slice(0, index + 1), { budget: s.budget, inject: false });
+      // 只借缓存的前缀，不把它写回：这条路径是"补一块"，不是全量重放。
+      const prefixCache = ledgerCache ? { rows: (ledgerCache.rows ?? []).slice(0, index + 1) } : null;
+      const partial = planLedger(narrative, list.slice(0, index + 1), { budget: s.budget, inject: false, cache: prefixCache });
       const block = partial.blocks.find((row) => row.index === index);
       if (block) mountBlock(block);
       else removeBlockAt(index);
@@ -233,17 +255,24 @@ export function createNarrativeRuntime(deps = {}) {
     };
 
     // 一条消息渲染完：只补这一条
-    for (const key of ['MESSAGE_RENDERED', 'CHARACTER_MESSAGE_RENDERED', 'USER_MESSAGE_RENDERED']) {
+    for (const key of ['MESSAGE_RENDERED', 'CHARACTER_MESSAGE_RENDERED']) {
       sub(key, (mesid) => {
         if (typeof mesid === 'number') renderOne(mesid);
         else schedule('rendered');
       });
     }
+    // 用户消息：不只是画块，还必须把注入重算一遍——否则账本会漏掉这条消息里的事实
+    // （实测：刚发出的那条用户消息在 GENERATION_STARTED 时可能还没进 chat 数组）。
+    sub('USER_MESSAGE_RENDERED', (mesid) => {
+      refreshNow('user-message');
+      if (typeof mesid === 'number') renderOne(mesid);
+    });
+    sub('MESSAGE_SENT', () => refreshNow('message-sent'));
     // 内容变了：后面的状态都可能变，整段重算
     for (const key of ['MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_DELETED', 'MESSAGE_UPDATED', 'CHAT_CHANGED']) {
       sub(key, () => schedule(key));
     }
-    // 生成开始前刷新一次注入，确保账本包含最新一条消息
+    // 生成开始前再刷新一次注入（兜底：某些宿主顺序不同）
     sub('GENERATION_STARTED', () => refreshNow('generation'));
     // 生成结束（消息落盘后）也刷一次，块不用等下一次事件
     sub('GENERATION_ENDED', () => schedule('generation-ended'));
@@ -329,6 +358,7 @@ export function createNarrativeRuntime(deps = {}) {
         problemText: declaration.problemText,
       },
       entries: entries().length,
+      cached: Array.isArray(ledgerCache?.rows) ? ledgerCache.rows.filter(Boolean).length : 0,
       totals: plan?.totals ?? null,
       blocks: plan?.blocks.length ?? 0,
       promptChars: plan?.prompt.length ?? 0,

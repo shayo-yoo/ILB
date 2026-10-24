@@ -29,7 +29,7 @@ import { runSelfTest } from './ui/selftest.js';
 import { createNarrativeRuntime } from './narrative/adapter.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.6.1';
+const VERSION = '0.6.2';
 
 function notify(message, kind = 'info') {
   try {

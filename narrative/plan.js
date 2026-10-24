@@ -30,7 +30,12 @@ function itemOf(row, describeFact) {
     return { kind: 'bad', mark: KIND_LABEL.bad, text: `未执行：${text}`, reason };
   }
   if (row?.unhandled) {
-    return { kind: 'unknown', mark: KIND_LABEL.unknown, text: `未认领：${text}`, reason: '没有规则处理这类事实，状态没有变化' };
+    return {
+      kind: 'unknown',
+      mark: KIND_LABEL.unknown,
+      text: `未认领：${text}`,
+      reason: '没有规则处理这类事实，状态没有变化（可到「设置 → 编辑声明」补规则或目录项）',
+    };
   }
   if (Array.isArray(row?.noops) && row.noops.length) {
     return { kind: 'noop', mark: KIND_LABEL.noop, text, reason: row.noops[0].reason ?? '没有实际变化' };
@@ -51,22 +56,55 @@ function fmt(value) {
 
 /**
  * 重放整段对话，并保留每条消息之后的状态（用于"第 N 条消息的账本块"）。
+ *
+ * 性能：带一个可选的增量缓存。命中时直接复用前缀状态，只从第一条变化的消
+ * 息开始重算——楼层越长，这个差别越明显（聊天记录通常几十到几百条）。
+ * 缓存按"每条消息的原文指纹"判断是否还能用，所以编辑、滑动、删除之后
+ * 只会重算受影响的那一段，不会把旧状态当成新状态。
+ *
  * @param {object} narrative createNarrative(...) 的返回值
  * @param {string[]} entries 每条消息的原文（顺序就是聊天顺序，含系统消息也没关系）
+ * @param {{rows: Array<{fp: string, row: object}>}|null} cache 上一次的返回值里的 cache
  */
-export function replay(narrative, entries = []) {
-  let state = narrative.initial();
-  const rows = [];
-  entries.forEach((entry, index) => {
-    const parsed = narrative.parse(typeof entry === 'string' ? entry : String(entry ?? ''));
+export function replay(narrative, entries = [], cache = null) {
+  const list = entries.map((entry) => (typeof entry === 'string' ? entry : String(entry ?? '')));
+  const prev = cache && Array.isArray(cache.rows) ? cache.rows : [];
+
+  // 找第一条与缓存不一致的消息：在它之前的状态可以整段复用。
+  let start = 0;
+  while (start < list.length) {
+    const hit = prev[start];
+    if (!hit || hit.fp !== fingerprint(list[start])) break;
+    start += 1;
+  }
+
+  let state = start > 0 && prev[start - 1] && prev[start - 1].row ? prev[start - 1].row.state : narrative.initial();
+  const rows = prev.slice(0, start).map((entry) => entry.row);
+
+  for (let index = start; index < list.length; index += 1) {
+    const parsed = narrative.parse(list[index]);
     const applied = narrative.applyMany(state, parsed.facts);
     state = applied.state;
     // 每条消息末尾补一次 tick：给"冷却 N 轮"这类规则用（与 engine.fold 的语义一致）
     const ticked = narrative.apply(state, { type: 'tick', at: index });
     if (ticked.ok) state = ticked.state;
-    rows.push({ index, parsed, log: applied.log, state });
-  });
-  return { rows, state };
+    const row = { index, parsed, log: applied.log, state };
+    rows.push(row);
+    prev[index] = { fp: fingerprint(list[index]), row };
+  }
+  // 消息变短（删楼层）时，把缓存尾巴也剪掉，否则下一轮会拿旧行冒充。
+  prev.length = list.length;
+
+  return { rows, state, cache: { rows: prev } };
+}
+
+/** 简单的字符串指纹（djb2）。只用来判断"这条消息变没变"，不做安全用途。 */
+function fingerprint(text) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  }
+  return `${text.length}:${hash}`;
 }
 
 /**
@@ -90,11 +128,11 @@ export function composePrompt({ narrative, state, messageCount = 0, budget = 600
  * 一次算完全部东西：最终状态、状态行、注入文本、每条消息的块、统计。
  * @param {object} narrative
  * @param {string[]} entries
- * @param {{budget?: number, inject?: boolean, maxItems?: number}} options
+ * @param {{budget?: number, inject?: boolean, maxItems?: number, cache?: object}} options
  */
 export function planLedger(narrative, entries = [], options = {}) {
-  const { budget = 600, inject = true, maxItems = MAX_BLOCK_ITEMS } = options;
-  const { rows, state } = replay(narrative, entries);
+  const { budget = 600, inject = true, maxItems = MAX_BLOCK_ITEMS, cache = null } = options;
+  const { rows, state, cache: nextCache } = replay(narrative, entries, cache);
 
   const blocks = [];
   let factCount = 0;
@@ -138,5 +176,6 @@ export function planLedger(narrative, entries = [], options = {}) {
     blocks,
     totals: { messages: entries.length, facts: factCount, ok: okCount, rejected: badCount, unhandled: unhandledCount, unknown: unknownCount },
     problems: narrative.problems ?? [],
+    cache: nextCache,
   };
 }

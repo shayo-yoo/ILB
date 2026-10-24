@@ -102,7 +102,7 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（127 个）
+# 1) 纯逻辑单元测试（129 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
   tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
   tests/narrative.test.mjs tests/narrative-plan.test.mjs
@@ -118,7 +118,7 @@ node tests/smoke-dom.mjs
 node tests/narrative-demo.mjs
 ```
 
-四个都通过的结果（2026-10-24 实测）：单元 127/127、链接 51 个模块全通过（**包含入口 `index.js`**）、
+四个都通过的结果（2026-10-24 实测）：单元 129/129、链接 51 个模块全通过（**包含入口 `index.js`**）、
 冒烟 19 步全过。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
 
 > **为什么链接检查一定要包含 `index.js`**：v0.4.4 曾因为一次错误的文本替换把入口写成乱码并吃掉一个引号，
@@ -156,10 +156,10 @@ node tests/serve.mjs 8792
 2026-10-24 实测三轮全 PASS（375×780 带样式、375×780 不加载 `style.css`、900×700 电脑）。
 
 叙事引擎有自己的一条探针 `tests/narrative-probe.html`（v0.6.0）：它不用 iframe，直接在页面里造一个假聊天区
-（`.mes[mesid]` + `.mes_text`），把 `createNarrativeRuntime` 真的挂上去，然后断言 19 项——
+（`.mes[mesid]` + `.mes_text`），把 `createNarrativeRuntime` 真的挂上去，然后断言 22 项——
 每条有事实的消息末尾出现只读账本块、拒绝原因写在块里、`ILB_NARRATIVE` 的注入位置与内容正确、
 不碰世界书的 `ILB::…` key、新消息只补自己那一块、关掉开关后块与注入都清空、删一条消息后整段重放对齐。
-2026-10-24 实测 **19/19 PASS**，截图见 `tests/shot-narrative.png`。
+2026-10-24 实测 **22/22 PASS**，截图见 `tests/shot-narrative.png`。
 
 ```bash
 node tests/serve.mjs 8799
@@ -226,9 +226,12 @@ node tests/serve.mjs 8799
   不能证明"模型的下一轮真的会遵守账本"。
 - 账本的三个界面（v0.6.1）：设置页「编辑声明」（JSON 校验后才保存）、手机整屏界面顶部的账本坞、
   诊断页的叙事卡片。三者都是只读或"整份替换"级别，**没有**逐条事实的手动补记/撤销入口。
+- 用户实测（v0.6.2）暴露过两个时序问题：账本被插在最新一条用户消息之前、"已发生的 N 条"少 1。
+  已改成深度 0 + `USER_MESSAGE_RENDERED`/`MESSAGE_SENT` 时立刻重算；这类问题只有真实宿主能暴露，
+  后续仍以实测为准。
 - 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
   只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（127 + 51 模块 + 19 步），但**它们用的都是假宿主与假 DOM**。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（129 + 51 模块 + 19 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 曾出过一次"整个扩展不加载"：`index.js` 被错误的文本替换写成乱码。现在入口已纳入检查，
   但这类故障**不会有任何界面提示**——扩展一行都不执行时，用户只看到"没反应"。

@@ -79,7 +79,8 @@
 ## 注入
 
 - key：`ILB_NARRATIVE`（与世界书的 `ILB::<pos>::<depth>::<role>` 分开，避免互相清空）。
-- 位置：IN_CHAT、深度 1、system。
+- 位置：IN_CHAT、**深度 0（贴在最新一条消息之后）**、system。深度 0 是 v0.6.2 修的：
+  原来用深度 1，实测会把最新一条用户消息隔在账本之后，那条消息里的事实就落在账本外面。
 - 内容：`【账本】按已发生的 N 条对话重放得出；与正文冲突时以账本为准。`
   + 当前状态（带"背包 4/8，重 19"这种约束现状）+ 用法说明（最多 3 条、示例）。
 - 关掉开关时写空串清除，不残留旧账本。
@@ -88,12 +89,44 @@
 
 | 事件 | 动作 |
 |---|---|
-| `MESSAGE_RENDERED` / `CHARACTER_MESSAGE_RENDERED` / `USER_MESSAGE_RENDERED` | 只补这一条消息的块 |
+| `MESSAGE_RENDERED` / `CHARACTER_MESSAGE_RENDERED` | 只补这一条消息的块 |
+| `USER_MESSAGE_RENDERED` / `MESSAGE_SENT` | **立刻重算注入**（最新消息可能还没进 `chat`，见上面"深度 0"） |
 | `MESSAGE_EDITED` / `MESSAGE_SWIPED` / `MESSAGE_DELETED` / `MESSAGE_UPDATED` / `CHAT_CHANGED` | 整段重算（280ms 防抖） |
-| `GENERATION_STARTED` | 刷新注入 |
+| `GENERATION_STARTED` | 刷新注入（兜底） |
 | `GENERATION_ENDED` | 重算块 |
 
 拿不到事件源时只报一次 warn，不阻止手动"重放一次"。
+
+## 性能
+
+重放是 O(消息数)，但**不是每次都从头算**：`replay()` 给每条消息存一个指纹（djb2），
+同一条聊天 + 同一份声明 + 前缀没变时直接复用前缀状态；只有编辑/滑动/删除会影响的那一段重算，
+删楼层时缓存尾巴跟着剪掉。缓存只影响速度，不影响结果——同一输入必须得到与全量重放相同的状态
+（`tests/narrative-plan.test.mjs` 里有对应用例）。
+
+按一次典型 200 条楼层、每条 200 字算：全量重放约 4 万字字符串扫描 + 规则匹配；增量重放通常只走
+最新 1～3 条。真正的开销大头其实是**画块**（DOM），所以 `renderOne` 只补一条，不整页重画。
+
+## 常见问题
+
+**写了 `[[ILB:生命:89]]` 但账本没变？**
+`生命` 不是八个动词之一，这条会被标成"看不懂"（消息块里 `? 看不懂：[[ILB:生命:89]]`）。
+设计上 AI 不直接改数值——数值变化要由规则决定。两种做法：
+① 写一条"事件"事实，例如 `[[ILB:使用:受伤]]`，然后在声明里加规则 `on:'use', name:'受伤' → inc/dec 生命`；
+② 想直写，需要先加一个"直接设值"的事实类型（目前**没有**，见 §10.7 待定）。
+
+**写了 `[[ILB:获得:测试道具]]` 但显示"未认领"？**
+目录里没有"测试道具"，也没有规则匹配它。到「设置 → 编辑声明」把它加进 `catalog.entities`（带标签/重量），
+或者加一条 `on:'gain'` 的规则；否则引擎不知道拿它做什么，只能如实说"没有规则处理"。
+
+**怎么把 `[[ILB:…]]` 从正文里藏起来？**
+按用户要求，扩展**不修改**消息正文（改了会和宿主的重画打架）。用 SillyTavern 的正则扩展：
+匹配 `\[\[ILB:[^\]]*\]\]`、替换为空、只在"显示"阶段生效；存档原文保留标记，重放才不受影响。
+
+**楼层被别的插件隐藏/删除，账本会怎样？**
+现状：账本跟着当前 `chat` 数组重算——隐藏/删除的楼层不再贡献事实，编辑过的楼层按新正文重算。
+这是"账本永远等于对话"的代价。要"删楼层也不丢事实"就得加一份事件日志（见 §10.7 待定①），
+那会引入"账本与正文不一致"的第二真相，需要先定规则再动。
 
 ## 消息块
 
@@ -122,13 +155,13 @@
 
 ```bash
 cd extension
-node --test tests/narrative.test.mjs tests/narrative-plan.test.mjs   # 24 个用例
+node --test tests/narrative.test.mjs tests/narrative-plan.test.mjs   # 27 个用例
 node tests/narrative-demo.mjs                                       # 一段对话的逐条记账
 node tests/serve.mjs 8799                                           # 然后打开
-# http://127.0.0.1:8799/tests/narrative-probe.html                   # 19 项浏览器断言
+# http://127.0.0.1:8799/tests/narrative-probe.html                   # 22 项浏览器断言
 ```
 
-2026-10-24 实测：单元 25/25、探针 19/19、`linkcheck` 51/51、`smoke-dom` 0 失败。
+2026-10-24 实测：单元 27/27、探针 22/22、`linkcheck` 51/51、`smoke-dom` 0 失败。
 
 ## 已知边界
 

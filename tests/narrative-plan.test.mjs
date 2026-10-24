@@ -144,3 +144,27 @@ test('声明能导出成 JSON 再读回来（设置页的「编辑声明」靠�
   assert.ok(info.variables > 0);
   assert.ok(info.rules > 0);
 });
+
+test('重放缓存：前缀没变就复用，改了哪条就从哪条重算，删消息会剪掉尾巴', () => {
+  const first = replay(narrative, ENTRIES);
+  const second = replay(narrative, ENTRIES, first.cache);
+  assert.equal(second.rows[0], first.rows[0], '前缀行应复用（同一个对象）');
+  assert.deepEqual(second.state.vars, first.state.vars);
+
+  const edited = [...ENTRIES];
+  edited[2] = '[[ILB:获得:药水]]';
+  const third = replay(narrative, edited, second.cache);
+  assert.equal(third.rows[0], first.rows[0], '第 1 条没变，应复用');
+  assert.notEqual(third.rows[2], first.rows[2], '第 3 条变了，必须重算');
+  assert.notDeepEqual(third.state.vars['背包'], first.state.vars['背包']);
+
+  const shorter = replay(narrative, ENTRIES.slice(0, 2), third.cache);
+  assert.equal(shorter.rows.length, 2);
+  assert.equal(shorter.cache.rows.length, 2, '消息变短时缓存尾巴要被剪掉');
+});
+
+test('状态摘要把空的容器略掉，但保留有上限的背包', () => {
+  const summary = narrative.summary(narrative.initial());
+  assert.match(summary, /背包（0\/8）/);
+  assert.doesNotMatch(summary, /关系/);
+});

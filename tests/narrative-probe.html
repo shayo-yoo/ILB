@@ -118,16 +118,25 @@ const injected = prompts[INJECT_KEY];
 check(Boolean(injected), `写进了 ${INJECT_KEY}`);
 check(Boolean(injected) && /【账本】/.test(injected.value), '注入文本带【账本】前言');
 check(Boolean(injected) && /背包（2\/8/.test(injected.value), '注入文本带"背包（2/8"这种约束现状');
-check(Boolean(injected) && injected.position === 1 && injected.depth === 1 && injected.role === 0, '注入位置 IN_CHAT / 深度 1 / system');
+check(Boolean(injected) && injected.position === 1 && injected.depth === 0 && injected.role === 0, '注入位置 IN_CHAT / 深度 0（贴最新一条）/ system');
 const worldbookKeys = Object.keys(prompts).filter((key) => key.startsWith('ILB::'));
 check(worldbookKeys.length === 0, '没有碰世界书那条注入 key（ILB::…）');
 
-// ---- 3) 新消息到了：只补这一条 ----
+// ---- 3) 新消息到了：只补这一条；用户消息还要顺带刷新注入 ----
 chat.push({ mes: '[[ILB:获得:铁钥匙]]' });
 paintChat();
 emit('message_rendered', chat.length - 1);
 const fresh = blockAt(chat.length - 1);
 check(Boolean(fresh) && /获得 铁钥匙/.test(fresh.textContent), '新消息渲染后，它自己的账本块立刻出现');
+
+// 3.5) 实测踩到的坑：用户消息刚发出时，宿主可能在 GENERATION_STARTED 之后才把它放进 chat。
+// 所以 USER_MESSAGE_RENDERED / MESSAGE_SENT 也要重算注入，否则账本会漏掉这条消息里的事实。
+chat.push({ mes: '[[ILB:获得:铜钥匙×2]]' });
+paintChat();
+emit('message_sent');
+const afterSend = prompts[INJECT_KEY]?.value ?? '';
+check(afterSend.includes(`已发生的 ${chat.length} 条`), `发消息后注入立刻包含它（应为 ${chat.length} 条）`);
+check(Boolean(blockAt(chat.length - 1)) && /铜钥匙/.test(blockAt(chat.length - 1).textContent), '这条用户消息自己也有账本块');
 
 // ---- 4) 关掉开关：块全清、注入清空、描述与 v0.5.0 一致 ----
 runtime.setEnabled(false);
@@ -142,16 +151,17 @@ runtime.setEnabled(true);
 check(settings.narrativeEnabled === true, '开关写回了设置');
 check(blocks().length >= 4, `再打开后块回来了（${blocks().length} 块）`);
 
-// ---- 6) 删掉中间一条：整段重放，块跟着少一块 ----
+// ---- 6) 删掉中间一条：整段重放，块跟着重排 ----
 // 删掉的是第 4 条（圣剑，被拒的那条）。删完之后：索引 3 变成旁白（不该有块），
-// 索引 4 变成后来追加的"铁钥匙"（该有块）。
+// 后面的铁钥匙/铜钥匙各往前挪一位（该有块）。
 chat.splice(3, 1);
 paintChat();
 emit('message_deleted');
 await wait(420);
-check(blocks().length === 3, `删一条消息后块数跟着变（${blocks().length} 块）`);
+check(blocks().length === 4, `删一条消息后块数跟着变（${blocks().length} 块）`);
 check(!document.querySelector('#chat .mes[mesid="3"] .ilb-narr'), '被删消息之后的那条旁白没有多余块');
 check(Boolean(blockAt(4)) && /铁钥匙/.test(blockAt(4).textContent), '后面的消息补到新位置后，块也跟着挪对了');
+check(Boolean(blockAt(5)) && /铜钥匙/.test(blockAt(5).textContent), '再后面那条也补上了自己的块');
 
 // ---- 收尾：报告 ----
 const failed = checks.filter((c) => !c.ok);
