@@ -25,6 +25,36 @@ export const FACT_OPS = {
 
 export const OP_LABEL = Object.fromEntries(Object.entries(FACT_OPS).map(([cn, en]) => [en, cn]));
 
+/**
+ * 把"声明里的 verbs/events"编译成"动词 → 事实类型"的查找表。
+ *
+ * - 八个内置动词永远在；
+ * - `verbs` 是**别名**：`{ "拾取": "获得" }`，解析后仍按内置类型走；
+ * - `events` 是**用户自定义事件**：`[{ id: "突破", label: "突破境界" }]`，
+ *   解析成 `{ type:'event', event:'突破', name:'…' }`，由声明里的规则去处理。
+ *   这样非 RPG 的玩法（战斗、经营、解谜、关系）可以自己起名字，不必硬套"获得/使用"。
+ */
+export function buildVerbMap({ events = [], verbs = {} } = {}) {
+  const map = new Map();
+  for (const [cn, en] of Object.entries(FACT_OPS)) map.set(cn, { kind: 'builtin', type: en, label: cn });
+  for (const [alias, target] of Object.entries(verbs ?? {})) {
+    const type = FACT_OPS[target];
+    if (!type) continue; // 别名只能指向八个内置动词，写错就忽略（编译期另有校验）
+    if (!map.has(alias)) map.set(alias, { kind: 'builtin', type, label: target });
+  }
+  for (const raw of Array.isArray(events) ? events : []) {
+    const id = typeof raw === 'string' ? raw : (raw && (raw.id ?? raw.name));
+    if (!id || map.has(id)) continue;
+    map.set(id, { kind: 'custom', event: id, label: (raw && raw.label) || id });
+  }
+  return map;
+}
+
+/** 给提示/错误用的动词清单：内置在前，自定义在后。 */
+export function verbNames(verbMap) {
+  return [...verbMap.keys()];
+}
+
 const TOKEN_RE = /\[\[\s*ILB\s*[:：]\s*([^\[\]]*?)\s*\]\]/g;
 const MAX_TEXT = 400;
 const MAX_TARGET = 80;
@@ -53,9 +83,10 @@ function parseRelation(text) {
 /**
  * 解析一段文本里的全部事实标记。
  * @param {string} text
+ * @param {Map} [verbMap] 由 buildVerbMap 得到的动词表（省略时只有八个内置动词）
  * @returns {{facts: Array, unknowns: Array, duplicates: number, found: number}}
  */
-export function parseFacts(text) {
+export function parseFacts(text, verbMap = buildVerbMap()) {
   const facts = [];
   const unknowns = [];
   let duplicates = 0;
@@ -67,18 +98,19 @@ export function parseFacts(text) {
     found += 1;
     const body = match[1].trim();
     const [rawOp, rawTarget] = splitOnce(body);
-    const type = FACT_OPS[rawOp];
+    const hit = verbMap.get(rawOp);
     const target = (rawTarget ?? '').slice(0, MAX_TARGET).trim();
 
-    if (!type) {
+    if (!hit) {
       unknowns.push({
         raw: match[0],
         body,
         code: 'unknown-op',
-        hint: `认不出「${rawOp}」，可用的有：${Object.keys(FACT_OPS).join(' / ')}`,
+        hint: `认不出「${rawOp}」，可用的有：${[...verbMap.keys()].join(' / ')}`,
       });
       continue;
     }
+    const type = hit.kind === 'custom' ? 'event' : hit.type;
     if (!target) {
       unknowns.push({ raw: match[0], body, code: 'empty-target', hint: `「${rawOp}」后面没写对象` });
       continue;
@@ -96,6 +128,13 @@ export function parseFacts(text) {
         continue;
       }
       fact = { type, name, count };
+    } else if (type === 'event') {
+      const { name, count } = parseCount(target);
+      if (!name) {
+        unknowns.push({ raw: match[0], body, code: 'empty-target', hint: '事件后面没有写对象' });
+        continue;
+      }
+      fact = { type: 'event', event: hit.event, name, count };
     } else if (type === 'relation') {
       const rel = parseRelation(target);
       if (!rel) {
@@ -155,6 +194,8 @@ export function describeFact(fact) {
       return `从 ${fact.from} 到 ${fact.to}`;
     case 'seen':
       return `见过 ${fact.name}`;
+    case 'event':
+      return `${fact.event} ${fact.name}${fact.count > 1 ? `×${fact.count}` : ''}`;
     default:
       return '未知事实';
   }

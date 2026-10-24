@@ -66,20 +66,29 @@ function fmt(value) {
  * @param {string[]} entries 每条消息的原文（顺序就是聊天顺序，含系统消息也没关系）
  * @param {{rows: Array<{fp: string, row: object}>}|null} cache 上一次的返回值里的 cache
  */
-export function replay(narrative, entries = [], cache = null) {
+export function replay(narrative, entries = [], cache = null, options = {}) {
   const list = entries.map((entry) => (typeof entry === 'string' ? entry : String(entry ?? '')));
   const prev = cache && Array.isArray(cache.rows) ? cache.rows : [];
+  const startIndex = Math.max(0, Math.min(list.length, Number(options.startIndex) || 0));
+  const hasInitial = Boolean(options.initial && options.initial.vars);
 
-  // 找第一条与缓存不一致的消息：在它之前的状态可以整段复用。
-  let start = 0;
-  while (start < list.length) {
-    const hit = prev[start];
-    if (!hit || hit.fp !== fingerprint(list[start])) break;
-    start += 1;
+  // 有检查点时从它之后开始；否则靠缓存找第一条变化的消息，前面整段复用。
+  let start = startIndex;
+  if (!hasInitial) {
+    start = 0;
+    while (start < list.length) {
+      const hit = prev[start];
+      if (!hit || hit.fp !== fingerprint(list[start])) break;
+      start += 1;
+    }
   }
 
-  let state = start > 0 && prev[start - 1] && prev[start - 1].row ? prev[start - 1].row.state : narrative.initial();
-  const rows = prev.slice(0, start).map((entry) => entry.row);
+  let state = hasInitial
+    ? options.initial
+    : start > 0 && prev[start - 1] && prev[start - 1].row
+      ? prev[start - 1].row.state
+      : narrative.initial();
+  const rows = hasInitial ? [] : prev.slice(0, start).map((entry) => entry.row);
 
   for (let index = start; index < list.length; index += 1) {
     const parsed = narrative.parse(list[index]);
@@ -111,13 +120,16 @@ function fingerprint(text) {
  * 拼注入文本：账本正文 + 固定前言与用法说明。
  * 前言必须短——每轮都要花 token 的东西。
  */
-export function composePrompt({ narrative, state, messageCount = 0, budget = 600, inject = true }) {
+export function composePrompt({ narrative, state, messageCount = 0, budget = 600, inject = true, deltaLines = [] }) {
   if (!inject) return '';
   const body = narrative.render(state, { budgetChars: budget });
   if (!body) return '';
   const head = `【账本】按已发生的 ${messageCount} 条对话重放得出；与正文冲突时以账本为准。`;
+  const delta = Array.isArray(deltaLines) && deltaLines.length
+    ? `本轮变化（供你润色与理解，不需要复述）：\n${deltaLines.join('\n')}`
+    : '';
   const tail = `要改变账本时，在回复最后另起一行写事实标记（每行一条，最多 ${MAX_FACTS_PER_TURN} 条），例如 [[ILB:获得:铜钥匙]]。只写发生的事实，不要写规则、数值计算或效果说明。`;
-  let text = [head, body, tail].join('\n');
+  let text = [head, delta, body, tail].filter(Boolean).join('\n');
   if (text.length > MAX_PROMPT_CHARS) {
     text = `${text.slice(0, MAX_PROMPT_CHARS)}\n（账本过长，已截断）`;
   }
@@ -128,11 +140,24 @@ export function composePrompt({ narrative, state, messageCount = 0, budget = 600
  * 一次算完全部东西：最终状态、状态行、注入文本、每条消息的块、统计。
  * @param {object} narrative
  * @param {string[]} entries
- * @param {{budget?: number, inject?: boolean, maxItems?: number, cache?: object}} options
+ * @param {{
+ *   budget?: number, inject?: boolean, maxItems?: number,
+ *   cache?: object, initial?: object, startIndex?: number,
+ *   baseTotals?: object, withDelta?: boolean
+ * }} options
  */
 export function planLedger(narrative, entries = [], options = {}) {
-  const { budget = 600, inject = true, maxItems = MAX_BLOCK_ITEMS, cache = null } = options;
-  const { rows, state, cache: nextCache } = replay(narrative, entries, cache);
+  const {
+    budget = 600,
+    inject = true,
+    maxItems = MAX_BLOCK_ITEMS,
+    cache = null,
+    initial = null,
+    startIndex = 0,
+    baseTotals = null,
+    withDelta = true,
+  } = options;
+  const { rows, state, cache: nextCache } = replay(narrative, entries, cache, { initial, startIndex });
 
   const blocks = [];
   let factCount = 0;
@@ -168,14 +193,88 @@ export function planLedger(narrative, entries = [], options = {}) {
     });
   }
 
+  // 最后一条消息带来的变化：给模型一段"改前 → 改后"，让它按事实润色而不是自己算。
+  const beforeLast = rows.length >= 2
+    ? rows[rows.length - 2].state
+    : (initial && initial.vars ? initial : narrative.initial());
+  const deltaLines = withDelta ? diffLines(narrative, beforeLast, state) : [];
+
+  const base = baseTotals ?? {};
+  const totals = {
+    messages: entries.length,
+    facts: (base.facts ?? 0) + factCount,
+    ok: (base.ok ?? 0) + okCount,
+    rejected: (base.rejected ?? 0) + badCount,
+    unhandled: (base.unhandled ?? 0) + unhandledCount,
+    unknown: (base.unknown ?? 0) + unknownCount,
+    windowFacts: factCount,
+  };
+
   return {
     state,
     lines: narrative.lines(state),
     summary: narrative.summary(state),
-    prompt: composePrompt({ narrative, state, messageCount: entries.length, budget, inject }),
+    deltaLines,
+    prompt: composePrompt({ narrative, state, messageCount: entries.length, budget, inject, deltaLines }),
     blocks,
-    totals: { messages: entries.length, facts: factCount, ok: okCount, rejected: badCount, unhandled: unhandledCount, unknown: unknownCount },
+    totals,
     problems: narrative.problems ?? [],
     cache: nextCache,
+    rows,
+    startIndex,
+  };
+}
+
+/** 前后两份状态的差异，最多 max 行；只列真正变了的变量。 */
+export function diffLines(narrative, before, after, max = 4) {
+  const lines = [];
+  const schema = narrative.schema;
+  if (!schema || !before || !after) return lines;
+  for (const name of schema.order) {
+    const decl = schema.vars.get(name);
+    if (decl.private) continue;
+    const a = before.vars[name];
+    const b = after.vars[name];
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    lines.push(`${decl.label ?? name}：${short(a)} → ${short(b)}`);
+    if (lines.length >= max) break;
+  }
+  return lines;
+}
+
+function short(value) {
+  if (Array.isArray(value)) return value.length ? value.join('、') : '空';
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value);
+    return keys.length ? keys.map((k) => `${k} ${value[k]}`).join('、') : '空';
+  }
+  if (value === '') return '空';
+  return String(value);
+}
+
+/** 统计一段行窗口里的事实/拒绝/未认领/看不懂，叠加到已有累计值上（检查点用）。 */
+export function totalsFromRows(narrative, rows, base = {}) {
+  let facts = 0;
+  let ok = 0;
+  let rejected = 0;
+  let unhandled = 0;
+  let unknown = 0;
+  for (const row of rows) {
+    for (const logRow of row.log ?? []) {
+      const item = itemOf(logRow, narrative.describeFact);
+      facts += 1;
+      if (item.kind === 'ok' || item.kind === 'noop') ok += 1;
+      else if (item.kind === 'bad') rejected += 1;
+      else if (item.kind === 'unknown') unhandled += 1;
+    }
+    unknown += (row.parsed?.unknowns ?? []).length;
+  }
+  return {
+    messages: (base.messages ?? 0) + rows.length,
+    facts: (base.facts ?? 0) + facts,
+    ok: (base.ok ?? 0) + ok,
+    rejected: (base.rejected ?? 0) + rejected,
+    unhandled: (base.unhandled ?? 0) + unhandled,
+    unknown: (base.unknown ?? 0) + unknown,
   };
 }

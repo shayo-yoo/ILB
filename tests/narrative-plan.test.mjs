@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { createNarrative } from '../narrative/index.js';
 import { PRESET } from '../narrative/preset.js';
 import { composePrompt, planLedger, replay } from '../narrative/plan.js';
+import { createCheckpointStore } from '../narrative/checkpoint.js';
 import { NARRATIVE_DEFAULTS, describeDeclaration, readNarrativeSettings } from '../narrative/store.js';
 
 const narrative = createNarrative(PRESET);
@@ -167,4 +168,82 @@ test('状态摘要把空的容器略掉，但保留有上限的背包', () => {
   const summary = narrative.summary(narrative.initial());
   assert.match(summary, /背包（0\/8）/);
   assert.doesNotMatch(summary, /关系/);
+});
+
+test('自定义事件与动词别名：非 RPG 玩法不用改核心', () => {
+  const custom = createNarrative({
+    schema: { vars: [{ name: '灵力', type: 'number', init: 0 }] },
+    events: [{ id: '突破', label: '突破境界' }],
+    verbs: { 拾取: '获得' },
+    rules: [
+      { id: '突破成功', on: 'event', when: { event: '突破', name: '筑基' }, effects: [{ op: 'inc', var: '灵力', amount: 10 }] },
+    ],
+  });
+  assert.deepEqual(custom.problems, []);
+  const parsed = custom.parse('[[ILB:突破:筑基]] [[ILB:拾取:灵石]]');
+  assert.equal(parsed.facts.length, 2);
+  assert.deepEqual(parsed.facts[0], { type: 'event', event: '突破', name: '筑基', count: 1 });
+  assert.equal(parsed.facts[1].type, 'gain', '别名应归一到内置动词');
+
+  const applied = custom.apply(custom.initial(), parsed.facts[0]);
+  assert.equal(applied.ok, true);
+  assert.equal(applied.state.vars['灵力'], 10);
+
+  const unknown = custom.apply(custom.initial(), { type: 'event', event: '突破', name: '金丹' });
+  assert.equal(unknown.unhandled, true, '没匹配到规则的自定义事件应标为未认领');
+});
+
+test('规则引用不存在的自定义事件会在编译期报错', () => {
+  const bad = createNarrative({
+    schema: { vars: [{ name: '灵力', type: 'number', init: 0 }] },
+    events: [],
+    rules: [{ on: 'event', when: { event: '不存在' }, effects: [{ op: 'inc', var: '灵力', amount: 1 }] }],
+  });
+  assert.ok(bad.problems.some((p) => p.code === 'unknown-event'));
+});
+
+test('检查点：存/取/声明不匹配/清理', () => {
+  const memory = {};
+  const repository = {
+    getSettings: () => ({ narrativeCheckpoints: memory }),
+    saveSettings: (patch) => Object.assign(memory, patch.narrativeCheckpoints ?? {}),
+  };
+  // 上面的 saveSettings 语义与真实实现不同（真实实现是替换整个 map），这里直接模拟替换
+  const store = createCheckpointStore({ repository: {
+    getSettings: () => ({ narrativeCheckpoints: memory }),
+    saveSettings: (patch) => {
+      for (const key of Object.keys(memory)) delete memory[key];
+      Object.assign(memory, patch.narrativeCheckpoints ?? {});
+    },
+  } });
+
+  const rows = replay(narrative, ENTRIES).rows;
+  const totals = { messages: 2, facts: 2, ok: 2, rejected: 0, unhandled: 0, unknown: 0 };
+  store.save('chat:1', 'decl-a', 2, rows[1].state, totals);
+
+  const loaded = store.load('chat:1', 'decl-a');
+  assert.equal(loaded.upto, 2);
+  assert.deepEqual(loaded.state.vars, rows[1].state.vars);
+  assert.deepEqual(loaded.totals, totals);
+  assert.equal(store.load('chat:1', 'decl-b'), null, '声明变了就不能用旧检查点');
+
+  store.clear('chat:1');
+  assert.equal(store.load('chat:1', 'decl-a'), null);
+});
+
+test('从检查点续算与全量重放结果一致，并带上"本轮变化"', () => {
+  const full = planLedger(narrative, ENTRIES);
+  const rows = replay(narrative, ENTRIES).rows;
+  const tail = planLedger(narrative, ENTRIES, {
+    initial: rows[1].state,
+    startIndex: 2,
+    baseTotals: { messages: 2, facts: 2, ok: 2, rejected: 0, unhandled: 0, unknown: 0 },
+  });
+  assert.deepEqual(tail.state.vars, full.state.vars, '检查点续算必须等于全量重放');
+  assert.equal(tail.startIndex, 2);
+  assert.ok(tail.blocks.every((block) => block.index >= 2), '检查点之前不再画块');
+
+  const withChange = planLedger(narrative, ['旁白', '[[ILB:获得:铜钥匙]]']);
+  assert.ok(withChange.deltaLines.some((line) => line.includes('背包')), `应给出本轮变化：${withChange.deltaLines.join(' / ')}`);
+  assert.match(withChange.prompt, /本轮变化/);
 });

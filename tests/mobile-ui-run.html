@@ -241,11 +241,11 @@
       await wait(60);
       note(!ui.isOverlayOpen(), '二级页全部关掉之后 isOverlayOpen=false');
 
-      // 7.5) 设置页的「编辑声明」：真点开一次，确认 JSON 编辑器在手机上也能开
-      click(byText(dialog, '.ilb-tab', '设置'), '「设置」标签');
+      // 7.5) 叙事页的「编辑声明」：真点开一次，确认 JSON 编辑器在手机上也能开
+      click(byText(dialog, '.ilb-tab', '叙事'), '「叙事」标签');
       await wait(80);
       const editBtn = byText(dialog, '.ilb-btn', '编辑声明');
-      note(Boolean(editBtn), '设置页里有「编辑声明」按钮');
+      note(Boolean(editBtn), '叙事页里有「编辑声明」按钮');
       if (editBtn) {
         click(editBtn, '「编辑声明」');
         await wait(120);
@@ -259,13 +259,15 @@
         await wait(60);
       }
 
-      // 8) 不许横向滚动（ILB-7.15 / ILB-6.10.7）：375px 下最容易出现
+      // 8) 不许横向滚动（ILB-7.15 / ILB-6.10.7）：375px 下最容易出现。
+      // 标签栏本身是横向滚动容器（六页放不下时允许滑），里面的按钮不算"撑破页面"。
       const docOverflow = Math.round(document.documentElement.scrollWidth - viewport.width);
       note(docOverflow <= 1, `页面横向溢出 ${docOverflow}px（要 ≤1）`);
       const widest = Array.from(dialog.querySelectorAll('*'))
+        .filter((n) => !n.closest('.ilb-tabs'))
         .map((n) => Math.round(n.getBoundingClientRect().right))
         .reduce((a, b) => Math.max(a, b), 0);
-      note(widest <= viewport.width + 1, `界面里最右边的元素 ${widest}px（视口 ${viewport.width}px）`);
+      note(widest <= viewport.width + 1, `界面里最右边的元素（不含可横滑标签栏）${widest}px（视口 ${viewport.width}px）`);
 
       // 9) 手机皮肤是否自带（nocss=1 时这是唯一保障）
       const skin = mobileSkinInfo();

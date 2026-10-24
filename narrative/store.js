@@ -18,15 +18,24 @@ export const NARRATIVE_DEFAULTS = Object.freeze({
   narrativeInject: true,
   narrativeBudget: 600,
   narrativeDeclaration: null,
+  narrativeCheckpointEvery: 5,
 });
 
 export const BUDGET_MIN = 120;
 export const BUDGET_MAX = 2000;
+export const CHECKPOINT_MIN = 0;
+export const CHECKPOINT_MAX = 50;
 
 function clampBudget(value) {
   const raw = Number(value);
   if (!Number.isFinite(raw)) return NARRATIVE_DEFAULTS.narrativeBudget;
   return Math.min(BUDGET_MAX, Math.max(BUDGET_MIN, Math.round(raw)));
+}
+
+function clampCheckpoint(value) {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return NARRATIVE_DEFAULTS.narrativeCheckpointEvery;
+  return Math.min(CHECKPOINT_MAX, Math.max(CHECKPOINT_MIN, Math.round(raw)));
 }
 
 /**
@@ -40,6 +49,7 @@ export function readNarrativeSettings(settings = {}) {
     enabled: settings.narrativeEnabled === true,
     inject: settings.narrativeInject !== false,
     budget: clampBudget(settings.narrativeBudget ?? NARRATIVE_DEFAULTS.narrativeBudget),
+    checkpointEvery: clampCheckpoint(settings.narrativeCheckpointEvery ?? NARRATIVE_DEFAULTS.narrativeCheckpointEvery),
     declaration: customOk ? custom : PRESET,
     usingPreset: !customOk,
   };

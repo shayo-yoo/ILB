@@ -65,7 +65,9 @@ function paintChat() {
 }
 paintChat();
 
-const settings = { narrativeEnabled: true, narrativeInject: true, narrativeBudget: 600 };
+// 检查点在这个探针里关掉（0）：这里要验的是"每一条消息的块"和事件时序；
+// 检查点会把旧楼层的块折掉，另用单元测试覆盖（tests/narrative-plan.test.mjs）。
+const settings = { narrativeEnabled: true, narrativeInject: true, narrativeBudget: 600, narrativeCheckpointEvery: 0 };
 const repository = {
   getSettings: () => ({ ...settings }),
   saveSettings: (patch) => Object.assign(settings, patch),

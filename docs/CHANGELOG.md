@@ -15,6 +15,50 @@
 
 ---
 
+## 0.7.0 · 2026-10-24 · 新增 · ILB-10.9.1–10.9.3 / 10.10.1–10.10.4 / 10.11.1 · 自定义事件、检查点存档、独立「叙事」标签页
+
+**一句话**：账本不再只服务 RPG——用户可以在声明里登记**自定义事件**（`[[ILB:突破:筑基]]`）给任意玩法用；旧楼层折成**检查点存下来**，最新的几条仍现场重算；注入里加了一段"本轮变化（改前 → 改后）"供模型润色；所有叙事功能从"设置"页搬进**独立的「叙事」标签页**，并带上"复制编写说明"给 AI 用。
+
+**依据**：用户反馈（m0???）"不同角色卡不可能只有 RPG 一个玩法""倾向于把状态存起来，并把改变前后两个版本发给 AI""叙事引擎可以放一个与设置同级的新 TAB"。本次实现逻辑与入口；可视化事件编辑器按用户要求留到逻辑稳定之后。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `narrative/facts.js` | `buildVerbMap({events, verbs})`：八个内置动词 + `verbs` 别名 + `events` 自定义事件；`parseFacts(text, verbMap)` 解析自定义事件为 `{type:'event', event, name, count}` |
+| `narrative/engine.js` | `FACT_TYPES` 增加 `event`；条件支持 `when.event`；`compileRules` 对 `event` 规则校验事件是否已在声明里登记（`unknown-event`） |
+| `narrative/checkpoint.js` | 检查点存储：按"聊天 key + 声明指纹"存 `{upto, state, totals}`；只保留最近 8 条聊天；`chatKeyOf(ctx)` 兼容 `chatId`/`chatMetadata.chat_id`/角色名 |
+| `narrative/plan.js` | `replay` 支持从检查点续算（`initial/startIndex`）；`planLedger` 返回 `deltaLines`、`startIndex`、累计 `totals`；`composePrompt` 注入"本轮变化" |
+| `narrative/guide.js` | `DECLARATION_GUIDE`：一份给 AI 的声明编写说明（形状、类型、约束、效果、自定义事件、约定） |
+| `ui/view-narrative.js` | 新「叙事」标签页：开关/预算/检查点间隔、账本预览、查看账本、重放、重建账本、编辑声明、复制编写说明、恢复示例 |
+| `tests/narrative-plan.test.mjs` | 新增 4 个用例：自定义事件与别名、未登记事件编译报错、检查点存取与失效、续算=全量重放且带"本轮变化" |
+
+**修订**
+
+| 位置 | 内容 |
+|---|---|
+| `ui/panel.js` | 标签从五个变六个：`书架 / 规则 / 快照 / 诊断 / 叙事 / 设置` |
+| `ui/view-settings.js` | 移除原先塞在设置页的叙事卡片与声明编辑器（全部移入「叙事」页） |
+| `narrative/adapter.js` | 读取检查点、续算、写回检查点；`clearCheckpoint()`；`describe()` 报检查点与窗口起点 |
+| `narrative/store.js` | 新增 `narrativeCheckpointEvery`（默认 5，0 = 关闭，夹在 0–50） |
+| `index.js` `manifest.json` | 版本 `0.7.0` |
+| `tests/mobile-ui-run.html` | 「编辑声明」改在「叙事」标签下验证；横向溢出检查排除可横滑的标签栏 |
+| `tests/smoke-dom.mjs` | 渲染循环加入 `narrative` 标签 |
+| `tests/narrative-probe.html` | 探针关闭检查点，保持"每条消息一块"的断言可预期 |
+
+**验收（2026-10-24 实测）**
+
+- 单元 **133/133**（叙事 31 个）、`linkcheck` **54/54**、`smoke-dom` 0 失败
+- `narrative-probe` **22/22**；`mobile-ui-probe` **4 轮全 PASS**（375 带样式 / 375 无样式 / 500×900 / 820 期望电脑）
+- `selftest-probe` PASS；`browser-probe` PASS；`nocss-probe` PASS；`shell-route-probe` 3/3
+
+**未做（下一步）**
+
+- 可视化事件编辑器（按用户要求放在逻辑稳定之后）；"直接设值"事实仍待定（参考文档 §10.7）。
+- 检查点只存"状态 + 累计统计"，不存每个旧楼层的事实原文；因此"重建账本"后旧楼层被隐藏的部分无法恢复。
+
+---
+
 ## 0.6.2 · 2026-10-24 · 修正 · ILB-10.8.12–10.8.13 · 实测反馈：注入漏掉最新一条、长聊天全量重放、摘要误报容器
 
 **一句话**：用户实测（没接 API，只看请求体与界面）发现两件事——账本被插在最新一条用户消息**之前**、而且"已发生的 N 条"少算了一条；长聊天每次刷新都全量重放。这一版把注入挪到消息之后、在用户消息到达时立刻重算，并给重放加了增量缓存。

@@ -14,20 +14,32 @@
 
 import { compileSchema, initialState, derive, checkConstraints, TYPES } from './schema.js';
 import { compileCatalog } from './catalog.js';
-import { parseFacts, stripFacts, describeFact, FACT_OPS } from './facts.js';
+import { parseFacts, stripFacts, describeFact, FACT_OPS, buildVerbMap } from './facts.js';
 import { compileRules, applyFact, applyFacts, fold, stateAt } from './engine.js';
 import { renderPrompt, renderLines, describeChanges, summarize, lineOf } from './render.js';
 
-export const NARRATIVE_VERSION = '0.6.0';
+export const NARRATIVE_VERSION = '0.7.0';
 
 /**
- * 把三份声明编译成一个可直接用的上下文。
- * @param {{schema?: object, catalog?: object, rules?: Array}} spec
+ * 把声明编译成一个可直接用的上下文。
+ * @param {{
+ *   schema?: object, catalog?: object, rules?: Array,
+ *   events?: Array<string|{id:string,label?:string}>,
+ *   verbs?: Record<string,string>
+ * }} spec
  */
 export function createNarrative(spec = {}) {
   const schema = compileSchema(spec.schema ?? {});
   const catalog = compileCatalog(spec.catalog ?? {});
-  const compiledRules = compileRules(spec.rules ?? [], schema);
+
+  // 自定义事件与别名：解析层只有这一处入口，规则仍然按 `on` 分发。
+  const events = (Array.isArray(spec.events) ? spec.events : [])
+    .map((raw) => (typeof raw === 'string' ? { id: raw } : raw))
+    .filter((raw) => raw && typeof raw.id === 'string' && raw.id.trim())
+    .map((raw) => ({ id: raw.id.trim(), label: raw.label ?? raw.id }));
+  const verbs = buildVerbMap({ events, verbs: spec.verbs ?? {} });
+
+  const compiledRules = compileRules(spec.rules ?? [], schema, events);
 
   const problems = [...schema.problems, ...catalog.problems, ...compiledRules.problems];
   const ctx = {
@@ -35,7 +47,7 @@ export function createNarrative(spec = {}) {
     catalog,
     rules: compiledRules.rules,
     initial: initialState(schema),
-    parseFacts,
+    parseFacts: (text) => parseFacts(text, verbs),
     problems,
   };
 
@@ -44,9 +56,11 @@ export function createNarrative(spec = {}) {
     schema,
     catalog,
     rules: ctx.rules,
+    events,
+    verbs,
     problems,
     initial: () => initialState(schema),
-    parse: (text) => parseFacts(text),
+    parse: (text) => parseFacts(text, verbs),
     strip: (text) => stripFacts(text),
     describeFact,
     apply: (state, fact) => applyFact(state, fact, ctx),
@@ -64,6 +78,6 @@ export function createNarrative(spec = {}) {
 
 export { compileSchema, initialState, derive, checkConstraints, TYPES } from './schema.js';
 export { compileCatalog, describeCatalog } from './catalog.js';
-export { parseFacts, stripFacts, describeFact, FACT_OPS, OP_LABEL } from './facts.js';
+export { parseFacts, stripFacts, describeFact, FACT_OPS, OP_LABEL, buildVerbMap } from './facts.js';
 export { compileRules, applyFact, applyFacts, fold, stateAt, FACT_TYPES, EFFECT_OPS } from './engine.js';
 export { renderPrompt, renderLines, describeChanges, summarize, lineOf } from './render.js';

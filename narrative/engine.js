@@ -13,7 +13,7 @@
 
 import { cloneState, derive, checkConstraints, isValidValue } from './schema.js';
 
-export const FACT_TYPES = ['gain', 'lose', 'use', 'mark', 'unmark', 'relation', 'move', 'seen', 'tick'];
+export const FACT_TYPES = ['gain', 'lose', 'use', 'mark', 'unmark', 'relation', 'move', 'seen', 'event', 'tick'];
 export const EFFECT_OPS = ['add', 'remove', 'set', 'inc', 'dec', 'mapInc', 'mark', 'unmark', 'reject'];
 const MAX_EFFECTS_PER_FACT = 50;
 
@@ -59,6 +59,10 @@ function conditionPass(cond, fact, state, catalog) {
     if (!names.includes(fact.name)) return false;
   }
   if (cond.dir !== undefined && fact.dir !== cond.dir) return false;
+  if (cond.event !== undefined) {
+    const events = Array.isArray(cond.event) ? cond.event : [cond.event];
+    if (!events.includes(fact.event)) return false;
+  }
   if (cond.from !== undefined && fact.from !== cond.from) return false;
   if (cond.to !== undefined && fact.to !== cond.to) return false;
   if (Array.isArray(cond.all)) {
@@ -69,9 +73,10 @@ function conditionPass(cond, fact, state, catalog) {
 }
 
 /** 编译规则表：把引用不存在的变量、不认识的 op/事实类型提前说出来。 */
-export function compileRules(rules = [], schema) {
+export function compileRules(rules = [], schema, events = []) {
   const problems = [];
   const list = [];
+  const eventIds = new Set((Array.isArray(events) ? events : []).map((event) => (typeof event === 'string' ? event : event?.id)).filter(Boolean));
   for (const raw of rules) {
     if (!isPlainObject(raw)) {
       problems.push({ code: 'bad-rule' });
@@ -86,6 +91,12 @@ export function compileRules(rules = [], schema) {
       stop: raw.stop === true, // 命中后不再继续匹配后续规则
     };
     if (!FACT_TYPES.includes(rule.on)) problems.push({ code: 'bad-rule-on', id: rule.id, on: rule.on });
+    if (rule.on === 'event' && rule.when?.event !== undefined) {
+      const refs = Array.isArray(rule.when.event) ? rule.when.event : [rule.when.event];
+      for (const ref of refs) {
+        if (!eventIds.has(ref)) problems.push({ code: 'unknown-event', id: rule.id, event: ref });
+      }
+    }
     if (rule.effects.length === 0) problems.push({ code: 'rule-without-effects', id: rule.id });
     for (const effect of rule.effects) {
       if (!EFFECT_OPS.includes(effect.op)) problems.push({ code: 'bad-effect-op', id: rule.id, op: effect.op });

@@ -8,6 +8,7 @@ import { renderShelf } from './view-shelf.js';
 import { renderRules } from './view-rules.js';
 import { renderSnapshots } from './view-snapshots.js';
 import { renderDiagnostics } from './view-diagnostics.js';
+import { renderNarrative } from './view-narrative.js';
 import { renderSettings } from './view-settings.js';
 import { openEditor, openPreview } from './editor.js';
 
@@ -16,6 +17,7 @@ const TABS = [
   { id: 'rules', label: '规则' },
   { id: 'snapshots', label: '快照' },
   { id: 'diagnostics', label: '诊断' },
+  { id: 'narrative', label: '叙事' },
   { id: 'settings', label: '设置' },
 ];
 
@@ -24,6 +26,7 @@ const VIEWS = {
   rules: renderRules,
   snapshots: renderSnapshots,
   diagnostics: renderDiagnostics,
+  narrative: renderNarrative,
   settings: renderSettings,
 };
 

@@ -214,7 +214,7 @@ step('新建一本书', () => {
   });
 });
 
-for (const tab of ['shelf', 'rules', 'snapshots', 'diagnostics', 'settings']) {
+for (const tab of ['shelf', 'rules', 'snapshots', 'diagnostics', 'narrative', 'settings']) {
   step(`切到 ${tab} 并渲染`, () => {
     panel.setTab(tab);
   });
