@@ -214,7 +214,7 @@ step('新建一本书', () => {
   });
 });
 
-for (const tab of ['shelf', 'rules', 'snapshots', 'diagnostics', 'narrative', 'settings']) {
+for (const tab of ['shelf', 'rules', 'snapshots', 'state', 'diagnostics', 'settings']) {
   step(`切到 ${tab} 并渲染`, () => {
     panel.setTab(tab);
   });
@@ -390,6 +390,24 @@ step('外壳按布局挑一套界面，另一套让位', async () => {
   const d = shell.describe();
   if (!d.layout) throw new Error('describe() 没报布局');
   if (!d.desktop || !d.mobile) throw new Error('describe() 没报两套壳');
+});
+step('标签栏有「使用说明」，内容能画出来', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { primeGuide, renderGuide } = await import('../ui/guide.js');
+  panel.setTab('shelf');
+  const tabTexts = walk(hostEl).map((n) => String(n.textContent ?? ''));
+  if (!tabTexts.some((t) => t === '使用说明')) throw new Error('标签栏里找不到「使用说明」入口');
+  // 假 DOM 里 fetch 永远失败，所以直接把同一份 JSON 塞进去，验证渲染部分。
+  const data = JSON.parse(readFileSync(new URL('../data/guide/zh-cn.json', import.meta.url), 'utf8'));
+  primeGuide(data);
+  const nodes = renderGuide(data);
+  if (nodes.length < 5) throw new Error(`说明只画出 ${nodes.length} 块，太少`);
+  const wrap = makeElement('div');
+  nodes.forEach((n) => wrap.appendChild(n));
+  const text = walk(wrap).map((n) => String(n.textContent ?? '')).join('\n');
+  for (const must of ['五分钟上手', '变量和宏', '数据存在哪']) {
+    if (!text.includes(must)) throw new Error(`说明里缺少「${must}」`);
+  }
 });
 
 
