@@ -178,3 +178,18 @@ test('互相点名不会死循环', () => {
   const r = run(book, { userInput: '王城' });
   assert.deepEqual([...ids(r)].sort(), ['T::1', 'T::2']);
 });
+
+test('「计算」默认只是本轮临时值，勾了「存进聊天」才写回', () => {
+  const nodes = [
+    { kind: 'calc', target: '次数', op: '-', left: { type: 'var', name: '次数' }, right: { type: 'number', value: 1 } },
+  ];
+  const plain = normalizeFlow({ nodes });
+  const r1 = evaluateFlow(plain, { vars: { 次数: 3 } });
+  assert.equal(r1.vars['次数'], 2);
+  assert.deepEqual(r1.writes, {});
+
+  const persisted = normalizeFlow({ nodes: [{ ...nodes[0], persist: true }] });
+  const r2 = evaluateFlow(persisted, { vars: { 次数: 3 } });
+  assert.equal(r2.vars['次数'], 2);
+  assert.equal(r2.writes['次数'], 2);
+});

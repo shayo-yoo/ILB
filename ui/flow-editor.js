@@ -264,6 +264,15 @@ export function renderFlowEditor(options = {}) {
           }),
         ]),
       );
+      body.appendChild(
+        el('label', { class: 'ilb-inline ilb-flow-persist' }, [
+          checkbox(node.persist === true, (checked) => {
+            node.persist = checked;
+            notify();
+          }, '把计算结果存进这张聊天'),
+          el('span', { class: 'ilb-sub', text: '存进聊天（下一轮还在；不勾就只是本轮临时值）' }),
+        ]),
+      );
       return body;
     }
 

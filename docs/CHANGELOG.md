@@ -31,7 +31,9 @@
 | `core/model.js` | 条目 `fields: []` 归一化 |
 | `ui/view-state.js` | 「条目提供的字段」：按书/条目分组生成控件，改完立刻写回变量 |
 | `ui/mobile.js` / `ui/shell.js` | 坞改为读聊天变量（最多 3 条）；`setStatusProvider` / `refreshStatus` / `openState`（去「状态」页） |
-| 测试 | `tests/fields.test.mjs`（4）+ 级联 3 条（`evaluate.test.mjs`） |
+| `core/flow.js` / `ui/flow-editor.js` | 「计算」节点可选**存进聊天**（`persist`）：不勾只是本轮临时值，勾了和「记住」一样整轮结束后落盘（ILB-10.15.6） |
+| `tests/gacha-demo.mjs` | "抽卡"验收演示：字段默认值、次数 3→0、幸运 ≥80 出金卡 / 否则白卡，四轮输出 |
+| 测试 | `tests/fields.test.mjs`（4）+ 级联 3 条（`flow-vars.test.mjs`）+「计算存进聊天」1 条 |
 
 **修订（文档）**
 
@@ -41,7 +43,7 @@
 | `extension/README.md` | 测试计数与探针段更新 |
 | `docs/决策记录.md` | D-0045 |
 
-**验收**：单元 **127/127**、`linkcheck` 43 个模块 43/43、`smoke-dom` 0 失败。**未验证**：真实 ST 里的级联表现、状态页控件在手机上好不好按。
+**验收**：单元 **128/128**、`linkcheck` 43 个模块 43/43、`smoke-dom` 0 失败、`tests/gacha-demo.mjs` 四轮输出符合预期。**未验证**：真实 ST 里的级联表现、状态页控件在手机上好不好按。
 
 ---
 

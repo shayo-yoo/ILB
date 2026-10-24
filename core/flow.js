@@ -145,6 +145,7 @@ function normalizeNode(raw, depth) {
     node.op = CALC_OPS.includes(raw.op) ? raw.op : '+';
     node.left = normalizeOperand(raw.left, operand('var', ''));
     node.right = normalizeOperand(raw.right, operand('number', 1));
+    node.persist = raw.persist === true;
   } else if (kind === 'define') {
     node.name = String(raw.name ?? '');
     node.value = normalizeOperand(raw.value, operand('text', ''));
@@ -428,7 +429,10 @@ function runNode(node, ctx, steps, depth) {
 
   if (node.kind === 'calc') {
     const value = calcValue(operandValue(node.left, ctx.vars), operandValue(node.right, ctx.vars), node.op);
-    if (node.target) ctx.vars[node.target] = value;
+    if (node.target) {
+      ctx.vars[node.target] = value;
+      if (node.persist) ctx.writes[node.target] = value;
+    }
     steps.push({ stage: 'logic', passed: true, reason: `计算 ${node.target || '（未命名）'} = ${value}` });
     return null;
   }
