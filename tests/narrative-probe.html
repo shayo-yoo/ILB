@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ILB 叙事引擎探针</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  body { margin: 0; background: #14141a; color: #eaeaea; font: 15px/1.6 system-ui, sans-serif; }
+  #chat { max-width: 720px; margin: 0 auto; padding: 12px; }
+  .mes { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .mes_text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  #result { margin: 16px 12px; padding: 12px; background: #101015; border: 1px solid #333; white-space: pre-wrap; font: 12px/1.5 ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="chat"></div>
+<pre id="result">运行中…</pre>
+<script type="module">
+// tests/narrative-probe.html —— 叙事引擎接入层的真实浏览器证据（无头 Chrome 跑）。
+//
+// 纯计算部分由 tests/narrative-plan.test.mjs 覆盖；这里只验"接上去以后"的四件事：
+//   1) 打开后消息末尾真的出现只读账本块，拒绝原因写在块里；
+//   2) 账本写进了 setExtensionPrompt（独立 key，不是世界书那条）；
+//   3) 新消息渲染事件只补这一条，不需要整页重算；
+//   4) 关掉开关后块全部消失、注入被清空，行为回到 v0.5.0。
+// 结果 POST 给 tests/serve.mjs（无头 Chrome 下 --dump-dom 取不到内容）。
+
+import { createNarrativeRuntime, INJECT_KEY } from '../narrative/adapter.js';
+
+const out = [];
+const checks = [];
+function log(line) {
+  out.push(line);
+}
+function check(ok, text) {
+  checks.push({ ok: Boolean(ok), text });
+  log(`${ok ? '✓' : '✗'} ${text}`);
+  return ok;
+}
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ---- 假聊天：用真实 DOM 结构（.mes[mesid] > .mes_text），仓储与宿主都用最小桩 ----
+const MESSAGES = [
+  '旁白：你们在地窖里停下。',
+  '[[ILB:获得:铜钥匙]]',
+  '[[ILB:获得:重甲]]',
+  '[[ILB:获得:圣剑]]',
+  '旁白：铁门在身后合上。',
+];
+const chat = MESSAGES.map((mes) => ({ mes }));
+const chatHost = document.getElementById('chat');
+
+function paintChat() {
+  chatHost.innerHTML = '';
+  chat.forEach((message, index) => {
+    const mes = document.createElement('div');
+    mes.className = 'mes';
+    mes.setAttribute('mesid', String(index));
+    const text = document.createElement('div');
+    text.className = 'mes_text';
+    text.textContent = message.mes;
+    mes.appendChild(text);
+    chatHost.appendChild(mes);
+  });
+}
+paintChat();
+
+const settings = { narrativeEnabled: true, narrativeInject: true, narrativeBudget: 600 };
+const repository = {
+  getSettings: () => ({ ...settings }),
+  saveSettings: (patch) => Object.assign(settings, patch),
+};
+
+const prompts = {};
+const ctx = {
+  chat,
+  setExtensionPrompt(key, value, position, depth, scan, role) {
+    prompts[key] = { value, position, depth, role };
+  },
+};
+
+const handlers = new Map();
+const source = {
+  on(name, fn) {
+    if (!handlers.has(name)) handlers.set(name, []);
+    handlers.get(name).push(fn);
+  },
+  removeListener(name, fn) {
+    const list = handlers.get(name) ?? [];
+    const at = list.indexOf(fn);
+    if (at >= 0) list.splice(at, 1);
+  },
+};
+const emit = (name, ...args) => {
+  for (const fn of handlers.get(name) ?? []) fn(...args);
+};
+
+const runtime = createNarrativeRuntime({
+  getContext: () => ctx,
+  getEventSource: () => source,
+  getEventTypes: () => ({}),
+  repository,
+  notify: (message, kind) => log(`  [notify:${kind ?? 'info'}] ${message}`),
+});
+
+runtime.mount();
+
+// ---- 1) 打开后：三条有事实的消息各一块，拒绝写在块里 ----
+const blocks = () => Array.from(document.querySelectorAll('.ilb-narr'));
+const blockAt = (index) => document.querySelector(`#chat .mes[mesid="${index}"] .ilb-narr`);
+check(blocks().length === 3, `三条消息有账本块（实际 ${blocks().length} 块）`);
+check(Boolean(blockAt(1)) && /获得 铜钥匙/.test(blockAt(1).textContent), '第 2 条消息的块写了"获得 铜钥匙"');
+check(Boolean(blockAt(3)) && /未执行/.test(blockAt(3).textContent), '第 4 条消息的块写了"未执行"（负重超限）');
+check(Boolean(blockAt(3)) && /总重量|超过/.test(blockAt(3).textContent), '拒绝原因写在块里，不是只留一个红点');
+
+// ---- 2) 注入：独立 key、在聊天里靠后、带约束现状 ----
+const injected = prompts[INJECT_KEY];
+check(Boolean(injected), `写进了 ${INJECT_KEY}`);
+check(Boolean(injected) && /【账本】/.test(injected.value), '注入文本带【账本】前言');
+check(Boolean(injected) && /背包（2\/8/.test(injected.value), '注入文本带"背包（2/8"这种约束现状');
+check(Boolean(injected) && injected.position === 1 && injected.depth === 1 && injected.role === 0, '注入位置 IN_CHAT / 深度 1 / system');
+const worldbookKeys = Object.keys(prompts).filter((key) => key.startsWith('ILB::'));
+check(worldbookKeys.length === 0, '没有碰世界书那条注入 key（ILB::…）');
+
+// ---- 3) 新消息到了：只补这一条 ----
+chat.push({ mes: '[[ILB:获得:铁钥匙]]' });
+paintChat();
+emit('message_rendered', chat.length - 1);
+const fresh = blockAt(chat.length - 1);
+check(Boolean(fresh) && /获得 铁钥匙/.test(fresh.textContent), '新消息渲染后，它自己的账本块立刻出现');
+
+// ---- 4) 关掉开关：块全清、注入清空、描述与 v0.5.0 一致 ----
+runtime.setEnabled(false);
+check(blocks().length === 0, `关掉后块全部消失（剩 ${blocks().length} 块）`);
+check(Boolean(prompts[INJECT_KEY]) && prompts[INJECT_KEY].value === '', '关掉后注入被写成空串（不残留旧账本）');
+const off = runtime.describe();
+check(off.enabled === false, 'describe() 报"已关闭"');
+check(off.blocks === 0 && off.promptChars === 0, 'describe() 里的块数与注入字数都归零');
+
+// ---- 5) 再打开：能恢复（设置是真的存下来了） ----
+runtime.setEnabled(true);
+check(settings.narrativeEnabled === true, '开关写回了设置');
+check(blocks().length >= 4, `再打开后块回来了（${blocks().length} 块）`);
+
+// ---- 6) 删掉中间一条：整段重放，块跟着少一块 ----
+// 删掉的是第 4 条（圣剑，被拒的那条）。删完之后：索引 3 变成旁白（不该有块），
+// 索引 4 变成后来追加的"铁钥匙"（该有块）。
+chat.splice(3, 1);
+paintChat();
+emit('message_deleted');
+await wait(420);
+check(blocks().length === 3, `删一条消息后块数跟着变（${blocks().length} 块）`);
+check(!document.querySelector('#chat .mes[mesid="3"] .ilb-narr'), '被删消息之后的那条旁白没有多余块');
+check(Boolean(blockAt(4)) && /铁钥匙/.test(blockAt(4).textContent), '后面的消息补到新位置后，块也跟着挪对了');
+
+// ---- 收尾：报告 ----
+const failed = checks.filter((c) => !c.ok);
+const verdict = failed.length === 0 ? 'PASS' : 'FAIL';
+log(`判定: ${verdict}（${checks.length - failed.length}/${checks.length}）`);
+document.getElementById('result').textContent = out.join('\n');
+document.title = `ILB-NARRATIVE-PROBE ${verdict}`;
+try {
+  await fetch('/report', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ probe: 'narrative', verdict, checks, text: out.join('\n') }),
+  });
+} catch (err) {
+  log(`回报失败（不影响页面）: ${err?.message ?? err}`);
+}
+</script>
+</body>
+</html>

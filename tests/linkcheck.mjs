@@ -10,7 +10,9 @@ async function walk(dir, out = []) {
   for (const item of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, item.name);
     if (item.isDirectory()) {
-      if (item.name === 'node_modules' || item.name === 'tests') continue;
+      // tests/ 是测试工具自己；lab/ 是**隔离子项目**（叙事引擎），有自己的测试命令
+      // （node --test lab/tests/*.test.mjs），不参与"扩展能不能加载"这项发布前检查。
+      if (item.name === 'node_modules' || item.name === 'tests' || item.name === 'lab') continue;
       await walk(full, out);
     } else if (item.name.endsWith('.js')) {
       out.push(full);

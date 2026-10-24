@@ -53,6 +53,58 @@ export function renderSettings(ctx) {
     (value) => save({ importEnabledPolicy: value }),
   );
 
+  const narrative = ctx.narrative;
+  const narrativeInfo = (() => {
+    try {
+      return narrative && typeof narrative.describe === 'function' ? narrative.describe() : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const narrativeBadge = (() => {
+    if (!narrative) return badge('未接入', 'warn');
+    if (!narrativeInfo) return badge('状态读不到', 'warn');
+    if (!narrativeInfo.enabled) return badge('已关闭', 'warn');
+    const problems = narrativeInfo.declaration?.problems ?? 0;
+    if (problems > 0) return badge(`声明有 ${problems} 个问题`, 'warn');
+    const facts = narrativeInfo.totals?.facts ?? 0;
+    return badge(`运行中 · ${facts} 条事实`, 'ok');
+  })();
+
+  function ledgerNodes() {
+    const nodes = [];
+    let data = null;
+    try {
+      data = narrative && typeof narrative.ledger === 'function' ? narrative.ledger() : null;
+    } catch (err) {
+      nodes.push(hint(`读账本失败：${err?.message ?? err}`));
+      return nodes;
+    }
+    if (!data) {
+      nodes.push(hint('叙事引擎没接上，账本读不到。'));
+      return nodes;
+    }
+    if (!data.settings.enabled) nodes.push(hint('账本现在关着。打开开关后，这里会显示按聊天记录重放出来的状态。'));
+    const declaration = data.declaration ?? {};
+    nodes.push(el('p', { class: 'ilb-hint', text: `声明：${data.settings.usingPreset ? '内置示例' : '你自己的'} · ${declaration.variables ?? 0} 个变量 · ${declaration.rules ?? 0} 条规则${declaration.problemText ? ` · 问题：${declaration.problemText}` : ''}` }));
+    const plan = data.plan;
+    if (plan && plan.lines.length) {
+      nodes.push(el('ul', { class: 'ilb-summary' }, plan.lines.map((line) => el('li', { text: line.text }))));
+    } else {
+      nodes.push(hint('还没有任何事实进来。让模型在回复里写一条 [[ILB:获得:铜钥匙]] 试试。'));
+    }
+    if (plan && plan.totals) {
+      const t = plan.totals;
+      nodes.push(hint(`重放结果：${t.messages} 条消息 · ${t.facts} 条事实（成功 ${t.ok}、被拒 ${t.rejected}、未认领 ${t.unhandled}、看不懂 ${t.unknown}）`));
+    }
+    if (plan && plan.prompt) {
+      nodes.push(el('h5', { class: 'ilb-section-title', text: '下一轮注入给模型的文本' }));
+      nodes.push(el('pre', { class: 'ilb-selftest', text: plan.prompt }));
+    }
+    return nodes;
+  }
+
   return el('div', { class: 'ilb-view' }, [
     el('div', { class: 'ilb-inline' }, [
       el('strong', { text: '设置' }),
@@ -110,6 +162,75 @@ export function renderSettings(ctx) {
         el('span', { class: 'ilb-sub', text: '在注入内容之间加分隔线' }),
       ]),
       hint('有些模型对分隔线比较敏感。默认不加。'),
+    ]),
+
+    el('div', { class: 'ilb-card' }, [
+      el('h5', { class: 'ilb-section-title', text: '叙事引擎（账本）' }),
+      el('div', { class: 'ilb-inline' }, [
+        narrativeBadge,
+        el('span', { class: 'ilb-sub', text: narrativeInfo?.declaration?.problemText ?? '' }),
+      ]),
+      el('label', { class: 'ilb-inline' }, [
+        checkbox(narrativeInfo?.enabled === true, (on) => {
+          if (!narrative) {
+            ctx.toast('叙事引擎没接上，开关用不了', 'warn');
+            return;
+          }
+          try {
+            narrative.setEnabled(on);
+          } catch (err) {
+            ctx.toast(`开关没生效：${err?.message ?? err}`, 'error');
+          }
+          ctx.render();
+        }),
+        el('span', { class: 'ilb-sub', text: '启用账本（默认关闭）' }),
+      ]),
+      hint('关着的时候扩展行为与 v0.5.0 完全一致：不注入、不在消息末尾画东西。'),
+      field(
+        '注入正文的字数上限',
+        el('input', {
+          class: 'ilb-input',
+          type: 'number',
+          min: '120',
+          max: '2000',
+          step: '60',
+          value: String(narrativeInfo?.budget ?? 600),
+          onchange: (e) => {
+            const raw = Number(e.target.value);
+            const value = Number.isFinite(raw) ? Math.min(2000, Math.max(120, Math.round(raw))) : 600;
+            e.target.value = String(value);
+            save({ narrativeBudget: value });
+            try {
+              narrative?.refresh?.('budget');
+            } catch {
+              /* 刷新失败下一页会显示错误 */
+            }
+          },
+        }),
+        '默认 600 字。只算账本正文，不含固定前言与用法说明。',
+      ),
+      el('div', { class: 'ilb-actions' }, [
+        button('查看账本', () => ctx.openOverlay('账本', ledgerNodes()), { ghost: true }),
+        button('重放一次', () => {
+          try {
+            narrative?.refresh?.('manual');
+            ctx.toast('已按聊天记录重新算了一遍');
+          } catch (err) {
+            ctx.toast(`重放失败：${err?.message ?? err}`, 'error');
+          }
+          ctx.render();
+        }, { ghost: true }),
+        button('恢复示例声明', () => {
+          save({ narrativeDeclaration: null });
+          try {
+            narrative?.refresh?.('reset-declaration');
+          } catch {
+            /* ignore */
+          }
+        }, { ghost: true }),
+      ]),
+      hint('模型写的标记长这样：[[ILB:获得:铜钥匙]]、[[ILB:地点:王城/地窖]]、[[ILB:关系:艾琳/信任+1]]。它只报"发生了什么"，数值、容量、上限、平衡全部由声明决定。'),
+      hint('账本不存盘：每次都是按聊天记录重放算出来的，所以滑动、删除、编辑消息之后它会自己变对。'),
     ]),
 
     el('div', { class: 'ilb-card' }, [

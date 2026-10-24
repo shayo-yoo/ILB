@@ -15,6 +15,105 @@
 
 ---
 
+## 0.6.0 · 2026-10-24 · 新增 · ILB-10.1.6–10.1.10 / 10.5.4 / 10.6.4–10.6.6 / 10.8.1–10.8.8 · 叙事引擎并入扩展（默认关闭，可回退；含规格 v2.8.0 的 §10）
+
+**一句话**：把 `lab/` 里的叙事引擎并进扩展本体——AI 只写 `[[ILB:获得:铜钥匙]]` 这类事实，规则按声明改状态，状态永远由聊天记录**重放**得出；消息末尾追加只读账本块，下一轮把账本以 `ILB_NARRATIVE` 注入；**默认关闭**，关着时与 v0.5.0 行为完全一致。
+
+**依据**：用户要求（m00874）"开始合并，但保留一份原版备份，完成后写报告"。备份为 `backup/v0.5.0-2026-10-24/`（78 个文件）与 git 标签 `v0.5.0`（指向 `665dc9a`）。决策见 D-0041（合并方式）与 D-0040（四条设计纪律，此前只在 lab 注释里引用）。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `narrative/schema.js` `catalog.js` `facts.js` `engine.js` `render.js` `index.js` | 由 `lab/narrative/` 原样并入的纯计算层（六类型/五约束/九效果、事实解析、原子应用、`fold` 重放、注入渲染）；`NARRATIVE_VERSION='0.6.0'` |
+| `narrative/preset.js` | 内置示例声明（原 `lab/example/spec.js`）；`PRESET` 为正式名字，`SPEC` 保留给测试 |
+| `narrative/store.js` | 设置读取（`narrativeEnabled/Inject/Budget/Declaration`，预算夹在 120–2000）、声明编译与摘要 |
+| `narrative/plan.js` | 接入层的纯计算：`replay()` 逐条重放、`planLedger()` 出注入文本+每条消息的块+统计、`composePrompt()` 前言/用法/截断 |
+| `narrative/block.js` | 消息末尾的只读账本块 DOM（`✓/✗/?/·` + 原因 + 摘要 + "另有 N 条"），`mountBlock` 幂等 |
+| `narrative/adapter.js` | 宿主接线：事件订阅、`setExtensionPrompt`（独立 key `ILB_NARRATIVE`、IN_CHAT/深度 1/system）、开关、异常兜底、`describe()` |
+| `narrative/README.md` | 模块说明：四层模型、三条纪律、文件表、事件与注入、开关语义、验收与未做 |
+| `tests/narrative.test.mjs` `tests/narrative-demo.mjs` | 从 `lab/` 移入并改路径；仍是 15 个用例与一段端到端演示 |
+| `tests/narrative-plan.test.mjs` | 9 个用例：设置默认/夹取、重放与 `fold` 一致、每条消息一块、拒绝/未认领/看不懂都在块里、注入带约束现状、预算截断、声明写错有报错 |
+| `tests/narrative-probe.html` + `tests/shot-narrative.png` | 真实浏览器探针（19 项断言）：块出现/拒绝原因/注入 key 与位置/新消息只补一条/关闭后清空/删除消息后对齐 |
+
+**修订**
+
+| 位置 | 原做法 | 新做法 |
+|---|---|---|
+| `index.js` | v0.5.0 只装配世界书 | `VERSION='0.6.0'`；新增 `createNarrativeRuntime(...)`、`narrative.mount()`、`CHAT_CHANGED` 时重放、`globalThis.ILB.narrative`；启动日志报"账本：开/关" |
+| `ui/panel.js` | `ctx` 里没有叙事引擎 | 透传 `narrative`，供设置页使用 |
+| `ui/view-settings.js` | 设置页只有世界书相关卡片 | 新增"叙事引擎（账本）"卡片：状态徽章、开关、注入字数、查看账本、重放一次、恢复示例声明、语法说明 |
+| `ui/selftest.js` | 只报界面/浮层/宿主 | 新增一条：引擎是否接上、声明能否编译、开关与重放统计（成功/被拒/未认领/看不懂/注入字数/块数） |
+| `style.css` | 无消息块样式 | 追加 `.ilb-narr*` 一节（**无媒体查询**，靠 flex-wrap/min-width:0 自适应，D-0037 的教训） |
+| `manifest.json` | `0.5.0` | `0.6.0` |
+| `tests/linkcheck.mjs` | 跳过 `lab/` | 不再跳过叙事引擎，当前 **51 个模块全过** |
+| `参考文档.md` | v2.7.0，§10 为"实验，不随 v0.5.0 发布" | v2.8.0：§10 改为"已并入、默认关闭"；10.1.1–10.1.5、10.5.2 标 ⛔ 并给出替代；新增 10.1.6–10.1.10、10.5.4、10.6.4–10.6.6、10.8.1–10.8.8 |
+
+**废弃**
+
+| 编号/位置 | 原因 | 替代 |
+|---|---|---|
+| ILB-10.1.1–10.1.5 | 描述的是合并前的隔离状态 | ILB-10.1.6–10.1.10 |
+| ILB-10.5.2 | 实现里不修改宿主消息正文 | ILB-10.5.4 |
+| `extension/lab/` 整个目录 | 已并入 `extension/narrative/`，不留两份 | 见上表新增 |
+
+**删除**
+
+- `extension/lab/`（迁出后删除；`tests/linkcheck.mjs` 的跳过逻辑同步去掉）。
+
+**验收**
+
+- `node --test tests/narrative.test.mjs tests/narrative-plan.test.mjs` → **24/24**
+- 全量单元测试 → **126/126**；`node tests/linkcheck.mjs` → **51/51**；`node tests/smoke-dom.mjs` → 0 失败
+- `tests/narrative-probe.html`（无头 Chrome，500×900）→ **19/19 PASS**，截图 `tests/shot-narrative.png`（块在消息下方、拒绝原因可见、没有横向溢出）
+- 关掉开关：块全清、`ILB_NARRATIVE` 写成空串、`describe()` 块数与字数归零（探针第 11–14 条）
+
+**仍未验证 / 未做**
+
+- 真实 SillyTavern 对话端到端（原合并条件②）：探针只能证明 DOM 与注入接线，不能证明"模型下一轮遵守账本"。
+- 手机"状态坞"（原合并条件③）：手机上读的是同一份消息块。
+- 正文里标记的剥离显示、动态条目、手动补记界面、声明编辑界面、存档迁移。
+
+---
+
+## lab/narrative 0.1.0-lab · 2026-10-24 · 叙事引擎子项目落地（隔离开发，不接入扩展；含规格 v2.7.0 的 §10）
+
+**一句话**：按用户要求（m00671）把"ILB 变成叙事引擎"这件事先做成**隔离子项目**：`extension/lab/` 里一套纯计算库，AI 只写"获得/失去/使用/关系/地点"这类事实，规则按声明改状态，状态由 `fold(消息 1..N)` **重放**得到；`index.js`、`manifest.json`、`style.css`、现有面板一行未动，`main` 仍停在可发布的 v0.5.0。
+
+**依据**：直接改装配会把刚发布的 v0.5.0 拖进实验；而"能不能当叙事引擎"这个问题可以用纯函数库在 node 里单独回答——不需要宿主、不需要浏览器、不需要存档。决策见 D-0039，规格见 `参考文档.md` §10（实验章，**不进 §9 验收清单**）。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `lab/narrative/schema.js` | 六种类型（text/number/flag/list/map/enum）、声明编译与初值、派生值（剩余格/总重量/是否满，全算不存）、五种约束（max/sumMax/range/mutex/require） |
+| `lab/narrative/catalog.js` | 实体目录：名字 → 标签/重量/字段，大小写与别名归一 |
+| `lab/narrative/facts.js` | 解析 `[[ILB:…]]` 八个动词、去重、剥标记、事实 → 人话；解析失败进 `unknowns` 带建议 |
+| `lab/narrative/engine.js` | 规则匹配与效果应用（**原子**：任何一处不过则整条不生效、带原因）、`fold` 整段重放（每条消息末尾自动一次 `tick`）、`stateAt` |
+| `lab/narrative/render.js` | 注入文本（带容量现状、字符预算、"另有 N 项未显示"）、界面行、改动描述、一行摘要 |
+| `lab/narrative/index.js` | 门面 `createNarrative({schema,catalog,rules})`；`NARRATIVE_VERSION='0.1.0-lab'` |
+| `lab/example/spec.js` | 一份零代码的完整声明样本（六种玩法都在里面），测试与演示共用 |
+| `lab/tests/narrative.test.mjs` | 15 个用例：六玩法 + 解析 + 剥标记 + 改消息重放 + 补记 + 未知标记 + 渲染预算 + 编译期报错 + 未认领 |
+| `lab/demo/run.mjs` | 一段模拟对话的端到端演示（逐条记账/拒绝原因/看不懂的标记/最终注入文本/重放两次结果一致） |
+| `lab/README.md` | 子项目说明：隔离契约、四层模型、三条纪律、事实语法、声明字段、API、六玩法对照、未做项、合并条件 |
+
+**修订**
+
+| 位置 | 内容 |
+|---|---|
+| `tests/linkcheck.mjs` | 遍历时跳过 `lab/`：它是隔离子项目，有自己的测试命令；发布前检查仍是 40 个模块全过 |
+
+**验收**
+
+- `node --test lab/tests/narrative.test.mjs` → **15 通过 / 0 失败**（含"背包 8 格第 9 件被拒且整条不生效""负重 20 超重被拒""圣剑/魔剑互斥""药水冷却 3 轮""关系累加可正可负""任务状态机重复交付被拒""改一条消息状态跟着变"）。
+- `node lab/demo/run.mjs` → 六条消息逐条记账，`看不懂：[[ILB:拿到:神秘符文]]` 被显示、塞满后"背包已满：上限 8 件，这一件会让它变成 9 件"被显示、拒绝后状态不变、同一段对话重放两次结果一致。
+- `node tests/linkcheck.mjs` → 共 40 个模块：通过 40、失败 0（扩展本体未受影响）。
+- 修掉一个实现期发现的真 bug：规则触发条件原本用"改到一半的状态"判断，`完成委托` 改完任务后紧跟着的"委托已完成"规则会误拒自己；改为**一律用事实前的快照判断**，效果仍在副本上累积。
+
+**未合并**：`lab/` 现在不参与扩展装配与发布。合并前必须满足 §10.1.4 的五条（六玩法零改动、真实 ST 对话端到端、手机壳能放状态坞、关掉即回到 v0.5.0 行为、文档同步）。
+
+---
+
 ## v0.5.0 · 2026-10-24 · 手机端换成独立界面：不再让同一套 UI 在手机上"变形"（含规格 v2.6.0）
 
 **一句话**：用户报"竖屏或手机比例下，点了按钮 UI 不显示"（m00002），而 v0.4.2–v0.4.8 四轮修补都在同一条路上加兜底、没有一次被真机确认。这一版停止修补这条路：手机改成**独立外壳**（`<dialog>` + `showModal()` 进 top layer、样式由 JS 自带、只认 `click`），电脑保持原样（悬浮球 + 可拖动浮窗 + `.ilb-overlay`），两套壳共用一个面板，由 `ui/shell.js` 按布局挑一套；同时把 `style.css` 与 `ui/floating.js` 里所有手机分支删掉。

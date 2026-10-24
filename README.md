@@ -102,9 +102,10 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（102 个）
+# 1) 纯逻辑单元测试（126 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
-  tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs
+  tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
+  tests/narrative.test.mjs tests/narrative-plan.test.mjs
 
 # 2) 链接检查：每个模块都能被加载（能抓出"导入了不存在的名字"这类错）
 node tests/linkcheck.mjs
@@ -112,9 +113,12 @@ node tests/linkcheck.mjs
 # 3) 界面冒烟：用极简 DOM 桩把面板、编辑器、流程编辑器、导入浮层、
 #    设置卡片、悬浮窗、浮层结构都点一遍（只验证"不抛错"，不验证"好不好看"）
 node tests/smoke-dom.mjs
+
+# 4) 叙事引擎的端到端演示（纯 node，不需要浏览器）
+node tests/narrative-demo.mjs
 ```
 
-三个都通过的结果（2026-10-24 实测）：单元 102/102、链接 40 个模块全通过（**包含入口 `index.js`**）、
+四个都通过的结果（2026-10-24 实测）：单元 126/126、链接 51 个模块全通过（**包含入口 `index.js`**）、
 冒烟 19 步全过。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
 
 > **为什么链接检查一定要包含 `index.js`**：v0.4.4 曾因为一次错误的文本替换把入口写成乱码并吃掉一个引号，
@@ -150,6 +154,17 @@ node tests/serve.mjs 8792
 另有 `tests/shell-route-probe.html`：同一套装配（`createShell` + 面板）在 375 与 900 两个视口各跑一次，
 断言"挑中的壳在场、另一套整体让位、面板挂在挑中的壳里、`shell.notify` 落在当前看得见的那套里"。
 2026-10-24 实测三轮全 PASS（375×780 带样式、375×780 不加载 `style.css`、900×700 电脑）。
+
+叙事引擎有自己的一条探针 `tests/narrative-probe.html`（v0.6.0）：它不用 iframe，直接在页面里造一个假聊天区
+（`.mes[mesid]` + `.mes_text`），把 `createNarrativeRuntime` 真的挂上去，然后断言 19 项——
+每条有事实的消息末尾出现只读账本块、拒绝原因写在块里、`ILB_NARRATIVE` 的注入位置与内容正确、
+不碰世界书的 `ILB::…` key、新消息只补自己那一块、关掉开关后块与注入都清空、删一条消息后整段重放对齐。
+2026-10-24 实测 **19/19 PASS**，截图见 `tests/shot-narrative.png`。
+
+```bash
+node tests/serve.mjs 8799
+# 浏览器打开 http://127.0.0.1:8799/tests/narrative-probe.html
+```
 
 另有 `tests/empty-probe.html`：只开一层空浮层、等 800ms，单独验证"自愈有没有插入提示"（四个用例连跑时 rAF 会串扰，必须隔离验证）。
 
@@ -206,7 +221,12 @@ node tests/serve.mjs 8792
   但 **SillyDroid 这类 WebView 的真机还没试**：`showModal()` 进 top layer 是否与宿主的模态叠加冲突、安卓返回键是否走 `cancel` 事件，
   都只有推断。
 - 浮窗"上次是开着"会被记住，刷新后仍开着；不喜欢的话改 `ui/floating.js` 里的 `open` 初值。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（102 + 37 模块 + 17 步），但**它们用的都是假宿主与假 DOM**。
+- 叙事引擎（v0.6.0 并入，默认关闭）：记账、重放、消息块、注入、设置卡片、自检都已有测试，
+  但**真实 SillyTavern 对话端到端还没跑过**——探针只能证明 DOM 与 `setExtensionPrompt` 接线，
+  不能证明"模型的下一轮真的会遵守账本"。手机上的"状态坞"也还没做，手机上读的是同一份消息块。
+- 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
+  只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（126 + 51 模块 + 19 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 曾出过一次"整个扩展不加载"：`index.js` 被错误的文本替换写成乱码。现在入口已纳入检查，
   但这类故障**不会有任何界面提示**——扩展一行都不执行时，用户只看到"没反应"。

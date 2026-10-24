@@ -1011,4 +1011,105 @@ body.ilb-overlay-open .ilb-fab {
   }
 }
 
+/* ── 消息末尾的账本块（v0.6.0 叙事引擎） ─────────────────────────────────
+   只读，没有任何按钮：手机上误触的代价比"少一个功能"大。
+   窄屏只靠 flex-wrap + min-width:0 自适应，这一节里没有媒体查询——
+   v0.5.0 的教训是不要在 style.css 里判断设备（D-0037）。 */
+.ilb-narr {
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 3px solid var(--SmartThemeQuoteColor, #7c9cff);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.16);
+  font-size: clamp(11px, 0.82em, 13px);
+  line-height: 1.5;
+  text-align: left;
+  opacity: 0.95;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.ilb-narr-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.ilb-narr-tag {
+  flex: 0 0 auto;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+
+.ilb-narr-summary {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  opacity: 0.82;
+}
+
+.ilb-narr-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ilb-narr-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 6px;
+  min-width: 0;
+}
+
+.ilb-narr-mark {
+  flex: 0 0 auto;
+  width: 1em;
+  text-align: center;
+  font-weight: 700;
+}
+
+.ilb-narr-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ilb-narr-why {
+  flex: 1 1 100%;
+  min-width: 0;
+  opacity: 0.62;
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.ilb-narr-ok > .ilb-narr-mark {
+  color: #6fbf73;
+}
+
+.ilb-narr-bad > .ilb-narr-mark {
+  color: #e0575f;
+}
+
+.ilb-narr-unknown > .ilb-narr-mark {
+  color: #e0a83c;
+}
+
+.ilb-narr-noop > .ilb-narr-mark {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.ilb-narr-foot {
+  margin-top: 3px;
+  opacity: 0.6;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+
 

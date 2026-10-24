@@ -28,7 +28,7 @@ const VIEWS = {
 };
 
 export function createPanel(deps) {
-  const { repository, nativeWorlds, pipeline, notify } = deps;
+  const { repository, nativeWorlds, pipeline, narrative, notify } = deps;
 
   const state = {
     activeTab: 'shelf',
@@ -72,6 +72,7 @@ export function createPanel(deps) {
     repository,
     nativeWorlds,
     pipeline,
+    narrative,
     notify,
     state,
     toast,

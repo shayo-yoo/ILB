@@ -9,6 +9,11 @@
 // 为什么手机要单独一套：从 v0.4.2 到 v0.4.8 都在给同一套 DOM 加手机变体（媒体查询、
 // body.ilb-mobile、内联兜底、皮肤自愈），手机上仍然反复出现"点了按钮界面不出来"。
 // 与其继续抽奖，不如把手机这条路彻底独立出来（决策记录 D-0037）。
+//
+// v0.6.0（决策记录 D-0041）把叙事引擎（narrative/）并了进来：
+//   - 默认关闭；关着时这一层不注入、不画块，行为与 v0.5.0 完全一致；
+//   - 开关在 设置 → 叙事引擎；打开后账本按聊天记录重放，注入用独立的 key；
+//   - 出问题只影响它自己：所有异常都在 narrative/adapter.js 里被挡住并报出来。
 
 import { loadHost } from './host.js';
 import { createRepository } from './adapters/repository.js';
@@ -21,9 +26,10 @@ import { createSettingsCard } from './ui/settings-card.js';
 import { createShell } from './ui/shell.js';
 import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
+import { createNarrativeRuntime } from './narrative/adapter.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -126,7 +132,17 @@ async function boot() {
     }
   };
 
-  const panel = createPanel({ repository, nativeWorlds, pipeline, notify: notifyThrough });
+  // 叙事引擎：默认关闭（narrativeEnabled=false）。关着时它不注入、不画块，行为与 v0.5.0
+  // 完全一致；打开后账本从聊天记录重放（不存状态），注入用独立的 setExtensionPrompt key。
+  const narrative = createNarrativeRuntime({
+    getContext,
+    getEventSource: () => host.getEventSource?.(),
+    getEventTypes: () => host.getEventTypes?.(),
+    repository,
+    notify: notifyThrough,
+  });
+
+  const panel = createPanel({ repository, nativeWorlds, pipeline, narrative, notify: notifyThrough });
 
   // 壳：电脑=悬浮球+可拖动浮窗，手机=悬浮球+整屏界面。挑哪套由 ui/layout.js 算，切换在 ui/shell.js。
   // 壳不认识书架，只认识"里面装一个 panel"，所以两套壳共用同一个面板（ILB-6.1.3）。
@@ -156,6 +172,13 @@ async function boot() {
       panelReady = (await panel.mount(fallback)) !== false;
       if (panelReady) console.warn('[ILB] 悬浮球不可用，面板已退回扩展设置页');
     }
+  }
+
+  // 叙事引擎要在界面挂好之后再接：它画的消息块在聊天区，和两套壳无关。
+  try {
+    narrative.mount();
+  } catch (err) {
+    console.warn('[ILB] 叙事引擎没接上（不影响世界书功能）', err);
   }
 
   const card = createSettingsCard({
@@ -226,6 +249,7 @@ async function boot() {
           panel.render();
           card.render();
           shell.setStatus('idle');
+          narrative.refresh('chat_changed');
         } catch (err) {
           console.warn('[ILB] 切换对话后刷新界面失败', err);
         }
@@ -246,6 +270,7 @@ async function boot() {
     host,
     panel,
     shell,
+    narrative,
     floating: shell.desktop,
     mobile: shell.mobile,
     card,
@@ -256,7 +281,7 @@ async function boot() {
   };
 
   console.info(
-    `[ILB] 已启动 v${VERSION}（通过 ${host.via} 拿到宿主；界面：${shellReady ? `悬浮球 · ${shell.label()}` : '退回设置页'}）`,
+    `[ILB] 已启动 v${VERSION}（通过 ${host.via} 拿到宿主；界面：${shellReady ? `悬浮球 · ${shell.label()}` : '退回设置页'}；账本：${narrative.isEnabled() ? '开' : '关'}）`,
   );
 }
 
