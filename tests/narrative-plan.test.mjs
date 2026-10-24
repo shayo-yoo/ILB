@@ -135,3 +135,12 @@ test('声明写错时 describeDeclaration 报出来，不静默', () => {
   assert.ok(bad.problems.length >= 2);
   assert.match(bad.problemText, /bad-rule-on|bad-effect-op/);
 });
+
+test('声明能导出成 JSON 再读回来（设置页的「编辑声明」靠这个）', () => {
+  const parsed = JSON.parse(JSON.stringify(PRESET, null, 2));
+  const info = describeDeclaration(parsed);
+  assert.equal(info.ok, true);
+  assert.equal(info.problems.length, 0);
+  assert.ok(info.variables > 0);
+  assert.ok(info.rules > 0);
+});

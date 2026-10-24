@@ -9,7 +9,7 @@
 // 好处是手机界面只依赖自己：style.css 丢了、旧了、被主题覆盖，手机照样是对的。
 // 注意：这不是"兜底"，是唯一的一份手机样式——下面这些选择器只属于手机界面（都以 .ilb-m 开头）。
 
-export const MOBILE_SKIN_VERSION = '0.5.0';
+export const MOBILE_SKIN_VERSION = '0.6.1';
 export const MOBILE_SKIN_ID = 'ilb-mobile-skin';
 
 // 皮肤只做"手机界面需要的那些事"：
@@ -92,6 +92,62 @@ dialog.ilb-m * { box-sizing: border-box; }
   cursor: pointer;
 }
 .ilb-m-back[hidden] { display: none !important; }
+
+/* ---- 账本状态坞（只在叙事引擎开着时出现） ---- */
+.ilb-m-dock {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.ilb-m-dock[hidden] { display: none !important; }
+.ilb-m-dock-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.8);
+}
+.ilb-m-dock-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.82);
+}
+.ilb-m-dock-open {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ilb-m-note { margin: 6px 0; font-size: 13px; line-height: 1.5; color: rgba(255, 255, 255, 0.82); }
+.ilb-m-pre {
+  margin: 6px 0 10px;
+  padding: 10px;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+}
+.ilb-m-list { margin: 6px 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
 
 /* ---- 主体：面板一页 + 浮层栈 ---- */
 .ilb-m-stage {

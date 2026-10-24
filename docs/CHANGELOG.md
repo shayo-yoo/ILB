@@ -15,7 +15,41 @@
 
 ---
 
-## 0.6.0 · 2026-10-24 · 新增 · ILB-10.1.6–10.1.10 / 10.5.4 / 10.6.4–10.6.6 / 10.8.1–10.8.8 · 叙事引擎并入扩展（默认关闭，可回退；含规格 v2.8.0 的 §10）
+## 0.6.1 · 2026-10-24 · 新增 · ILB-10.8.9–10.8.11 · 补完账本的三个界面（声明编辑器 / 手机状态坞 / 诊断卡片）
+
+**一句话**：叙事引擎的"能看、能改、能查"补齐——设置页可以直接改 JSON 声明（编译不过不保存），手机整屏界面多一条只读账本坞（关着时整条隐藏），诊断页多一张叙事卡片（开关、声明、统计、注入原文）。
+
+**依据**：合并后 §10.7 列出的两个界面缺口（手机状态坞、声明编辑器）与"出问题时看不到注入原文"。本轮用户暂时不便测试，先把不依赖真机的部分做完（m01221）。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `ui/view-settings.js` | 「编辑声明」二级页：JSON 文本域、`校验`（`describeDeclaration` 编译）、`校验并保存`（有问题拒绝保存）、`填入内置示例`、`导出当前文本`；保存后立即 `narrative.refresh('declaration')` |
+| `ui/mobile.js` `ui/mobile-skin.js` | 账本状态坞 `.ilb-m-dock`：只在 `narrativeEnabled` 为真时出现，显示 `plan.summary`；点「账本」开二级页（状态行、重放统计、注入原文）。`MOBILE_SKIN_VERSION='0.6.1'` |
+| `ui/shell.js` `index.js` | `createShell({ ledger })` 把"读账本"传给手机壳；`shell.refreshLedger()` / `setLedger()` |
+| `ui/view-diagnostics.js` | 叙事卡片：开关、声明来源与变量/规则数、重放统计、注入字数与块数；`查看注入原文`、`重放一次` |
+| `tests/narrative-plan.test.mjs` | 新增"声明能导出成 JSON 再读回来"（编辑器依赖的行为） |
+| `tests/mobile-ui-run.html` | 新增 7 项断言：账本坞出现/点开/状态行/关闭、设置页有「编辑声明」、textarea 出现且是 JSON、编辑器尺寸 |
+
+**修订**
+
+| 位置 | 改了什么 |
+|---|---|
+| `index.js` `manifest.json` | 版本 `0.6.1` |
+| `tests/selftest-probe.html` | 预期失败项加上"叙事引擎没接上"（该探针只装面板，不装引擎） |
+| 单元测试总数 | 126 → **127** |
+
+**验收（2026-10-24 实测）**
+
+- `node --test tests/{core,flow,import-plan,search,snapshot,ui-layout,narrative,narrative-plan}.test.mjs`：**127/127**
+- `node tests/linkcheck.mjs`：**51/51**；`node tests/smoke-dom.mjs`：**0 失败**
+- `tests/mobile-ui-probe.html`：**4 轮全 PASS**（含新增的坞与编辑器 7 项；375 带样式 / 375 无 `style.css` / 500×900 / 820×620 期望电脑）
+- `tests/narrative-probe.html`：**19/19**；`tests/selftest-probe.html`：PASS，非预期失败 0
+- **仍未验证**：真实 SillyTavern 对话端到端、真机 WebView
+
+---
+
 
 **一句话**：把 `lab/` 里的叙事引擎并进扩展本体——AI 只写 `[[ILB:获得:铜钥匙]]` 这类事实，规则按声明改状态，状态永远由聊天记录**重放**得出；消息末尾追加只读账本块，下一轮把账本以 `ILB_NARRATIVE` 注入；**默认关闭**，关着时与 v0.5.0 行为完全一致。
 

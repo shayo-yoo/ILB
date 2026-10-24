@@ -47,7 +47,7 @@ function describeNode(node) {
  * @param {Function} [options.notify] 界面上开不了时说话用
  * @param {Function} [options.onOpen] 打开时回调（用来重画面板）
  */
-export function createMobileUi({ repository, notify, onOpen } = {}) {
+export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
   let open = false;
   let mounted = false;
   let modalMode = false;
@@ -55,6 +55,7 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
   let previousOverflow = '';
   let lastFocus = null;
   let viewportTimer = null;
+  let ledgerProvider = typeof ledger === 'function' ? ledger : null;
   const sheets = [];
 
   // ---- 元素 ----
@@ -81,11 +82,21 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
     closeBtn,
   ]);
 
+  // 账本状态坞：只读的一行摘要，点开才看全部。不开叙事引擎时整条隐藏，
+  // 这样没开账本的手机上界面与 v0.5.0 长得一模一样。
+  const dockText = el('span', { class: 'ilb-m-dock-text', text: '' });
+  const dockBtn = el('button', { type: 'button', class: 'ilb-m-dock-open', text: '账本', title: '查看账本' });
+  const dock = el('div', { class: 'ilb-m-dock', hidden: true }, [
+    el('span', { class: 'ilb-m-dock-tag', text: '账本' }),
+    dockText,
+    dockBtn,
+  ]);
+
   const panelHost = el('div', { class: 'ilb-m-panel' });
   const sheetsLayer = el('div', { class: 'ilb-m-sheets', 'data-open': '0' });
   const stage = el('div', { class: 'ilb-m-stage' }, [panelHost, sheetsLayer]);
   const toasts = el('div', { class: 'ilb-m-toasts', role: 'status', 'aria-live': 'polite' });
-  const dialog = el('dialog', { class: 'ilb-m', 'aria-label': '世界书 ILB 控制器' }, [head, stage, toasts]);
+  const dialog = el('dialog', { class: 'ilb-m', 'aria-label': '世界书 ILB 控制器' }, [head, dock, stage, toasts]);
 
   // "绝不失效"的那几条用内联钉住（ILB-6.17.7 / D-0035）：
   // 位置、铺满、层级、底色、不滚动。其余观感交给 mobile-skin.js。
@@ -238,6 +249,7 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
         console.warn('[ILB] 打开手机界面时的回调出错', err);
       }
     }
+    refreshLedger();
     try {
       closeBtn.focus({ preventScroll: true });
     } catch {
@@ -452,6 +464,72 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
     setTimeout(run, 400);
   }
 
+  // ---- 账本状态坞 ----
+  function ledgerData() {
+    if (!ledgerProvider) return null;
+    try {
+      return ledgerProvider();
+    } catch (err) {
+      console.warn('[ILB] 读账本失败', err);
+      return null;
+    }
+  }
+
+  function refreshLedger() {
+    const data = ledgerData();
+    const enabled = Boolean(data && data.settings && data.settings.enabled);
+    dock.hidden = !enabled;
+    if (!enabled) {
+      dockText.textContent = '';
+      return;
+    }
+    const plan = data.plan ?? null;
+    dockText.textContent = plan?.summary || '账本已打开';
+    const t = plan?.totals ?? null;
+    if (t && t.facts) {
+      dockBtn.textContent = t.rejected ? `账本 · ${t.rejected} 被拒` : `账本 · ${t.facts} 条`;
+    } else {
+      dockBtn.textContent = '账本';
+    }
+  }
+
+  function ledgerNodes() {
+    const data = ledgerData();
+    if (!data) return [el('p', { class: 'ilb-m-note', text: '叙事引擎没接上，账本读不到。' })];
+    if (!data.settings || !data.settings.enabled) {
+      return [el('p', { class: 'ilb-m-note', text: '账本现在关着。到「设置 → 叙事引擎（账本）」打开开关。' })];
+    }
+    const plan = data.plan ?? {};
+    const nodes = [];
+    if (plan.summary) nodes.push(el('p', { class: 'ilb-m-note', text: plan.summary }));
+    if (plan.lines && plan.lines.length) {
+      nodes.push(el('ul', { class: 'ilb-m-list' }, plan.lines.map((line) => el('li', { text: line.text }))));
+    } else {
+      nodes.push(el('p', { class: 'ilb-m-note', text: '还没有任何事实进来。' }));
+    }
+    const t = plan.totals;
+    if (t) {
+      nodes.push(el('p', {
+        class: 'ilb-m-note',
+        text: `重放：${t.messages} 条消息 · ${t.facts} 条事实（成功 ${t.ok}、被拒 ${t.rejected}、未认领 ${t.unhandled}、看不懂 ${t.unknown}）`,
+      }));
+    }
+    if (plan.prompt) {
+      nodes.push(el('h4', { class: 'ilb-m-note', text: '下一轮注入给模型的文本' }));
+      nodes.push(el('pre', { class: 'ilb-m-pre', text: plan.prompt }));
+    }
+    return nodes;
+  }
+
+  function openLedger() {
+    pushSheet({ title: '账本', nodes: ledgerNodes(), key: 'ledger' });
+  }
+
+  function setLedger(next) {
+    ledgerProvider = typeof next === 'function' ? next : null;
+    refreshLedger();
+  }
+
   // ---- 状态点 ----
   function setStatus(kind = 'idle', tip = '') {
     const map = { idle: '', ok: ' ilb-m-dot-ok', wait: ' ilb-m-dot-warn', error: ' ilb-m-dot-error' };
@@ -471,6 +549,13 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
       }
     });
     on(closeBtn, 'click', () => closeUi());
+    on(dockBtn, 'click', () => {
+      try {
+        openLedger();
+      } catch (err) {
+        console.error('[ILB] 账本没能打开', err);
+      }
+    });
     on(dialog, 'cancel', (event) => {
       // Esc / 安卓返回键：有浮层先退浮层，没有就关整屏。
       event.preventDefault();
@@ -539,6 +624,7 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
   }
 
   function refresh() {
+    refreshLedger();
     if (open && typeof onOpen === 'function') {
       try {
         onOpen();
@@ -559,6 +645,7 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
       open,
       mounted,
       modal: modalMode,
+      dock: !dock.hidden,
       sheets: sheets.map((entry) => entry.title),
       skin: mobileSkinInfo(),
       skinVersion: MOBILE_SKIN_VERSION,
@@ -588,6 +675,8 @@ export function createMobileUi({ repository, notify, onOpen } = {}) {
     setStatus,
     setVisible,
     refresh,
+    refreshLedger,
+    setLedger,
     describe,
   };
 }

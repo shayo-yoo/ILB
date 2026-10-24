@@ -2,8 +2,10 @@
 
 import { DEFAULT_SETTINGS } from '../core/settings-defaults.js';
 import { IMPORT_POLICIES, IMPORT_POLICY_LABEL } from '../core/import-plan.js';
-import { el, field, hint, button, checkbox, selectBox, badge } from './widgets.js';
+import { el, field, hint, button, checkbox, selectBox, badge, downloadJson } from './widgets.js';
 import { showSelfTest } from './selftest.js';
+import { PRESET } from '../narrative/preset.js';
+import { describeDeclaration } from '../narrative/store.js';
 
 const POLICY_HINT = {
   ask: '每次导入都先问你（默认）',
@@ -52,6 +54,90 @@ export function renderSettings(ctx) {
     IMPORT_POLICIES.map((p) => ({ value: p, label: IMPORT_POLICY_LABEL[p] })),
     (value) => save({ importEnabledPolicy: value }),
   );
+
+  function declarationEditorNodes() {
+    const stored = settings.narrativeDeclaration ?? null;
+    const current = stored ?? PRESET;
+    const box = el('textarea', { class: 'ilb-textarea', rows: '16', spellcheck: 'false', style: { fontFamily: 'monospace', fontSize: '12px', minHeight: '320px' } });
+    box.value = JSON.stringify(current, null, 2);
+    const feedback = el('p', { class: 'ilb-hint', text: stored ? '这是你自己保存的声明。' : '这是内置示例声明（还没保存过自己的）。' });
+    const problemsBox = el('div', { class: 'ilb-hint' });
+
+    const parse = () => {
+      try {
+        return { value: JSON.parse(box.value) };
+      } catch (err) {
+        return { error: `不是合法的 JSON：${err?.message ?? err}` };
+      }
+    };
+
+    const showInfo = (parsed) => {
+      const info = describeDeclaration(parsed);
+      if (!info.ok) {
+        feedback.className = 'ilb-error';
+        feedback.textContent = `声明不能用：${info.error}`;
+        problemsBox.textContent = '';
+        return null;
+      }
+      feedback.className = info.problems.length ? 'ilb-warn' : 'ilb-hint';
+      feedback.textContent = `可以编译：${info.variables} 个变量 · ${info.rules} 条规则${info.problems.length ? ` · ${info.problems.length} 个问题` : ''}`;
+      problemsBox.textContent = info.problemText ?? '';
+      return info;
+    };
+
+    const check = () => {
+      const parsed = parse();
+      if (parsed.error) {
+        feedback.className = 'ilb-error';
+        feedback.textContent = parsed.error;
+        problemsBox.textContent = '';
+        return null;
+      }
+      const info = showInfo(parsed.value);
+      return info && !info.problems.length ? { value: parsed.value, info } : null;
+    };
+
+    const doSave = () => {
+      const checked = check();
+      if (!checked) {
+        ctx.toast('声明还有问题，没有保存', 'warn');
+        return;
+      }
+      save({ narrativeDeclaration: checked.value });
+      try {
+        narrative?.refresh?.('declaration');
+      } catch {
+        /* 刷新失败下一页会显示错误 */
+      }
+      ctx.closeOverlay();
+    };
+
+    return [
+      hint('这就是"记账规则"本身：状态变量、约束、规则都在里面。改完先点「校验」——编译不过不会保存。字段说明见 narrative/README.md 与参考文档 §10.4。'),
+      el('div', { class: 'ilb-field' }, [el('label', { class: 'ilb-sub', text: '声明（JSON）' }), box]),
+      feedback,
+      problemsBox,
+      el('div', { class: 'ilb-actions' }, [
+        button('校验', () => check(), { ghost: true }),
+        button('校验并保存', () => doSave(), { primary: true }),
+        button('填入内置示例', () => {
+          box.value = JSON.stringify(PRESET, null, 2);
+          feedback.className = 'ilb-hint';
+          feedback.textContent = '已填入内置示例（还没保存）。';
+          problemsBox.textContent = '';
+        }, { ghost: true }),
+        button('导出当前文本', () => {
+          const parsed = parse();
+          if (parsed.error) {
+            ctx.toast(parsed.error, 'warn');
+            return;
+          }
+          downloadJson('ilb-declaration.json', parsed.value);
+        }, { ghost: true }),
+      ]),
+      hint('账本状态不存盘：保存声明之后会按聊天记录重新重放，不需要迁移任何存档。'),
+    ];
+  }
 
   const narrative = ctx.narrative;
   const narrativeInfo = (() => {
@@ -220,6 +306,7 @@ export function renderSettings(ctx) {
           }
           ctx.render();
         }, { ghost: true }),
+        button('编辑声明', () => ctx.openOverlay('编辑声明（记账规则）', declarationEditorNodes()), { ghost: true }),
         button('恢复示例声明', () => {
           save({ narrativeDeclaration: null });
           try {

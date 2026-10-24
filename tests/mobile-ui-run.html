@@ -72,7 +72,20 @@
       const record = (message, kind = 'info') => notes.push(`${kind}:${message}`);
 
       const panel = createPanel({ repository, nativeWorlds, pipeline, notify: record });
-      const ui = createMobileUi({ repository, notify: record, onOpen: () => panel.render() });
+      const ui = createMobileUi({
+        repository,
+        notify: record,
+        onOpen: () => panel.render(),
+        ledger: () => ({
+          settings: { enabled: true },
+          plan: {
+            summary: '背包 2/8 · 生命 90',
+            lines: [{ text: '背包（2/8）：铜钥匙、铁钥匙' }, { text: '生命：90' }],
+            totals: { messages: 3, facts: 2, ok: 2, rejected: 0, unhandled: 0, unknown: 0 },
+            prompt: '【账本】按已发生的 3 条对话重放得出。',
+          },
+        }),
+      });
       ui.mount();
       await ui.attachPanel(panel);
       // 这是关键一行：面板里所有次级菜单（帮助、导入、编辑…）都走 ui/help.js 的 openOverlay，
@@ -162,6 +175,24 @@
         note(inside, `屏幕正中命中的是 ${hit ? `${hit.tagName.toLowerCase()}.${String(hit.className ?? '').split(' ')[0]}` : '空'}（在手机界面内：${inside}）`);
       }
 
+      // 4.5) 账本状态坞：叙事引擎开着时出现一行摘要，点开是二级页
+      const dock = dialog.querySelector('.ilb-m-dock');
+      const dockInfo = info(dock);
+      note(Boolean(dock) && !dock.hidden && dockInfo.display !== 'none' && dockInfo.h > 0, show('账本状态坞', dock));
+      if (dock && !dock.hidden) {
+        const dockBtn = dock.querySelector('.ilb-m-dock-open');
+        click(dockBtn, '账本按钮');
+        await wait(120);
+        const titles = ui.describe().sheets;
+        note(titles.includes('账本'), `点账本后二级页：${titles.join(' / ') || '（没有）'}`);
+        const sheet = dialog.querySelector('.ilb-m-sheet');
+        note(Boolean(sheet) && (sheet.textContent ?? '').includes('背包（2/8）'), `账本里能看到状态行：${(sheet?.textContent ?? '').includes('背包（2/8）')}`);
+        const sheetClose = sheet?.querySelector('.ilb-m-x');
+        click(sheetClose, '账本关闭');
+        await wait(80);
+        note(ui.describe().sheets.length === 0, `关掉账本后剩余二级页：${ui.describe().sheets.length}`);
+      }
+
       // 5) 切标签（真实点击路径）
       const tab = byText(dialog, '.ilb-tab', '规则');
       click(tab, '「规则」标签');
@@ -209,6 +240,24 @@
       ui.closeOverlay();
       await wait(60);
       note(!ui.isOverlayOpen(), '二级页全部关掉之后 isOverlayOpen=false');
+
+      // 7.5) 设置页的「编辑声明」：真点开一次，确认 JSON 编辑器在手机上也能开
+      click(byText(dialog, '.ilb-tab', '设置'), '「设置」标签');
+      await wait(80);
+      const editBtn = byText(dialog, '.ilb-btn', '编辑声明');
+      note(Boolean(editBtn), '设置页里有「编辑声明」按钮');
+      if (editBtn) {
+        click(editBtn, '「编辑声明」');
+        await wait(120);
+        const sheet3 = dialog.querySelector('.ilb-m-sheet');
+        const box = sheet3?.querySelector('textarea');
+        note(Boolean(box), '声明编辑器（textarea）出现了');
+        note((box?.value ?? '').includes('"rules"'), `编辑器里是 JSON 声明（${(box?.value ?? '').length} 字）`);
+        const b3 = info(box);
+        note(b3.w > 150 && b3.h > 80, show('声明编辑器', box));
+        click(sheet3?.querySelector('.ilb-m-x'), '声明编辑器关闭');
+        await wait(60);
+      }
 
       // 8) 不许横向滚动（ILB-7.15 / ILB-6.10.7）：375px 下最容易出现
       const docOverflow = Math.round(document.documentElement.scrollWidth - viewport.width);

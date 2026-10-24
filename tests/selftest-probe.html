@@ -73,7 +73,8 @@
       const bad = items.filter((i) => !i.ok).map((i) => i.text);
       // "没加载宿主"在这个探针里是预期结果：这里没有 SillyTavern。
       // v0.5.0 起自检第一句会问"现在哪套界面"，探针里问不到，同样算预期。
-      const unexpected = bad.filter((t) => !/找不到 window\.ILB|判定管线不可用|存档端口不可用|问不到界面状态/.test(t));
+      // v0.6.0 起自检还会问叙事引擎，这个探针只加载面板、不装引擎，所以"没接上"也是预期。
+      const unexpected = bad.filter((t) => !/找不到 window\.ILB|判定管线不可用|存档端口不可用|问不到界面状态|叙事引擎没接上/.test(t));
 
       const verdict = pass && unexpected.length === 0;
       resultEl.textContent = `判定: ${verdict ? 'PASS' : 'FAIL'}`;

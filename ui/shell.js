@@ -22,10 +22,11 @@ const RESIZE_DELAY = 150;
  * @param {object} [options.repository]
  * @param {Function} [options.notify]
  * @param {Function} [options.onOpen] 任一套壳打开时回调（用来重画面板）
+ * @param {Function} [options.ledger] 读账本的函数（手机状态坞用；电脑不需要）
  */
-export function createShell({ repository, notify, onOpen } = {}) {
+export function createShell({ repository, notify, onOpen, ledger } = {}) {
   const desktop = createFloatingWindow({ repository, notify, onOpen });
-  const mobile = createMobileUi({ repository, notify, onOpen });
+  const mobile = createMobileUi({ repository, notify, onOpen, ledger });
 
   let layout = pickLayout(viewportOf());
   let panel = null;
@@ -177,6 +178,24 @@ export function createShell({ repository, notify, onOpen } = {}) {
     }
   }
 
+  /** 叙事引擎重放之后调它，让手机那条状态坞跟着更新（电脑上没有坞，无操作）。 */
+  function refreshLedger() {
+    try {
+      mobile.refreshLedger();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 允许启动后再接上"读账本"的函数（叙事引擎可能比壳晚建好）。 */
+  function setLedger(next) {
+    try {
+      mobile.setLedger(next);
+    } catch {
+      /* ignore */
+    }
+  }
+
   return {
     mount,
     attachPanel,
@@ -188,6 +207,8 @@ export function createShell({ repository, notify, onOpen } = {}) {
     label: () => describeLayout(layout),
     setStatus,
     refresh,
+    refreshLedger,
+    setLedger,
     notify: notifyThrough,
     desktop,
     mobile,

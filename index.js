@@ -29,7 +29,7 @@ import { runSelfTest } from './ui/selftest.js';
 import { createNarrativeRuntime } from './narrative/adapter.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 
 function notify(message, kind = 'info') {
   try {
@@ -149,6 +149,13 @@ async function boot() {
   const shell = createShell({
     repository,
     notify,
+    ledger: () => {
+      try {
+        return narrative.ledger();
+      } catch {
+        return null;
+      }
+    },
     onOpen: () => {
       try {
         panel.render();
