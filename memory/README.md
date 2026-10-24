@@ -14,7 +14,7 @@
 
 ## 它不能直接跑
 
-适配层 `narrative/adapter.js` 仍按旧位置引用 `../ui/block.js`、`../core/...` 这些相对路径——搬出来以后这些路径不再成立。这**是档案，不是可运行的扩展**；要重新启用，按下面做：
+适配层与界面文件是"从扩展里搬出来的"，不是独立发布物：`ui/view-narrative.js` 仍 import `./widgets.js`（该文件留在 `extension/ui/`，这里没有），所以它单独打不开；`narrative/` 的 import 是自洽的，但只导出工厂，需要宿主装配才能跑。要重新启用，按下面做：
 
 1. 把 `narrative/` 搬回 `extension/narrative/`，`view-narrative.js` 搬回 `extension/ui/`；
 2. 恢复 `index.js` 里的 `createNarrativeRuntime` 装配、`narrative.mount()`、注入与 `CHAT_CHANGED` 刷新；
