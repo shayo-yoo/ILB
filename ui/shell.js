@@ -22,11 +22,12 @@ const RESIZE_DELAY = 150;
  * @param {object} [options.repository]
  * @param {Function} [options.notify]
  * @param {Function} [options.onOpen] 任一套壳打开时回调（用来重画面板）
- * @param {Function} [options.ledger] 读账本的函数（手机状态坞用；电脑不需要）
+ * @param {Function} [options.status] 读当前聊天变量的函数（手机状态坞用；电脑不需要）
+ * @param {Function} [options.openState] 打开「状态」页（手机坞里的按钮用）
  */
-export function createShell({ repository, notify, onOpen, ledger } = {}) {
+export function createShell({ repository, notify, onOpen, status, openState } = {}) {
   const desktop = createFloatingWindow({ repository, notify, onOpen });
-  const mobile = createMobileUi({ repository, notify, onOpen, ledger });
+  const mobile = createMobileUi({ repository, notify, onOpen, status, openState });
 
   let layout = pickLayout(viewportOf());
   let panel = null;
@@ -178,19 +179,19 @@ export function createShell({ repository, notify, onOpen, ledger } = {}) {
     }
   }
 
-  /** 叙事引擎重放之后调它，让手机那条状态坞跟着更新（电脑上没有坞，无操作）。 */
-  function refreshLedger() {
+  /** 变量变了以后调它，让手机那条状态坞跟着更新（电脑上没有坞，无操作）。 */
+  function refreshStatus() {
     try {
-      mobile.refreshLedger();
+      mobile.refreshStatus();
     } catch {
       /* ignore */
     }
   }
 
-  /** 允许启动后再接上"读账本"的函数（叙事引擎可能比壳晚建好）。 */
-  function setLedger(next) {
+  /** 允许启动后再接上"读变量"的函数。 */
+  function setStatusProvider(next) {
     try {
-      mobile.setLedger(next);
+      mobile.setStatusProvider(next);
     } catch {
       /* ignore */
     }
@@ -207,8 +208,8 @@ export function createShell({ repository, notify, onOpen, ledger } = {}) {
     label: () => describeLayout(layout),
     setStatus,
     refresh,
-    refreshLedger,
-    setLedger,
+    refreshStatus,
+    setStatusProvider,
     notify: notifyThrough,
     desktop,
     mobile,

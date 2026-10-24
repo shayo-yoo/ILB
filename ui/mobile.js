@@ -46,8 +46,10 @@ function describeNode(node) {
  * @param {object} [options.repository] 读"上次开没开"之类的界面状态（可省略）
  * @param {Function} [options.notify] 界面上开不了时说话用
  * @param {Function} [options.onOpen] 打开时回调（用来重画面板）
+ * @param {Function} [options.status] 读当前聊天变量的函数（顶部状态坞用）
+ * @param {Function} [options.openState] 打开「状态」页的回调（坞里点"去状态页"）
  */
-export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
+export function createMobileUi({ repository, notify, onOpen, status, openState } = {}) {
   let open = false;
   let mounted = false;
   let modalMode = false;
@@ -55,7 +57,7 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
   let previousOverflow = '';
   let lastFocus = null;
   let viewportTimer = null;
-  let ledgerProvider = typeof ledger === 'function' ? ledger : null;
+  let statusProvider = typeof status === 'function' ? status : null;
   const sheets = [];
 
   // ---- 元素 ----
@@ -82,12 +84,12 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
     closeBtn,
   ]);
 
-  // 账本状态坞：只读的一行摘要，点开才看全部。不开叙事引擎时整条隐藏，
-  // 这样没开账本的手机上界面与 v0.5.0 长得一模一样。
+  // 变量状态坞：只读的一行摘要，点开才看全部。没有变量时整条隐藏，
+  // 这样没建变量的手机上界面与 v0.5.0 长得一模一样。
   const dockText = el('span', { class: 'ilb-m-dock-text', text: '' });
-  const dockBtn = el('button', { type: 'button', class: 'ilb-m-dock-open', text: '账本', title: '查看账本' });
+  const dockBtn = el('button', { type: 'button', class: 'ilb-m-dock-open', text: '变量', title: '查看变量' });
   const dock = el('div', { class: 'ilb-m-dock', hidden: true }, [
-    el('span', { class: 'ilb-m-dock-tag', text: '账本' }),
+    el('span', { class: 'ilb-m-dock-tag', text: '变量' }),
     dockText,
     dockBtn,
   ]);
@@ -249,7 +251,7 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
         console.warn('[ILB] 打开手机界面时的回调出错', err);
       }
     }
-    refreshLedger();
+    refreshStatus();
     try {
       closeBtn.focus({ preventScroll: true });
     } catch {
@@ -464,70 +466,72 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
     setTimeout(run, 400);
   }
 
-  // ---- 账本状态坞 ----
-  function ledgerData() {
-    if (!ledgerProvider) return null;
+  // ---- 变量状态坞 ----
+  function statusData() {
+    if (!statusProvider) return null;
     try {
-      return ledgerProvider();
+      const data = statusProvider();
+      return data && typeof data === 'object' ? data : {};
     } catch (err) {
-      console.warn('[ILB] 读账本失败', err);
+      console.warn('[ILB] 读变量失败', err);
       return null;
     }
   }
 
-  function refreshLedger() {
-    const data = ledgerData();
-    const enabled = Boolean(data && data.settings && data.settings.enabled);
-    dock.hidden = !enabled;
-    if (!enabled) {
+  function varLine(name, raw) {
+    const value = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw;
+    return `${name} = ${value === undefined || value === null || value === '' ? '（空）' : value}`;
+  }
+
+  function refreshStatus() {
+    const vars = statusData();
+    const names = vars ? Object.keys(vars) : [];
+    dock.hidden = names.length === 0;
+    if (names.length === 0) {
       dockText.textContent = '';
       return;
     }
-    const plan = data.plan ?? null;
-    dockText.textContent = plan?.summary || '账本已打开';
-    const t = plan?.totals ?? null;
-    if (t && t.facts) {
-      dockBtn.textContent = t.rejected ? `账本 · ${t.rejected} 被拒` : `账本 · ${t.facts} 条`;
-    } else {
-      dockBtn.textContent = '账本';
-    }
+    const head = names.slice(0, 3).map((name) => varLine(name, vars[name])).join(' · ');
+    dockText.textContent = names.length > 3 ? `${head} · …` : head;
+    dockBtn.textContent = `变量 · ${names.length}`;
   }
 
-  function ledgerNodes() {
-    const data = ledgerData();
-    if (!data) return [el('p', { class: 'ilb-m-note', text: '叙事引擎没接上，账本读不到。' })];
-    if (!data.settings || !data.settings.enabled) {
-      return [el('p', { class: 'ilb-m-note', text: '账本现在关着。到「设置 → 叙事引擎（账本）」打开开关。' })];
-    }
-    const plan = data.plan ?? {};
+  function statusNodes() {
+    const vars = statusData();
+    if (vars === null) return [el('p', { class: 'ilb-m-note', text: '变量读不到（扩展可能还没启动完）。' })];
+    const names = Object.keys(vars);
     const nodes = [];
-    if (plan.summary) nodes.push(el('p', { class: 'ilb-m-note', text: plan.summary }));
-    if (plan.lines && plan.lines.length) {
-      nodes.push(el('ul', { class: 'ilb-m-list' }, plan.lines.map((line) => el('li', { text: line.text }))));
+    if (names.length === 0) {
+      nodes.push(el('p', { class: 'ilb-m-note', text: '这个聊天还没有变量。' }));
     } else {
-      nodes.push(el('p', { class: 'ilb-m-note', text: '还没有任何事实进来。' }));
+      nodes.push(el('p', { class: 'ilb-m-note', text: '这里只显示，改值去「状态」页。' }));
+      nodes.push(el('ul', { class: 'ilb-m-list' }, names.map((name) => el('li', { text: varLine(name, vars[name]) }))));
     }
-    const t = plan.totals;
-    if (t) {
-      nodes.push(el('p', {
-        class: 'ilb-m-note',
-        text: `重放：${t.messages} 条消息 · ${t.facts} 条事实（成功 ${t.ok}、被拒 ${t.rejected}、未认领 ${t.unhandled}、看不懂 ${t.unknown}）`,
+    if (typeof openState === 'function') {
+      nodes.push(el('button', {
+        type: 'button',
+        class: 'ilb-btn',
+        text: '去「状态」页',
+        onclick: () => {
+        closeSheets();
+          try {
+            openState();
+          } catch (err) {
+            console.warn('[ILB] 打开状态页失败', err);
+          }
+        },
       }));
-    }
-    if (plan.prompt) {
-      nodes.push(el('h4', { class: 'ilb-m-note', text: '下一轮注入给模型的文本' }));
-      nodes.push(el('pre', { class: 'ilb-m-pre', text: plan.prompt }));
     }
     return nodes;
   }
 
-  function openLedger() {
-    pushSheet({ title: '账本', nodes: ledgerNodes(), key: 'ledger' });
+  function openStatus() {
+    pushSheet({ title: '变量', nodes: statusNodes(), key: 'status' });
   }
 
-  function setLedger(next) {
-    ledgerProvider = typeof next === 'function' ? next : null;
-    refreshLedger();
+  function setStatusProvider(next) {
+    statusProvider = typeof next === 'function' ? next : null;
+    refreshStatus();
   }
 
   // ---- 状态点 ----
@@ -551,7 +555,7 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
     on(closeBtn, 'click', () => closeUi());
     on(dockBtn, 'click', () => {
       try {
-        openLedger();
+        openStatus();
       } catch (err) {
         console.error('[ILB] 账本没能打开', err);
       }
@@ -624,7 +628,7 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
   }
 
   function refresh() {
-    refreshLedger();
+    refreshStatus();
     if (open && typeof onOpen === 'function') {
       try {
         onOpen();
@@ -675,8 +679,8 @@ export function createMobileUi({ repository, notify, onOpen, ledger } = {}) {
     setStatus,
     setVisible,
     refresh,
-    refreshLedger,
-    setLedger,
+    refreshStatus,
+    setStatusProvider,
     describe,
   };
 }

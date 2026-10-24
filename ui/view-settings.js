@@ -78,6 +78,7 @@ export function renderSettings(ctx) {
       el('h5', { class: 'ilb-section-title', text: '判定范围' }),
       numberField('往前看几条消息', 'scanDepth', 0, 50, 1, '只看最近这几条消息里有没有触发词。默认 3。'),
       numberField('最多连锁几层', 'maxChainDepth', 0, 8, 1, '一条规则被触发后，它的正文还能带出别的规则。默认 3。'),
+      numberField('激活条目最多连几层', 'maxActivateDepth', 0, 5, 1, '流程里的「激活条目」还能再激活别的条目。默认 2；0 = 只认直接点名。'),
       el('label', { class: 'ilb-inline' }, [
         checkbox(settings.probabilityEnabled === true, (on) => save({ probabilityEnabled: on })),
         el('span', { class: 'ilb-sub', text: '允许"按概率出现"' }),

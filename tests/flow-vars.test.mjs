@@ -133,3 +133,48 @@ test('激活一条不存在或已关闭的条目：只记一条诊断，不让�
   assert.deepEqual(ids(r), ['T::1']);
   assert.ok(r.diagnostics.some((d) => d.stage === 'activate' && d.passed === false));
 });
+
+test('激活可以有限连锁：被激活条目的「记住」与再次点名都算数', () => {
+  const book = makeBook([
+    {
+      id: '1',
+      content: '甲',
+      trigger: { any: ['王城'] },
+      logic: { nodes: [{ kind: 'activate', entryId: 'T::2' }] },
+    },
+    {
+      id: '2',
+      content: '乙',
+      logic: {
+        nodes: [
+          { kind: 'remember', name: '金币', value: num(7) },
+          { kind: 'activate', entryId: 'T::3' },
+        ],
+      },
+    },
+    { id: '3', content: '丙' },
+  ]);
+  const r = run(book, { userInput: '王城' });
+  assert.deepEqual([...ids(r)].sort(), ['T::1', 'T::2', 'T::3']);
+  assert.equal(r.varWrites.金币, 7);
+  assert.ok(r.diagnostics.some((d) => d.stage === 'activate' && /第 1 层/.test(d.reason)));
+});
+
+test('连锁深度可关：maxActivateDepth=0 时只认直接点名', () => {
+  const book = makeBook([
+    { id: '1', content: '甲', trigger: { any: ['王城'] }, logic: { nodes: [{ kind: 'activate', entryId: 'T::2' }] } },
+    { id: '2', content: '乙', logic: { nodes: [{ kind: 'activate', entryId: 'T::3' }] } },
+    { id: '3', content: '丙' },
+  ]);
+  const r = run(book, { userInput: '王城' }, { maxActivateDepth: 0 });
+  assert.deepEqual([...ids(r)].sort(), ['T::1', 'T::2']);
+});
+
+test('互相点名不会死循环', () => {
+  const book = makeBook([
+    { id: '1', content: '甲', trigger: { any: ['王城'] }, logic: { nodes: [{ kind: 'activate', entryId: 'T::2' }] } },
+    { id: '2', content: '乙', logic: { nodes: [{ kind: 'activate', entryId: 'T::1' }] } },
+  ]);
+  const r = run(book, { userInput: '王城' });
+  assert.deepEqual([...ids(r)].sort(), ['T::1', 'T::2']);
+});

@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 判定
   scanDepth: 3,          // 只看最近几条消息
   maxChainDepth: 3,      // 连锁层数（ILB-4.6.3 默认 3；0 = 关闭）
+  maxActivateDepth: 2,   // 「激活条目」能再连锁几层（ILB-4.12 默认 2，上限 5；0 = 只认直接点名）
   probabilityEnabled: false,
 
   // 预算

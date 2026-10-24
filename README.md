@@ -102,10 +102,10 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（120 个）
+# 1) 纯逻辑单元测试（127 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
   tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
-  tests/vars.test.mjs tests/flow-vars.test.mjs
+  tests/vars.test.mjs tests/flow-vars.test.mjs tests/fields.test.mjs
 
 # 2) 链接检查：每个模块都能被加载（能抓出"导入了不存在的名字"这类错）
 node tests/linkcheck.mjs
@@ -115,7 +115,7 @@ node tests/linkcheck.mjs
 node tests/smoke-dom.mjs
 ```
 
-三个都通过的结果（2026-10-24 实测）：单元 120/120、链接 42 个模块全通过（**包含入口 `index.js`**）、
+三个都通过的结果（2026-10-24 实测）：单元 127/127、链接 43 个模块全通过（**包含入口 `index.js`**）、
 冒烟 19 步全过。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
 
 > 叙事账本（`narrative/` 与它的测试、探针、截图）已于 v0.8.0 移到仓库根目录 `memory/`，不再随扩展加载；见 `memory/README.md`。
@@ -225,7 +225,7 @@ node tests/serve.mjs 8792
   若识别不到会退回同一个默认桶，不同聊天可能共用检查点——这是下一轮实测要看的点。
 - 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
   只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（120 + 42 模块 + 19 步），但**它们用的都是假宿主与假 DOM**。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（127 + 43 模块 + 19 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 曾出过一次"整个扩展不加载"：`index.js` 被错误的文本替换写成乱码。现在入口已纳入检查，
   但这类故障**不会有任何界面提示**——扩展一行都不执行时，用户只看到"没反应"。

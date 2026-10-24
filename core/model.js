@@ -4,6 +4,7 @@
 
 import { POSITIONS, ROLES, SECONDARY_LOGIC, ACTIVATION_MODES } from './settings-defaults.js';
 import { normalizeFlow } from './flow.js';
+import { normalizeFields } from './fields.js';
 
 export function deepClone(value) {
   if (typeof structuredClone === 'function') {
@@ -63,6 +64,8 @@ export function defaultEntry(overrides = {}) {
     chain: { participate: true },
     // 判定流程（ILB-4.11）。空流程 = 完全按原生那套工作。
     logic: { mode: 'and', nodes: [] },
+    // 动态条目字段（ILB-4.13）：玩家在「状态」页可改的值，本质是聊天变量。
+    fields: [],
     injection: { position: 'after_char', depth: 4, role: 'system' },
     _source: { book_file: null, uid: null, unknown: {}, content_hash: null },
     // 界面用的排序位次（ILB-4.2.1 第 8 步的第二级），不参与任何判定
@@ -137,6 +140,7 @@ export function normalizeEntry(raw, bookId) {
   };
   out.chain = { participate: src.chain?.participate !== false };
   out.logic = normalizeFlow(src.logic);
+  out.fields = normalizeFields(src.fields);
   out.injection = {
     position: pickOne(src.injection?.position, POSITIONS, 'after_char'),
     depth: Math.max(0, Math.trunc(num(src.injection?.depth, 4))),

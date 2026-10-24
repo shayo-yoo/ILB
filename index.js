@@ -24,7 +24,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 
 function notify(message, kind = 'info') {
   try {
@@ -153,6 +153,8 @@ async function boot() {
         console.warn('[ILB] 重新渲染面板失败', err);
       }
     },
+    status: () => repository.getVars(resolveChatId(getContext())),
+    openState: () => panel.setTab('state'),
   });
 
   const shellReady = shell.mount();

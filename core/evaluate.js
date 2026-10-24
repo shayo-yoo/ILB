@@ -8,6 +8,7 @@ import { estimateTokens } from './budget.js';
 import { DEFAULT_SETTINGS, POSITIONS, ROLES } from './settings-defaults.js';
 import { resolveBooks } from './resolve-books.js';
 import { evaluateFlow, hasFlow } from './flow.js';
+import { withFieldDefaults } from './fields.js';
 
 const FALLBACK_CONTEXT_SIZE = 8192;
 
@@ -231,6 +232,8 @@ export function evaluate(request = {}, options = {}) {
   const resolved =
     options.resolved ?? resolveBooks(options.books ?? [], options.context ?? {}, options.providers ?? []);
   const pool = Array.isArray(options.pool) ? options.pool : resolved.pool;
+  // 动态条目的字段默认值：条目声明了字段、聊天里还没这个变量时，判定与宏都按默认值走。
+  const effVars = withFieldDefaults(vars, pool);
 
   const scanDepth = clamp(Math.trunc(num(request.scanDepth, settings.scanDepth)), 0, 200);
   const baseText = buildText(messages, scanDepth, userInput);
@@ -290,7 +293,7 @@ export function evaluate(request = {}, options = {}) {
   const flowWrites = {};
   const requested = [];
   for (const rec of triggerPassers) {
-    const when = evalWhenArray(rec.entry.when, { text: rec.text ?? baseText, activated, vars });
+    const when = evalWhenArray(rec.entry.when, { text: rec.text ?? baseText, activated, vars: effVars });
     if (!when.passed) {
       diagnostics.push({ entryId: rec.entry.id, passed: false, stage: 'when', reason: when.reason });
       continue;
@@ -301,7 +304,7 @@ export function evaluate(request = {}, options = {}) {
       messages,
       userInput,
       messageCount: msgCount,
-      vars,
+      vars: effVars,
       activated,
     });
     if (!flow.passed) {
@@ -317,10 +320,17 @@ export function evaluate(request = {}, options = {}) {
     afterWhen.push(rec);
   }
 
-  // —— 第 4.5 步：流程点名的条目（"激活条目"节点）——
-  // 它们跳过关键词与条件，因为"被点名"本身就是出现的原因；但仍然参与预算、分组与概率。
+  // —— 第 4.5 步：流程点名的条目（"激活条目"节点，v0.8.1 起可有限连锁）——
+  // 第 0 层 = 直接点名；之后每一层 = 被激活条目的流程又点名了谁。
+  // 深度默认 2、上限 5、0 表示只处理直接点名（ILB-4.12）。点名跳过关卡，但仍参与预算、分组与概率。
   const activatedByFlow = [];
-  for (const id of requested) {
+  const maxActivate = clamp(Math.trunc(num(settings.maxActivateDepth, 2)), 0, 5);
+  const seenRequested = new Set();
+  const queue = requested.map((id) => ({ id, depth: 0 }));
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift();
+    if (seenRequested.has(id)) continue;
+    seenRequested.add(id);
     if (activated.has(id)) continue;
     const entry = pool.find((e) => e && e.id === id && e.enabled !== false);
     if (!entry) {
@@ -328,8 +338,31 @@ export function evaluate(request = {}, options = {}) {
       continue;
     }
     activated.add(id);
-    activatedByFlow.push({ entry, stage: 'activate', reason: '被流程激活' });
-    diagnostics.push({ entryId: id, passed: true, stage: 'activate', reason: '被流程激活' });
+    const reason = depth === 0 ? '被流程激活' : `第 ${depth} 层连锁激活`;
+    const rec = { entry, stage: 'activate', reason };
+    activatedByFlow.push(rec);
+    diagnostics.push({ entryId: id, passed: true, stage: 'activate', reason });
+    // 被点名的条目自己的流程也要跑：它的「记住」要算数，它点的名要继续排队。
+    const flow = runEntryFlow(entry, {
+      text: baseText,
+      messages,
+      userInput,
+      messageCount: msgCount,
+      vars: effVars,
+      activated,
+    });
+    if (!flow.passed) {
+      // 点名本身已让它出现（和"正文标记"一样，出现的原因不是判定），但它的写入与后续点名不生效。
+      diagnostics.push({ entryId: id, passed: false, stage: 'logic', reason: `被激活条目的流程不成立（内容仍保留）：${flow.reason}` });
+      continue;
+    }
+    if (flow.extraText) rec.extraText = flow.extraText;
+    if (flow.writes && typeof flow.writes === 'object') Object.assign(flowWrites, flow.writes);
+    if (depth < maxActivate) {
+      for (const nextId of Array.isArray(flow.activations) ? flow.activations : []) {
+        if (!seenRequested.has(nextId)) queue.push({ id: nextId, depth: depth + 1 });
+      }
+    }
   }
 
   // —— 第 5 步：连锁触发（ILB-4.6）——
@@ -353,7 +386,7 @@ export function evaluate(request = {}, options = {}) {
         const flowOnly = hasFlow(entry) && entry.logic?.mode === 'only';
         const trig = flowOnly ? { passed: true, reason: '由判定流程决定' } : evalTrigger(entry.trigger, layerText);
         if (!trig.passed) continue;
-        const when = evalWhenArray(entry.when, { text: layerText, activated, vars });
+        const when = evalWhenArray(entry.when, { text: layerText, activated, vars: effVars });
         if (!when.passed) {
           diagnostics.push({ entryId: entry.id, passed: false, stage: 'when', reason: `连锁第 ${depth} 层：${when.reason}` });
           continue;
@@ -364,7 +397,7 @@ export function evaluate(request = {}, options = {}) {
           messages: [],
           userInput: '',
           messageCount: msgCount,
-          vars,
+          vars: effVars,
           activated,
         });
         if (!flow.passed) {
