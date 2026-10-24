@@ -154,6 +154,48 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     commit();
   }
 
+  // ---- 聊天变量（v0.8.0）----
+  // 和时效状态放同一个 chatStates 桶，但单独一个保留键 `__vars`，不会和书/条目混。
+  const VARS_KEY = '__vars';
+
+  function getVars(chatId) {
+    try {
+      const b = bucket();
+      const state = b.chatStates[String(chatId)] ?? {};
+      return safeClone(state[VARS_KEY] ?? {}, {});
+    } catch {
+      return {};
+    }
+  }
+
+  function mergeVars(chatId, patch = {}) {
+    const b = bucket();
+    const id = String(chatId);
+    const current = b.chatStates[id] ?? {};
+    const vars = current[VARS_KEY] && typeof current[VARS_KEY] === 'object' ? current[VARS_KEY] : {};
+    for (const [name, value] of Object.entries(patch ?? {})) {
+      const key = String(name ?? '').trim();
+      if (!key) continue;
+      vars[key] = value;
+    }
+    current[VARS_KEY] = vars;
+    b.chatStates[id] = current;
+    commit();
+    return safeClone(vars, {});
+  }
+
+  function deleteVar(chatId, name) {
+    const b = bucket();
+    const id = String(chatId);
+    const current = b.chatStates[id] ?? {};
+    const vars = current[VARS_KEY] && typeof current[VARS_KEY] === 'object' ? current[VARS_KEY] : {};
+    delete vars[String(name)];
+    current[VARS_KEY] = vars;
+    b.chatStates[id] = current;
+    commit();
+    return safeClone(vars, {});
+  }
+
   const IMPORT_LOG_LIMIT = 50;
 
   function getImportLog() {
@@ -294,6 +336,9 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     getChatState,
     mergeChatState,
     clearChatState,
+    getVars,
+    mergeVars,
+    deleteVar,
     getImportLog,
     appendImportLog,
     getUiState,

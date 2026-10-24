@@ -282,6 +282,55 @@ export function renderFlowEditor(options = {}) {
       return body;
     }
 
+    if (node.kind === 'remember') {
+      body.appendChild(
+        el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+          el('span', { class: 'ilb-sub', text: '记成' }),
+          input(node.name, (value) => {
+            node.name = value;
+            notify();
+          }, { placeholder: '例如 金币' }),
+          el('span', { class: 'ilb-sub', text: '=' }),
+          renderOperand(node.value, (next) => {
+            node.value = next;
+            notify();
+            redraw();
+          }),
+        ]),
+      );
+      body.appendChild(
+        el('p', {
+          class: 'ilb-hint',
+          text: '下一轮在条目正文里写 {{ILB:chat.' + (node.name || '名字') + '}} 就能读到这个值；换一张聊天互不影响。',
+        }),
+      );
+      return body;
+    }
+
+    if (node.kind === 'activate') {
+      if (entries.length > 0) {
+        body.appendChild(
+          selectBox(node.entryId ?? '', [{ value: '', label: '（选择要一起出现的条目）' }].concat(
+            entries.map((e) => ({ value: e.id, label: e.title || e.id })),
+          ), (value) => {
+            node.entryId = value;
+            notify();
+          }, 'ilb-select'),
+        );
+      } else {
+        body.appendChild(
+          input(node.entryId, (value) => {
+            node.entryId = value;
+            notify();
+          }, { placeholder: '条目 id' }),
+        );
+      }
+      body.appendChild(
+        el('p', { class: 'ilb-hint', text: '被点名的条目会跳过关键词与条件直接出现；预算、分组与概率仍然生效。' }),
+      );
+      return body;
+    }
+
     body.appendChild(el('p', { class: 'ilb-hint', text: FLOW_KIND_HINT[node.kind] ?? '' }));
     return body;
   }

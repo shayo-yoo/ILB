@@ -151,36 +151,6 @@ export function runSelfTest() {
     add(false, `打开浮层时抛错：${err?.message ?? err}`);
   }
 
-  // 3.9) 叙事引擎（v0.6.0 并入）。它有自己的失败方式：声明写错、注入接口不在、
-  // 重放抛错。这些都不该表现为"聊天看着正常但账本永远不动"，所以单独报数。
-  try {
-    const narrative = globalThis.ILB?.narrative;
-    add(Boolean(narrative), narrative ? '叙事引擎已接上' : '叙事引擎没接上（不影响世界书与界面）');
-    if (narrative && typeof narrative.describe === 'function') {
-      const info = narrative.describe();
-      const problems = info.declaration?.problems ?? 0;
-      const declOk = info.declaration?.ok !== false && problems === 0;
-      add(
-        declOk,
-        declOk
-          ? `账本声明能编译（${info.declaration?.variables ?? 0} 个变量、${info.declaration?.rules ?? 0} 条规则${info.usingPreset ? '，内置示例' : '，你自己的'}）`
-          : `账本声明有问题：${info.declaration?.problemText || '编译失败'}`,
-      );
-      if (info.enabled) {
-        const t = info.totals ?? { messages: 0, facts: 0, ok: 0, rejected: 0, unhandled: 0, unknown: 0 };
-        add(
-          true,
-          `账本已启用：${t.messages} 条消息、${t.facts} 条事实（成功 ${t.ok}、被拒 ${t.rejected}、未认领 ${t.unhandled}、看不懂 ${t.unknown}），注入 ${info.promptChars} 字，画了 ${info.blocks} 块`,
-        );
-        if (info.error) add(false, `账本上次出过错：${info.error}`);
-      } else {
-        add(true, '账本开关是关的（默认）：不注入、消息末尾不画块，行为与 v0.5.0 一致');
-      }
-    }
-  } catch (err) {
-    add(false, `问账本状态时出错：${err?.message ?? err}`);
-  }
-
   // 4) 宿主的接口有没有接上（有扩展对象才算接上）
   const api = globalThis.ILB;
   add(Boolean(api), api ? `扩展已启动 v${api.version}` : '找不到 window.ILB，扩展可能没加载完');

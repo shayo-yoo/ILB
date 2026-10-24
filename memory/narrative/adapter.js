@@ -16,7 +16,8 @@
 // 与世界书注入（ILB::…）分开，避免互相清空。
 
 import { clearBlocks, mountBlock, messageElement } from './block.js';
-import { planLedger } from './plan.js';
+import { planLedger, totalsFromRows } from './plan.js';
+import { createCheckpointStore, chatKeyOf } from './checkpoint.js';
 import { NARRATIVE_VERSION } from './index.js';
 import { compileDeclaration, describeDeclaration, readNarrativeSettings } from './store.js';
 
@@ -95,10 +96,11 @@ export function createNarrativeRuntime(deps = {}) {
   function chatSnapshot() {
     const ctx = safe(() => getContext(), null);
     const chat = ctx?.chat;
-    if (!Array.isArray(chat)) return { list: [], chat: null };
+    if (!Array.isArray(chat)) return { list: [], chat: null, ctx };
     return {
       list: chat.map((message) => (message && typeof message.mes === 'string' ? message.mes : '')),
       chat,
+      ctx,
     };
   }
 
@@ -166,19 +168,50 @@ export function createNarrativeRuntime(deps = {}) {
       clearAll();
       return null;
     }
-    const { list, chat } = chatSnapshot();
+    const { list, chat, ctx } = chatSnapshot();
     if (chat !== ledgerCacheChat || cache.key !== ledgerCacheDecl) {
       ledgerCache = null;
       ledgerCacheChat = chat;
       ledgerCacheDecl = cache.key;
     }
+
+    // 检查点：旧楼层折成一份状态存下来，最新几条仍然现场重算。
+    const chatKey = chatKeyOf(ctx);
+    const checkpointStore = createCheckpointStore({ repository });
+    const checkpoint = s.checkpointEvery > 0 ? checkpointStore.load(chatKey, cache.key) : null;
+    const useCheckpoint = Boolean(checkpoint && checkpoint.upto <= list.length);
+    const startIndex = useCheckpoint ? checkpoint.upto : 0;
+    const initial = useCheckpoint ? checkpoint.state : null;
+    const baseTotals = useCheckpoint ? checkpoint.totals : null;
+
     try {
-      plan = planLedger(narrative, list, { budget: s.budget, inject: s.inject, cache: ledgerCache });
-      ledgerCache = plan.cache ?? null;
+      plan = planLedger(narrative, list, {
+        budget: s.budget,
+        inject: s.inject,
+        cache: useCheckpoint ? null : ledgerCache,
+        initial,
+        startIndex,
+        baseTotals,
+      });
+      ledgerCache = useCheckpoint ? null : plan.cache ?? null;
     } catch (err) {
       plan = null;
       warnOnce(`账本重放失败：${err?.message ?? err}`);
       return null;
+    }
+
+    // 把"已经稳定下来的旧楼层"写进检查点（最新的 checkpointEvery 条不写）。
+    if (s.checkpointEvery > 0) {
+      const target = Math.max(0, list.length - s.checkpointEvery);
+      const currentUpto = useCheckpoint ? checkpoint.upto : 0;
+      if (target > currentUpto) {
+        const prefixRows = (plan.rows ?? []).filter((row) => row.index < target);
+        const targetRow = prefixRows[prefixRows.length - 1];
+        if (targetRow) {
+          const totals = totalsFromRows(narrative, prefixRows, baseTotals ?? {});
+          checkpointStore.save(chatKey, cache.key, target, targetRow.state, totals);
+        }
+      }
     }
     try {
       writePrompt(plan.prompt);
@@ -202,12 +235,25 @@ export function createNarrativeRuntime(deps = {}) {
     if (!s.enabled || !narrative) return;
     const index = Number(mesid);
     if (!Number.isInteger(index) || index < 0) return;
-    const list = entries();
+    const { list, ctx } = chatSnapshot();
     if (index >= list.length) return;
     try {
+      // 检查点覆盖的旧消息不再单独画块（它们的事实已经折进检查点）。
+      const cp = s.checkpointEvery > 0 ? createCheckpointStore({ repository }).load(chatKeyOf(ctx), cache.key) : null;
+      const useCheckpoint = Boolean(cp && cp.upto <= list.length);
+      if (useCheckpoint && index < cp.upto) {
+        removeBlockAt(index);
+        return;
+      }
       // 只借缓存的前缀，不把它写回：这条路径是"补一块"，不是全量重放。
-      const prefixCache = ledgerCache ? { rows: (ledgerCache.rows ?? []).slice(0, index + 1) } : null;
-      const partial = planLedger(narrative, list.slice(0, index + 1), { budget: s.budget, inject: false, cache: prefixCache });
+      const prefixCache = !useCheckpoint && ledgerCache ? { rows: (ledgerCache.rows ?? []).slice(0, index + 1) } : null;
+      const partial = planLedger(narrative, list.slice(0, index + 1), {
+        budget: s.budget,
+        inject: false,
+        cache: prefixCache,
+        initial: useCheckpoint ? cp.state : null,
+        startIndex: useCheckpoint ? cp.upto : 0,
+      });
       const block = partial.blocks.find((row) => row.index === index);
       if (block) mountBlock(block);
       else removeBlockAt(index);
@@ -330,6 +376,19 @@ export function createNarrativeRuntime(deps = {}) {
     return settings().enabled;
   }
 
+  /** 删掉当前聊天的检查点：下一次刷新会从对话开头重放。 */
+  function clearCheckpoint() {
+    try {
+      const { ctx } = chatSnapshot();
+      createCheckpointStore({ repository }).clear(chatKeyOf(ctx));
+      ledgerCache = null;
+      return true;
+    } catch (err) {
+      warnOnce(`检查点没清掉：${err?.message ?? err}`);
+      return false;
+    }
+  }
+
   function ledger() {
     const { s } = compiled();
     const declaration = describeDeclaration(s.declaration);
@@ -349,6 +408,7 @@ export function createNarrativeRuntime(deps = {}) {
       enabled: s.enabled,
       inject: s.inject,
       budget: s.budget,
+      checkpointEvery: s.checkpointEvery,
       usingPreset: s.usingPreset,
       declaration: {
         ok: declaration.ok,
@@ -359,6 +419,16 @@ export function createNarrativeRuntime(deps = {}) {
       },
       entries: entries().length,
       cached: Array.isArray(ledgerCache?.rows) ? ledgerCache.rows.filter(Boolean).length : 0,
+      windowStart: plan?.startIndex ?? 0,
+      checkpoint: (() => {
+        try {
+          const { ctx } = chatSnapshot();
+          const entry = createCheckpointStore({ repository }).load(chatKeyOf(ctx), cache.key);
+          return entry ? { upto: entry.upto, totals: entry.totals ?? {} } : null;
+        } catch {
+          return null;
+        }
+      })(),
       totals: plan?.totals ?? null,
       blocks: plan?.blocks.length ?? 0,
       promptChars: plan?.prompt.length ?? 0,
@@ -375,6 +445,7 @@ export function createNarrativeRuntime(deps = {}) {
     renderOne,
     setEnabled,
     isEnabled,
+    clearCheckpoint,
     recordPrompt: (text) => writePrompt(text),
     ledger,
     describe,

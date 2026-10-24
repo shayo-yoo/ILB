@@ -200,11 +200,19 @@ function comparePreference(a, b) {
  */
 function runEntryFlow(entry, ctx) {
   if (!hasFlow(entry)) {
-    return { active: false, passed: true, reason: '没有流程', extraText: '', steps: [] };
+    return { active: false, passed: true, reason: '没有流程', extraText: '', steps: [], writes: {}, activations: [] };
   }
   const result = evaluateFlow(entry.logic, ctx);
   const extraText = result.extra.length > 0 ? `\n${result.extra.join('\n')}` : '';
-  return { active: true, passed: result.passed, reason: result.reason, extraText, steps: result.steps };
+  return {
+    active: true,
+    passed: result.passed,
+    reason: result.reason,
+    extraText,
+    steps: result.steps,
+    writes: result.writes ?? {},
+    activations: result.activations ?? [],
+  };
 }
 
 /**
@@ -279,6 +287,8 @@ export function evaluate(request = {}, options = {}) {
   for (const rec of triggerPassers) activated.add(rec.entry.id);
 
   const afterWhen = [];
+  const flowWrites = {};
+  const requested = [];
   for (const rec of triggerPassers) {
     const when = evalWhenArray(rec.entry.when, { text: rec.text ?? baseText, activated, vars });
     if (!when.passed) {
@@ -299,7 +309,27 @@ export function evaluate(request = {}, options = {}) {
       continue;
     }
     if (flow.extraText) rec.extraText = flow.extraText;
+    // 流程里"记住"的值与"激活条目"的请求，收集起来统一处理。
+    if (flow.writes && typeof flow.writes === 'object') Object.assign(flowWrites, flow.writes);
+    for (const id of Array.isArray(flow.activations) ? flow.activations : []) {
+      if (!requested.includes(id)) requested.push(id);
+    }
     afterWhen.push(rec);
+  }
+
+  // —— 第 4.5 步：流程点名的条目（"激活条目"节点）——
+  // 它们跳过关键词与条件，因为"被点名"本身就是出现的原因；但仍然参与预算、分组与概率。
+  const activatedByFlow = [];
+  for (const id of requested) {
+    if (activated.has(id)) continue;
+    const entry = pool.find((e) => e && e.id === id && e.enabled !== false);
+    if (!entry) {
+      diagnostics.push({ entryId: id, passed: false, stage: 'activate', reason: '流程点名的条目不存在或已关闭' });
+      continue;
+    }
+    activated.add(id);
+    activatedByFlow.push({ entry, stage: 'activate', reason: '被流程激活' });
+    diagnostics.push({ entryId: id, passed: true, stage: 'activate', reason: '被流程激活' });
   }
 
   // —— 第 5 步：连锁触发（ILB-4.6）——
@@ -354,7 +384,7 @@ export function evaluate(request = {}, options = {}) {
 
   // —— 第 6 步：概率（只在用户明确打开时生效，且可复现）——
   const candidates = [];
-  for (const rec of [...afterWhen, ...chained]) {
+  for (const rec of [...afterWhen, ...activatedByFlow, ...chained]) {
     const entry = rec.entry;
     if (entry.useProbability !== true) {
       candidates.push(rec);
@@ -448,6 +478,8 @@ export function evaluate(request = {}, options = {}) {
     })),
     stateUpdates,
     diagnostics,
+    /** 本轮流程里"记住"的值；由调用方决定怎么落盘。 */
+    varWrites: flowWrites,
     basedOnMessageCount: msgCount,
     budget: { limit, used, dropped },
     books: {

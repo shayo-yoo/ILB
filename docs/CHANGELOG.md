@@ -15,6 +15,51 @@
 
 ---
 
+## 0.8.0 · 2026-10-24 · 新增 · ILB-10.14 / 10.15 / 10.16 · 账本移出扩展，扩展只留聊天变量与「记住 / 激活条目」两个流程节点
+
+**一句话**：按用户拍板的五步计划走第一步——把叙事账本整体搬到仓库根目录 `memory/` 留档、扩展不再加载；同时给扩展补上真正需要的那块：**聊天变量**（`{{ILB:名字}}` 宏、面板「状态」页）和流程图里的两个节点「记住」（写变量）与「激活条目」（拉出另一条设定），让"抽卡 + 条件 + 有限连锁"能先跑通。
+
+**依据**：用户 m02480"好的你可以开始开发了"；决策 D-0044（搬家而非删除、不做兼容层）。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `core/vars.js` | 变量服务（纯计算）：`normalizeVars` / `coerceValue` / `readPath` / `displayValue` / `expandMacros` / `macroNames` / `missingMacros` / `resolveChatId`；值形状 `{type,value}`；删掉即未定义，宏原样保留 |
+| `adapters/repository.js` | `getVars` / `mergeVars` / `deleteVar`，落在 `chatStates[chatId].__vars`，只对当前聊天生效 |
+| `runtime/pipeline.js` | 读变量 → 宏展开条目正文；收集流程图写入，判定成功后一次性落盘；对外接口 `globalThis.ILB.vars` |
+| `core/flow.js` | 新节点 `remember`（记住：名字 + 值）与 `activate`（激活条目：同书条目下拉，绕过触发词进入候选，受预算/上限/去重约束） |
+| `ui/view-state.js` | 面板「状态」页：列出、新增、改值、删除当前聊天的变量 |
+| `ui/flow-editor.js` | 两种节点的编辑表单 |
+| 测试 | `tests/vars.test.mjs`（10）、`tests/flow-vars.test.mjs`（8） |
+
+**修订（文档）**
+
+| 位置 | 内容 |
+|---|---|
+| `参考文档.md` | 版本 **3.1.0**；§10 标题与开头注明"v0.8.0 已移出扩展"；新增 **§10.14 聊天变量与宏**、**§10.15 「记住」「激活条目」**、**§10.16 搬家与对外接口** |
+| `docs/决策记录.md` | 追加 **D-0044**（搬家的理由、四项决定、三条否决、代价与待定） |
+| `extension/README.md` | 测试计数改为 **120**、模块 **40**；新增变量/节点/状态页说明 |
+| `memory/README.md` | 说明这是留档，不随扩展加载，以及重新启用的方式 |
+
+**删除 / 移出**
+
+- `extension/narrative/` → `memory/narrative/`；`extension/ui/view-narrative.js` → `memory/ui/`；叙事测试、探针、截图 → `memory/tests/`。
+- `index.js` 去掉叙事装配、挂载、注入与 `CHAT_CHANGED` 刷新；`ui/panel.js` 去掉「叙事」页；`ui/view-diagnostics.js` 去掉叙事卡；`ui/selftest.js` 去掉 3.9 节。
+
+**验收**
+
+- 单元 **120/120**（原有 102 + vars 10 + flow-vars 8）；`linkcheck` **42/42**；`smoke-dom` **0 失败**；`node tests/narrative-demo.mjs` 随档案移到 `memory/tests/`。
+- 叙事探针与截图留在 `memory/tests/`，不再计入扩展回归。
+
+**已知未完成 / 未验证**
+
+- 「调用函数 / 函数库」节点未做（P3 后半）；"有限连锁"（连锁深度默认 2、上限 5）未做（P4）；动态条目与手机版状态页未做（P5）。
+- 真实 SillyTavern 内未验证：变量的落盘时机、手机壳五页/六页布局、宏在真实提示词里的展开。
+- 残留：`ui/mobile.js` 的 `ledger` 状态与 `.ilb-m-dock` 样式暂无入口；`memory/narrative/` 的适配层路径未修（档案不可直接运行）。
+
+---
+
 ## 0.7.1 · 2026-10-24 · 修订 · ILB-10.0 / 10.9（改名）/ 10.12 / 10.13 · 定位回调：记忆账本，不是事件驱动器（仅文档与措辞，无代码变更）
 
 **一句话**：把这一模块的目标从"做法引擎/事件驱动器"改回"确定角色状态"——只做认出承诺、约束成确定、注入摘要、开放读写四件事；取消事件级联与可视化编程路线，"复杂来自组合"改由 §10.12 的条目/规则/宏/界面接口承担。

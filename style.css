@@ -1111,5 +1111,53 @@ body.ilb-overlay-open .ilb-fab {
   overflow-wrap: anywhere;
 }
 
+/* ── 状态页（v0.8.0）：聊天变量表 ─────────────────────────────── */
+.ilb-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ilb-inline-eq {
+  opacity: 0.6;
+}
+
+.ilb-state-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.ilb-state-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  min-width: 0;
+}
+
+.ilb-state-name {
+  font-weight: 600;
+  min-width: 64px;
+  overflow-wrap: anywhere;
+}
+
+.ilb-state-kind {
+  opacity: 0.55;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.ilb-state-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+
 
 

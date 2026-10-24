@@ -4,6 +4,7 @@
 
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
+import { expandMacros, normalizeVars, resolveChatId } from '../core/vars.js';
 import { notifyObservers } from './registry.js';
 
 function safeJson(v, fallback) {
@@ -25,7 +26,7 @@ function messageText(m) {
 }
 
 /** 心跳：宿主把 getContext() 的结果丢进来，这里只做"翻译" */
-export function buildEvalRequest(ctx, books, settings, chatState) {
+export function buildEvalRequest(ctx, books, settings, chatState, storedVars = {}) {
   const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
   const messages = chat.map((m) => ({ role: messageRole(m), content: messageText(m) }));
 
@@ -57,7 +58,7 @@ export function buildEvalRequest(ctx, books, settings, chatState) {
     personaDescription: String(ctx?.powerUserSettings?.persona_description ?? ''),
     scanDepth: settings.scanDepth,
     history,
-    vars: safeJson(ctx?.chatMetadata?.variables ?? {}, {}),
+    vars: { ...normalizeVars(ctx?.chatMetadata?.variables ?? {}), ...normalizeVars(storedVars) },
     trigger: 'generation',
     seed: `${chatId}:${messages.length}`,
     contextSize: Number(ctx?.maxContext ?? ctx?.contextSize ?? 0) || undefined,
@@ -133,6 +134,8 @@ export function createPipeline(deps) {
     }
     lastSkip = null;
 
+    const currentChatId = resolveChatId(ctx);
+
     let books;
     try {
       books = repository.listBooks();
@@ -144,9 +147,8 @@ export function createPipeline(deps) {
     let request;
     let resolved;
     try {
-      const chatId = String(ctx.chatId ?? 'default');
-      const chatState = repository.getChatState(chatId);
-      request = buildEvalRequest(ctx, books, settings, chatState);
+      const chatState = repository.getChatState(currentChatId);
+      request = buildEvalRequest(ctx, books, settings, chatState, repository.getVars(currentChatId));
       resolved = resolveBooks(books, {
         characterId: ctx.characterId,
         characterName: ctx.name2,
@@ -173,6 +175,27 @@ export function createPipeline(deps) {
       return false;
     }
 
+    // 宏在这里展开：条目正文里的 {{ILB:chat.名字}} 用当前聊天的变量表替换。
+    // 找不到的宏留下显眼标记（⟨未定义:名字⟩），不静默变成空字符串（D-0043）。
+    try {
+      const vars = request?.vars ?? {};
+      for (const item of result?.activated ?? []) {
+        if (item && typeof item.content === 'string' && item.content.includes('{{')) {
+          item.content = expandMacros(item.content, { vars });
+        }
+      }
+    } catch (err) {
+      log.warn(`展开条目宏失败（保留原文）: ${err?.message ?? err}`);
+    }
+
+    // 流程里"记住"的值落盘：只写本聊天，下一轮注入时生效。写不进去不影响这一轮出现。
+    try {
+      const writes = result?.varWrites ?? {};
+      if (Object.keys(writes).length > 0) repository.mergeVars(currentChatId, writes);
+    } catch (err) {
+      log.warn(`保存聊天变量失败（不影响这一轮）: ${err?.message ?? err}`);
+    }
+
     try {
       notifyObservers(registry, result, request, (id, err) => log.warn(`观察者 ${id} 出错（已忽略）: ${err?.message ?? err}`));
     } catch {
@@ -182,7 +205,7 @@ export function createPipeline(deps) {
     let injected = false;
     try {
       injected = injector.apply(result, {
-        chatId: String(ctx.chatId ?? 'default'),
+        chatId: currentChatId,
         reason,
         settings,
       }) !== false;
@@ -204,7 +227,7 @@ export function createPipeline(deps) {
         state[bookId] = state[bookId] ?? {};
         state[bookId][upd.entryId] = { lastActiveAt: upd.lastActiveAt, activeSince: upd.activeSince };
       }
-      repository.mergeChatState(String(ctx.chatId ?? 'default'), state);
+      repository.mergeChatState(currentChatId, state);
     } catch (err) {
       log.warn(`保存时效状态失败（不影响这一轮）: ${err?.message ?? err}`);
     }

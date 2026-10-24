@@ -7,8 +7,8 @@ import { loadHelp, showHelp, helpButton, openOverlay, closeOverlay } from './hel
 import { renderShelf } from './view-shelf.js';
 import { renderRules } from './view-rules.js';
 import { renderSnapshots } from './view-snapshots.js';
+import { renderState } from './view-state.js';
 import { renderDiagnostics } from './view-diagnostics.js';
-import { renderNarrative } from './view-narrative.js';
 import { renderSettings } from './view-settings.js';
 import { openEditor, openPreview } from './editor.js';
 
@@ -16,8 +16,8 @@ const TABS = [
   { id: 'shelf', label: '书架' },
   { id: 'rules', label: '规则' },
   { id: 'snapshots', label: '快照' },
+  { id: 'state', label: '状态' },
   { id: 'diagnostics', label: '诊断' },
-  { id: 'narrative', label: '叙事' },
   { id: 'settings', label: '设置' },
 ];
 
@@ -25,13 +25,13 @@ const VIEWS = {
   shelf: renderShelf,
   rules: renderRules,
   snapshots: renderSnapshots,
+  state: renderState,
   diagnostics: renderDiagnostics,
-  narrative: renderNarrative,
   settings: renderSettings,
 };
 
 export function createPanel(deps) {
-  const { repository, nativeWorlds, pipeline, narrative, notify } = deps;
+  const { repository, nativeWorlds, pipeline, getChatId, notify } = deps;
 
   const state = {
     activeTab: 'shelf',
@@ -75,7 +75,7 @@ export function createPanel(deps) {
     repository,
     nativeWorlds,
     pipeline,
-    narrative,
+    getChatId,
     notify,
     state,
     toast,

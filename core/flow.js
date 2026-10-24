@@ -9,7 +9,7 @@
 
 import { containsNeedle, compileRegex, safeRegexTest } from './text-match.js';
 
-export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'add', 'pass', 'fail'];
+export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'add', 'remember', 'activate', 'pass', 'fail'];
 
 export const FLOW_KIND_LABEL = {
   test: '检测',
@@ -18,6 +18,8 @@ export const FLOW_KIND_LABEL = {
   define: '定义',
   calc: '计算',
   add: '添加',
+  remember: '记住',
+  activate: '激活条目',
   pass: '通过（结束）',
   fail: '不通过（结束）',
 };
@@ -29,6 +31,8 @@ export const FLOW_KIND_HINT = {
   define: '给一个变量起个值，后面可以拿来比较或计算',
   calc: '用两个值算出第三个值存进变量',
   add: '往这条规则的正文后面追加一段话',
+  remember: '把这个值记进这张聊天的状态，下一轮还在（写 {{ILB:chat.名字}} 就能读）',
+  activate: '把另一条规则也拉进这一轮，像它自己出现一样',
   pass: '到此为止，这条规则出现',
   fail: '到此为止，这条规则不出现',
 };
@@ -86,6 +90,8 @@ export function makeNode(kind = 'test', overrides = {}) {
   }
   if (kind === 'define') return { ...base, name: '', value: operand('text', ''), ...overrides };
   if (kind === 'add') return { ...base, text: '', ...overrides };
+  if (kind === 'remember') return { ...base, name: '', value: operand('text', ''), ...overrides };
+  if (kind === 'activate') return { ...base, entryId: '', ...overrides };
   return { ...base, ...overrides };
 }
 
@@ -144,6 +150,11 @@ function normalizeNode(raw, depth) {
     node.value = normalizeOperand(raw.value, operand('text', ''));
   } else if (kind === 'add') {
     node.text = String(raw.text ?? '');
+  } else if (kind === 'remember') {
+    node.name = String(raw.name ?? '');
+    node.value = normalizeOperand(raw.value, operand('text', ''));
+  } else if (kind === 'activate') {
+    node.entryId = String(raw.entryId ?? '');
   }
 
   if (kind === 'test' || kind === 'judge' || kind === 'compare') {
@@ -309,6 +320,8 @@ export function describeNode(node) {
     const text = String(node.text ?? '');
     return `添加：${text ? `「${text.slice(0, 16)}${text.length > 16 ? '…' : ''}」` : '（空）'}`;
   }
+  if (node.kind === 'remember') return `记住：${node.name || '（未命名）'} = ${describeOperand(node.value)}`;
+  if (node.kind === 'activate') return `激活条目：${node.entryId || '（未选）'}`;
   if (node.kind === 'pass') return '到此为止：这条规则出现';
   if (node.kind === 'fail') return '到此为止：这条规则不出现';
   return '未知节点';
@@ -364,6 +377,10 @@ export function evaluateFlow(flow, ctx = {}) {
     vars,
     activated: ctx.activated instanceof Set ? ctx.activated : new Set(),
     extra,
+    // 本轮流过程中要"记进聊天状态"的值；调用方负责落盘（core 不碰存档）。
+    writes: {},
+    // 本轮被流程点名、要求一起出现的条目 id。
+    activations: [],
   };
 
   const result = runList(nodes, state, steps, 0);
@@ -375,6 +392,8 @@ export function evaluateFlow(flow, ctx = {}) {
     steps,
     vars,
     extra,
+    writes: state.writes,
+    activations: state.activations,
   };
 }
 
@@ -418,6 +437,25 @@ function runNode(node, ctx, steps, depth) {
     const text = String(node.text ?? '');
     if (text) ctx.extra.push(text);
     steps.push({ stage: 'logic', passed: true, reason: text ? '添加了一段正文' : '「添加」是空的，跳过' });
+    return null;
+  }
+
+  if (node.kind === 'remember') {
+    const value = operandValue(node.value, ctx.vars);
+    if (node.name) {
+      ctx.vars[node.name] = value;
+      ctx.writes[node.name] = value;
+      steps.push({ stage: 'logic', passed: true, reason: `记住 ${node.name} = ${JSON.stringify(value)}` });
+    } else {
+      steps.push({ stage: 'logic', passed: true, reason: '「记住」没有写名字，跳过' });
+    }
+    return null;
+  }
+
+  if (node.kind === 'activate') {
+    const id = String(node.entryId ?? '').trim();
+    if (id && !ctx.activations.includes(id)) ctx.activations.push(id);
+    steps.push({ stage: 'logic', passed: true, reason: id ? `要求条目 ${id} 一起出现` : '「激活条目」没选条目，跳过' });
     return null;
   }
 
