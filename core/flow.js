@@ -10,7 +10,7 @@
 import { containsNeedle, compileRegex, safeRegexTest } from './text-match.js';
 import { GOTO_ON_LIMIT } from './settings-defaults.js';
 
-export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'add', 'remember', 'activate', 'goto', 'call', 'pass', 'fail'];
+export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'random', 'add', 'remember', 'activate', 'goto', 'call', 'pass', 'fail'];
 
 export const FLOW_KIND_LABEL = {
   test: '检测',
@@ -18,6 +18,7 @@ export const FLOW_KIND_LABEL = {
   compare: '比较',
   define: '定义',
   calc: '计算',
+  random: '随机数',
   add: '添加',
   remember: '记住',
   activate: '激活条目',
@@ -93,6 +94,9 @@ export function makeNode(kind = 'test', overrides = {}) {
   if (kind === 'calc') {
     return { ...base, target: '', op: '+', left: operand('var', ''), right: operand('number', 1), ...overrides };
   }
+  if (kind === 'random') {
+    return { ...base, target: '', min: 1, max: 6, integer: true, persist: true, ...overrides };
+  }
   if (kind === 'define') return { ...base, name: '', value: operand('text', ''), ...overrides };
   if (kind === 'add') return { ...base, text: '', ...overrides };
   if (kind === 'remember') return { ...base, name: '', value: operand('text', ''), ...overrides };
@@ -153,6 +157,14 @@ function normalizeNode(raw, depth) {
     node.left = normalizeOperand(raw.left, operand('var', ''));
     node.right = normalizeOperand(raw.right, operand('number', 1));
     node.persist = raw.persist === true;
+  } else if (kind === 'random') {
+    // 范围内随机（ILB-4.19）：同一楼层重放必须得到同一个数，种子来自「聊天 + 消息数 + 节点」
+    node.target = String(raw.target ?? '');
+    node.min = clampInt(raw.min, -999999, 999999, 1);
+    node.max = clampInt(raw.max, -999999, 999999, 6);
+    if (node.max < node.min) node.max = node.min;
+    node.integer = raw.integer !== false;
+    node.persist = raw.persist !== false;
   } else if (kind === 'define') {
     node.name = String(raw.name ?? '');
     node.value = normalizeOperand(raw.value, operand('text', ''));
@@ -332,6 +344,9 @@ export function describeNode(node) {
   if (node.kind === 'compare') return `比较：${describeOperand(node.left)} ${node.op} ${describeOperand(node.right)}`;
   if (node.kind === 'define') return `定义：${node.name || '（未命名）'} = ${describeOperand(node.value)}`;
   if (node.kind === 'calc') return `计算：${node.target || '（未命名）'} = ${describeOperand(node.left)} ${node.op} ${describeOperand(node.right)}`;
+  if (node.kind === 'random') {
+    return `随机数：${node.target || '（未命名）'} = ${node.min}–${node.max}${node.integer ? ' 的整数' : ''}（同一楼层结果固定）`;
+  }
   if (node.kind === 'add') {
     const text = String(node.text ?? '');
     return `添加：${text ? `「${text.slice(0, 16)}${text.length > 16 ? '…' : ''}」` : '（空）'}`;
@@ -394,6 +409,7 @@ export function evaluateFlow(flow, ctx = {}) {
     text: String(ctx.text ?? ''),
     userInput: String(ctx.userInput ?? ''),
     messageCount: Math.max(0, Math.trunc(Number(ctx.messageCount) || 0)),
+    seed: String(ctx.seed ?? ''),
     vars,
     activated: ctx.activated instanceof Set ? ctx.activated : new Set(),
     extra,
@@ -492,6 +508,16 @@ function runList(nodes, ctx, steps, depth, startIndex = 0) {
   return null;
 }
 
+function seededUnit(text) {
+  const s = String(text ?? '');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 100000) / 100000;
+}
+
 function runNode(node, ctx, steps, depth) {
   if (!node || typeof node !== 'object') return null;
 
@@ -518,6 +544,21 @@ function runNode(node, ctx, steps, depth) {
       if (node.persist) ctx.writes[node.target] = value;
     }
     steps.push({ stage: 'logic', passed: true, reason: `计算 ${node.target || '（未命名）'} = ${value}` });
+    return null;
+  }
+
+  if (node.kind === 'random') {
+    // 种子 = 聊天 + 消息数 + 节点 id：同一楼层重画多少次都是同一个数（ILB-4.19）
+    const unit = seededUnit(`${ctx.seed ?? ''}:${node.id}`);
+    let value = node.integer === false
+      ? node.min + unit * (node.max - node.min)
+      : node.min + Math.floor(unit * (node.max - node.min + 1));
+    if (value > node.max) value = node.max;
+    if (node.target) {
+      ctx.vars[node.target] = value;
+      if (node.persist) ctx.writes[node.target] = value;
+    }
+    steps.push({ stage: 'logic', passed: true, reason: `随机数 ${node.target || '（未命名）'} = ${node.integer === false ? Number(value.toFixed(2)) : value}` });
     return null;
   }
 

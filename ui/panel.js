@@ -8,6 +8,7 @@ import { openGuide } from './guide.js';
 import { renderShelf } from './view-shelf.js';
 import { renderRules } from './view-rules.js';
 import { renderSnapshots } from './view-snapshots.js';
+import { renderLogicView } from './view-logic.js';
 import { renderState } from './view-state.js';
 import { renderDiagnostics } from './view-diagnostics.js';
 import { renderSettings } from './view-settings.js';
@@ -16,6 +17,7 @@ import { openEditor, openPreview } from './editor.js';
 const TABS = [
   { id: 'shelf', label: '书架' },
   { id: 'rules', label: '规则' },
+  { id: 'logic', label: '逻辑' },
   { id: 'snapshots', label: '快照' },
   { id: 'state', label: '状态' },
   { id: 'diagnostics', label: '诊断' },
@@ -25,6 +27,7 @@ const TABS = [
 const VIEWS = {
   shelf: renderShelf,
   rules: renderRules,
+  logic: renderLogicView,
   snapshots: renderSnapshots,
   state: renderState,
   diagnostics: renderDiagnostics,
@@ -35,6 +38,7 @@ const VIEWS = {
 const TAB_BLURB = {
   shelf: '所有书都在这里：从原生世界书导入、决定每本书什么时候参与判定。',
   rules: '这本书的条目：什么时候出现、还要满足什么条件、最后放在哪里。',
+  logic: '不需要世界书条目也能跑的一段判定：自己看触发词，或被别的逻辑调用。',
   snapshots: '把某一刻的开关组合存下来，之后一键切回去；只记开关，不改正文。',
   state: '这一场聊天里的变量和条目字段，随时可看、可改；换聊天会自动换一套。',
   diagnostics: '上一轮每条规则为什么出现、为什么没出现，卡在哪一步。',

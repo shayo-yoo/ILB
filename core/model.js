@@ -45,8 +45,18 @@ export function defaultTrigger() {
     secondary: { logic: 'AND_ANY', keys: [] },
     // 只看用户 / 只看 AI / 都看（ILB-4.15）
     source: 'both',
+    // 元触发器（ILB-4.20）：none=看词；always=每轮；on_ai=每次 AI 回复；on_user=用户发送/重新生成
+    meta: 'none',
   };
 }
+
+export const META_TRIGGERS = ['none', 'always', 'on_ai', 'on_user'];
+export const META_LABEL = {
+  none: '看触发词',
+  always: '每轮都跑',
+  on_ai: '每次 AI 回复后',
+  on_user: '用户发送 / 重新生成时',
+};
 
 /** 把任意输入整理成 trigger 形状；条目和独立逻辑共用（ILB-4.14）。 */
 export function normalizeTrigger(raw) {
@@ -66,6 +76,7 @@ export function normalizeTrigger(raw) {
       keys: asArray(t.secondary?.keys).map((x) => str(x)).filter(Boolean),
     },
     source: pickOne(t.source, TRIGGER_SOURCES, 'both'),
+    meta: pickOne(t.meta, META_TRIGGERS, 'none'),
   };
 }
 

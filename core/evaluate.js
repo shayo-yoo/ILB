@@ -10,6 +10,7 @@ import { resolveBooks } from './resolve-books.js';
 import { evaluateFlow, hasFlow } from './flow.js';
 import { withFieldDefaults } from './fields.js';
 import { parseCalls, findCallable, withBoundParams } from './calls.js';
+import { META_LABEL } from './model.js';
 
 const FALLBACK_CONTEXT_SIZE = 8192;
 
@@ -333,8 +334,21 @@ export function evaluate(request = {}, options = {}) {
     const source = logic.trigger?.source ?? 'both';
     const text = buildSourceText(messages, scanDepth, userInput, source);
     const trig = logic.trigger ?? {};
+    const meta = trig.meta ?? 'none';
     const hasWords = toStringArray(trig.any).length + toStringArray(trig.all).length + toStringArray(trig.regex).length > 0;
-    if (mode === 'auto' && hasWords) {
+    if (mode === 'auto' && meta !== 'none') {
+      // 元触发器（ILB-4.20）：不看词，看"这轮是谁在说话"
+      const last = messages.length ? messages[messages.length - 1] : null;
+      const lastRole = last ? roleOf(last, messages.length - 1) : '';
+      const passed =
+        meta === 'always' ||
+        (meta === 'on_ai' && (lastRole === 'ai' || lastRole === 'assistant')) ||
+        (meta === 'on_user' && (lastRole === 'user' || Boolean(userInput)));
+      if (!passed) {
+        diagnostics.push({ entryId: logic.id, passed: false, stage: 'trigger', reason: `元触发器不满足：${META_LABEL[meta] ?? meta}` });
+        return null;
+      }
+    } else if (mode === 'auto' && hasWords) {
       const t = evalTrigger(trig, text);
       if (!t.passed) {
         diagnostics.push({ entryId: logic.id, passed: false, stage: 'trigger', reason: `逻辑没触发：${t.reason}` });
@@ -357,6 +371,7 @@ export function evaluate(request = {}, options = {}) {
       messages,
       userInput,
       messageCount: msgCount,
+      seed,
       vars: effVars,
       activated,
       callLogic: (nextId) => runLogicById(nextId, depth + 1),
@@ -520,6 +535,7 @@ export function evaluate(request = {}, options = {}) {
       messages,
       userInput,
       messageCount: msgCount,
+      seed,
       vars: effVars,
       activated,
       callLogic: (id) => runLogicById(id),
@@ -597,6 +613,7 @@ export function evaluate(request = {}, options = {}) {
       messages,
       userInput,
       messageCount: msgCount,
+      seed,
       vars: effVars,
       activated,
       callLogic: (id2) => runLogicById(id2),
@@ -651,6 +668,7 @@ export function evaluate(request = {}, options = {}) {
           messages: [],
           userInput: '',
           messageCount: msgCount,
+          seed,
           vars: effVars,
           activated,
           callLogic: (id) => runLogicById(id),
@@ -800,6 +818,7 @@ function budgetLimit(settings, contextSize) {
  */
 export function previewEntry(entry, options = {}) {
   const steps = [];
+  const seed = String(options.seed ?? 'preview');
   const step = (stage, result) => {
     steps.push({ stage, passed: result.passed, reason: result.reason });
     return { passed: result.passed, reason: result.reason, steps };
@@ -817,6 +836,7 @@ export function previewEntry(entry, options = {}) {
   const state = options.state && typeof options.state === 'object' ? options.state : {};
   const ctx = {
     text,
+    seed,
     activated: new Set((Array.isArray(options.activated) ? options.activated : []).map(String)),
     vars: options.vars && typeof options.vars === 'object' ? options.vars : {},
     messageCount: msgCount,
@@ -860,6 +880,7 @@ export function previewEntry(entry, options = {}) {
       messages: [],
       userInput: '',
       messageCount: msgCount,
+      seed,
       vars: ctx.vars,
       activated: ctx.activated,
     });

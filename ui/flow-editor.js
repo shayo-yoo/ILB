@@ -4,7 +4,7 @@
 // 每个判断节点下面直接长出「成立时」和「不成立时」两块，块里可以继续放节点。
 // 这样在手机上也能编辑——画布上的拖线和端口在手指上根本点不准。
 
-import { el, button, selectBox } from './widgets.js';
+import { el, button, selectBox, hint } from './widgets.js';
 import {
   FLOW_KINDS,
   FLOW_KIND_LABEL,
@@ -319,6 +319,45 @@ export function renderFlowEditor(options = {}) {
           el('span', { class: 'ilb-sub', text: '存进聊天（下一轮还在；不勾就只是本轮临时值）' }),
         ]),
       );
+      return body;
+    }
+
+    if (node.kind === 'random') {
+      // 随机数（ILB-4.19）：范围 + 是否整数 + 是否存进聊天
+      body.appendChild(
+        el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+          el('span', { class: 'ilb-sub', text: '存到' }),
+          input(node.target, (value) => {
+            node.target = value;
+            notify();
+          }, { placeholder: '变量名' }),
+          el('span', { class: 'ilb-sub', text: '范围' }),
+          input(String(node.min), (value) => {
+            node.min = Math.trunc(Number(value) || 0);
+            if (node.max < node.min) node.max = node.min;
+            notify();
+          }, { placeholder: '最小', type: 'number' }),
+          el('span', { class: 'ilb-sub', text: '–' }),
+          input(String(node.max), (value) => {
+            node.max = Math.trunc(Number(value) || 0);
+            if (node.max < node.min) node.max = node.min;
+            notify();
+          }, { placeholder: '最大', type: 'number' }),
+        ]),
+      );
+      body.appendChild(
+        el('div', { class: 'ilb-inline ilb-flow-persist' }, [
+          checkbox(node.integer !== false, (checked) => {
+            node.integer = checked;
+            notify();
+          }, '要整数'),
+          checkbox(node.persist !== false, (checked) => {
+            node.persist = checked;
+            notify();
+          }, '存进聊天（不勾就只是本轮临时值）'),
+        ]),
+      );
+      body.appendChild(hint('同一楼层重画多少次，结果都一样；换楼层才重新掷。'));
       return body;
     }
 

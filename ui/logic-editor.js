@@ -6,7 +6,7 @@
 // 这里故意只露必要的东西：名字、触发词、正文、是否开放给 AI、流程。
 
 import { TRIGGER_SOURCES, POSITIONS } from '../core/settings-defaults.js';
-import { defaultLogic, normalizeLogic } from '../core/model.js';
+import { defaultLogic, normalizeLogic, META_TRIGGERS, META_LABEL } from '../core/model.js';
 import { el, button, checkbox, field, hint, selectBox } from './widgets.js';
 import { renderFlowEditor } from './flow-editor.js';
 
@@ -39,6 +39,7 @@ export function openLogicEditor(ctx, book, existing) {
     value,
     label: value === 'both' ? '用户和 AI 都看' : value === 'user' ? '只看用户说的话' : '只看 AI 说的话',
   })), () => {});
+  const metaSelect = selectBox(logic.trigger?.meta ?? 'none', META_TRIGGERS.map((value) => ({ value, label: META_LABEL[value] })), () => {});
   const textInput = el('textarea', { class: 'ilb-textarea', rows: '4' }, [logic.output?.text ?? '']);
   const positionSelect = selectBox(logic.output?.position ?? 'in_chat', POSITIONS.map((value) => ({
     value,
@@ -72,6 +73,7 @@ export function openLogicEditor(ctx, book, existing) {
         all: splitList(allInput),
         not: splitList(notInput),
         source: sourceSelect.value,
+        meta: metaSelect.value,
       },
       output: {
         ...(logic.output ?? {}),
@@ -109,6 +111,7 @@ export function openLogicEditor(ctx, book, existing) {
       field('必须同时出现', allInput),
       field('排除词', notInput),
       field('谁说的话算数', sourceSelect, '只看 AI 时，可以在 AI 说到某个词时运行——不用先命中一条世界书条目。'),
+      field('什么时候跑', metaSelect, '「每轮都跑」不看触发词，适合初始化；「每次 AI 回复后」适合在旁白之后结算。'),
 
       el('h5', { class: 'ilb-section-title', text: '运行后写点什么' }),
       field('正文（会出现在提示词里）', textInput, '可以留空：有些逻辑只负责改状态、点别的条目，不需要自己说话。'),
