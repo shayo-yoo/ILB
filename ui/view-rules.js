@@ -332,6 +332,11 @@ export function renderRules(ctx) {
             repository.saveBook(book);
             draw();
           }, { ghost: true }),
+          button('导出', () => {
+            downloadJson(`ilb-logic-${(logic.name || 'logic').replace(/[\\/:*?"<>|]/g, '_')}.json`, {
+              kind: 'ilb-logic', version: 1, book: book.name, logics: [logic],
+            });
+          }, { ghost: true }),
           button('删除', () => removeLogic(logic), { ghost: true }),
         ]),
       ]);
