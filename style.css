@@ -939,6 +939,23 @@ body.ilb-overlay-open .ilb-fab {
   border-left: 2px dashed var(--SmartThemeBorderColor, #555555);
 }
 
+/* 成立 / 不成立 两条分支各用一种颜色，长流程里一眼能分清 */
+.ilb-flow-branch-then {
+  border-left-color: #4c9a6a;
+}
+
+.ilb-flow-branch-else {
+  border-left-color: #b0613f;
+}
+
+.ilb-flow-branch-then > .ilb-flow-branch-title {
+  color: #4c9a6a;
+}
+
+.ilb-flow-branch-else > .ilb-flow-branch-title {
+  color: #b0613f;
+}
+
 .ilb-flow-branch-title {
   font-size: 0.84em;
   opacity: 0.85;
@@ -1235,4 +1252,36 @@ body.ilb-overlay-open .ilb-fab {
   border-left: 3px solid var(--SmartThemeQuoteColor, #9ad);
   background: rgba(127, 127, 127, 0.08);
   line-height: 1.55;
+}
+
+/* v0.9.0：独立逻辑列表、添加类型条、书架勾选 */
+.ilb-logic-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--SmartThemeBorderColor, #444);
+}
+
+.ilb-logic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ilb-flow-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  margin: 4px 0;
+  border: 1px dashed var(--SmartThemeBorderColor, #555);
+  border-radius: 6px;
+}
+
+.ilb-flow-pick {
+  font-size: 0.86em;
 }

@@ -8,8 +8,9 @@
 // 这样做的好处：用户永远只面对"下一步做什么"，不需要理解端口和连线。
 
 import { containsNeedle, compileRegex, safeRegexTest } from './text-match.js';
+import { GOTO_ON_LIMIT } from './settings-defaults.js';
 
-export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'add', 'remember', 'activate', 'pass', 'fail'];
+export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'add', 'remember', 'activate', 'goto', 'call', 'pass', 'fail'];
 
 export const FLOW_KIND_LABEL = {
   test: '检测',
@@ -20,6 +21,8 @@ export const FLOW_KIND_LABEL = {
   add: '添加',
   remember: '记住',
   activate: '激活条目',
+  goto: '跳转',
+  call: '调用逻辑',
   pass: '通过（结束）',
   fail: '不通过（结束）',
 };
@@ -33,6 +36,8 @@ export const FLOW_KIND_HINT = {
   add: '往这条规则的正文后面追加一段话',
   remember: '把这个值记进这张聊天的状态，下一轮还在（写 {{ILB:chat.名字}} 就能读）',
   activate: '把另一条规则也拉进这一轮，像它自己出现一样',
+  goto: '跳到这个流程里的另一个节点，从那里继续往下（可以往回跳，次数有上限）',
+  call: '调用另一条独立逻辑，把它的结果并进来',
   pass: '到此为止，这条规则出现',
   fail: '到此为止，这条规则不出现',
 };
@@ -92,6 +97,8 @@ export function makeNode(kind = 'test', overrides = {}) {
   if (kind === 'add') return { ...base, text: '', ...overrides };
   if (kind === 'remember') return { ...base, name: '', value: operand('text', ''), ...overrides };
   if (kind === 'activate') return { ...base, entryId: '', ...overrides };
+  if (kind === 'goto') return { ...base, target: '', max: 20, onLimit: 'stop', ...overrides };
+  if (kind === 'call') return { ...base, logicId: '', ...overrides };
   return { ...base, ...overrides };
 }
 
@@ -156,6 +163,14 @@ function normalizeNode(raw, depth) {
     node.value = normalizeOperand(raw.value, operand('text', ''));
   } else if (kind === 'activate') {
     node.entryId = String(raw.entryId ?? '');
+  } else if (kind === 'goto') {
+    // 跳转（ILB-4.17）：目标节点 id 在同一条流程里；循环上限与到限后的做法都由用户设
+    node.target = String(raw.target ?? '');
+    node.max = clampInt(raw.max, 1, 1000, 20);
+    node.onLimit = GOTO_ON_LIMIT.includes(raw.onLimit) ? raw.onLimit : 'stop';
+  } else if (kind === 'call') {
+    // 调用逻辑（ILB-4.18）：把另一条独立逻辑当成一个子步骤跑
+    node.logicId = String(raw.logicId ?? '');
   }
 
   if (kind === 'test' || kind === 'judge' || kind === 'compare') {
@@ -323,6 +338,10 @@ export function describeNode(node) {
   }
   if (node.kind === 'remember') return `记住：${node.name || '（未命名）'} = ${describeOperand(node.value)}`;
   if (node.kind === 'activate') return `激活条目：${node.entryId || '（未选）'}`;
+  if (node.kind === 'goto') {
+    return `跳转：→ ${node.target || '（未选）'}（最多 ${node.max} 次，超了${node.onLimit === 'continue' ? '跳过继续' : '终止'}）`;
+  }
+  if (node.kind === 'call') return `调用逻辑：${node.logicId || '（未选）'}`;
   if (node.kind === 'pass') return '到此为止：这条规则出现';
   if (node.kind === 'fail') return '到此为止：这条规则不出现';
   return '未知节点';
@@ -382,9 +401,53 @@ export function evaluateFlow(flow, ctx = {}) {
     writes: {},
     // 本轮被流程点名、要求一起出现的条目 id。
     activations: [],
+    // 「跳转」用：节点 id → {list, index}，以及每个跳转节点已经跳了几次。
+    index: buildNodeIndex(nodes),
+    gotoCounts: new Map(),
+    callLogic: typeof ctx.callLogic === 'function' ? ctx.callLogic : null,
   };
 
-  const result = runList(nodes, state, steps, 0);
+  let list = nodes;
+  let start = 0;
+  let result = null;
+  let jumps = 0;
+  for (;;) {
+    try {
+      result = runList(list, state, steps, 0, start);
+      break;
+    } catch (jump) {
+      if (!jump || jump.__ilbJump !== true) throw jump;
+      jumps += 1;
+      if (jumps > MAX_STEPS) {
+        result = { status: 'fail', reason: '跳转太多次，停止执行' };
+        steps.push({ stage: 'logic', passed: false, reason: result.reason });
+        break;
+      }
+      const node = jump.node;
+      const count = (state.gotoCounts.get(node.id) ?? 0) + 1;
+      state.gotoCounts.set(node.id, count);
+      if (count > node.max) {
+        if (node.onLimit === 'continue') {
+          steps.push({ stage: 'logic', passed: true, reason: `「跳转」第 ${count} 次超过上限 ${node.max}，按设置跳过这次跳转、继续往下` });
+          list = jump.list;
+          start = jump.index + 1;
+          continue;
+        }
+        result = { status: 'fail', reason: `「跳转」第 ${count} 次超过上限 ${node.max}，按设置终止` };
+        steps.push({ stage: 'logic', passed: false, reason: result.reason });
+        break;
+      }
+      const target = state.index.get(jump.target);
+      if (!target) {
+        result = { status: 'fail', reason: `跳转目标不存在：${jump.target}（可能已被删掉）` };
+        steps.push({ stage: 'logic', passed: false, reason: result.reason });
+        break;
+      }
+      steps.push({ stage: 'logic', passed: true, reason: `跳到另一个节点（第 ${count} 次）` });
+      list = target.list;
+      start = target.index;
+    }
+  }
   const passed = result?.status !== 'fail';
   return {
     active: true,
@@ -398,12 +461,33 @@ export function evaluateFlow(flow, ctx = {}) {
   };
 }
 
-function runList(nodes, ctx, steps, depth) {
+function buildNodeIndex(nodes, map = new Map()) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const node = list[i];
+    if (!node || typeof node !== 'object') continue;
+    if (node.id && !map.has(node.id)) map.set(node.id, { list, index: i });
+    if (Array.isArray(node.then)) buildNodeIndex(node.then, map);
+    if (Array.isArray(node.else)) buildNodeIndex(node.else, map);
+  }
+  return map;
+}
+
+function runList(nodes, ctx, steps, depth, startIndex = 0) {
+  const list = Array.isArray(nodes) ? nodes : [];
   if (depth > MAX_DEPTH) return { status: 'fail', reason: '流程嵌套太深，停止执行' };
-  for (const node of Array.isArray(nodes) ? nodes : []) {
+  for (let i = Math.max(0, startIndex); i < list.length; i += 1) {
     if (steps.length > MAX_STEPS) return { status: 'fail', reason: '流程太长，停止执行' };
-    const stop = runNode(node, ctx, steps, depth);
-    if (stop) return stop;
+    try {
+      const stop = runNode(list[i], ctx, steps, depth);
+      if (stop) return stop;
+    } catch (jump) {
+      if (jump && jump.__ilbJump === true) {
+        jump.list = list;
+        jump.index = i;
+      }
+      throw jump;
+    }
   }
   return null;
 }
@@ -460,6 +544,44 @@ function runNode(node, ctx, steps, depth) {
     const id = String(node.entryId ?? '').trim();
     if (id && !ctx.activations.includes(id)) ctx.activations.push(id);
     steps.push({ stage: 'logic', passed: true, reason: id ? `要求条目 ${id} 一起出现` : '「激活条目」没选条目，跳过' });
+    return null;
+  }
+
+  if (node.kind === 'goto') {
+    const target = String(node.target ?? '').trim();
+    if (!target) {
+      steps.push({ stage: 'logic', passed: true, reason: '「跳转」没选目标，跳过' });
+      return null;
+    }
+    steps.push({ stage: 'logic', passed: true, reason: `跳转到 ${target}` });
+    throw { __ilbJump: true, target, node };
+  }
+
+  if (node.kind === 'call') {
+    const id = String(node.logicId ?? '').trim();
+    if (!id) {
+      steps.push({ stage: 'logic', passed: true, reason: '「调用逻辑」没选逻辑，跳过' });
+      return null;
+    }
+    if (typeof ctx.callLogic !== 'function') {
+      steps.push({ stage: 'logic', passed: false, reason: `这里不能调用逻辑（${id}），跳过` });
+      return null;
+    }
+    const res = ctx.callLogic(id, ctx);
+    if (!res) {
+      steps.push({ stage: 'logic', passed: false, reason: `找不到被调用的逻辑（${id}）` });
+      return null;
+    }
+    for (const [key, value] of Object.entries(res.writes ?? {})) {
+      ctx.vars[key] = value;
+      ctx.writes[key] = value;
+    }
+    for (const text of res.extra ?? []) ctx.extra.push(text);
+    for (const entryId of res.activations ?? []) {
+      if (!ctx.activations.includes(entryId)) ctx.activations.push(entryId);
+    }
+    steps.push({ stage: 'logic', passed: res.passed !== false, reason: res.reason || `调用了 ${id}` });
+    if (res.passed === false) return { status: 'fail', reason: `被调用的逻辑不通过` };
     return null;
   }
 

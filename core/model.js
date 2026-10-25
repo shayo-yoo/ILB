@@ -2,7 +2,7 @@
 // schema v2 的唯一"造物主"：默认值、归一化、校验都在这里。
 // 其它模块不得自己拼对象字面量，否则字段一旦变动会到处改。
 
-import { POSITIONS, ROLES, SECONDARY_LOGIC, ACTIVATION_MODES } from './settings-defaults.js';
+import { POSITIONS, ROLES, SECONDARY_LOGIC, ACTIVATION_MODES, TRIGGER_SOURCES } from './settings-defaults.js';
 import { normalizeFlow } from './flow.js';
 import { normalizeFields } from './fields.js';
 
@@ -43,6 +43,29 @@ export function defaultTrigger() {
     wholeWords: false,
     regex: [],
     secondary: { logic: 'AND_ANY', keys: [] },
+    // 只看用户 / 只看 AI / 都看（ILB-4.15）
+    source: 'both',
+  };
+}
+
+/** 把任意输入整理成 trigger 形状；条目和独立逻辑共用（ILB-4.14）。 */
+export function normalizeTrigger(raw) {
+  const t = raw && typeof raw === 'object' ? raw : {};
+  return {
+    ...defaultTrigger(),
+    any: asArray(t.any).map((x) => str(x)),
+    all: asArray(t.all).map((x) => str(x)),
+    not: asArray(t.not).map((x) => str(x)),
+    matchCase: t.matchCase === true,
+    wholeWords: t.wholeWords === true,
+    regex: asArray(t.regex)
+      .map((r) => (typeof r === 'string' ? { source: r, flags: '' } : { source: str(r?.source, ''), flags: str(r?.flags, '') }))
+      .filter((r) => r.source.length > 0),
+    secondary: {
+      logic: pickOne(t.secondary?.logic, SECONDARY_LOGIC, 'AND_ANY'),
+      keys: asArray(t.secondary?.keys).map((x) => str(x)).filter(Boolean),
+    },
+    source: pickOne(t.source, TRIGGER_SOURCES, 'both'),
   };
 }
 
@@ -85,6 +108,8 @@ export function defaultBook(overrides = {}) {
     activation: { mode: 'manual', characters: [], manual: true },
     pool: { share: false },
     entries: [],
+    // 独立逻辑（ILB-4.14）：不依附条目的判断流程，可以有触发词、写变量、激活条目
+    logic: [],
     // 来源与导入记录（ILB-3.3.1 / ILB-3.3.3）。content 改了但 content_hash 没变 = 用户改过。
     _source: { book_file: null, source_hash: null, imported_at: null, import_count: 0 },
     ...overrides,
@@ -107,23 +132,10 @@ export function normalizeEntry(raw, bookId) {
   out.content = str(src.content, '');
   out.enabled = src.enabled !== false;
   out.always = src.always === true;
+  // 等候模式（ILB-4.14.4）：不参与任何自动检测，只等独立逻辑「激活条目」来点它
+  out.wait = src.wait === true;
 
-  const t = src.trigger && typeof src.trigger === 'object' ? src.trigger : {};
-  out.trigger = {
-    ...defaultTrigger(),
-    any: asArray(t.any).map((x) => str(x)),
-    all: asArray(t.all).map((x) => str(x)),
-    not: asArray(t.not).map((x) => str(x)),
-    matchCase: t.matchCase === true,
-    wholeWords: t.wholeWords === true,
-    regex: asArray(t.regex)
-      .map((r) => (typeof r === 'string' ? { source: r, flags: '' } : { source: str(r?.source, ''), flags: str(r?.flags, '') }))
-      .filter((r) => r.source.length > 0),
-    secondary: {
-      logic: pickOne(t.secondary?.logic, SECONDARY_LOGIC, 'AND_ANY'),
-      keys: asArray(t.secondary?.keys).map((x) => str(x)).filter(Boolean),
-    },
-  };
+  out.trigger = normalizeTrigger(src.trigger);
 
   const within = src.scope?.within;
   out.scope = { within: Number.isFinite(Number(within)) ? Math.min(50, Math.max(1, Math.trunc(Number(within)))) : null };
@@ -156,6 +168,57 @@ export function normalizeEntry(raw, bookId) {
   return out;
 }
 
+/** 独立逻辑（ILB-4.14）：能和世界书条目并存的一套"判断"，可以有自己的触发词。 */
+export function defaultLogic(overrides = {}) {
+  return {
+    id: '',
+    localId: '',
+    name: '',
+    enabled: true,
+    trigger: defaultTrigger(),
+    scope: { within: null },
+    when: [],
+    flow: { mode: 'and', nodes: [] },
+    // 逻辑走通后可以额外加一段正文（默认空：只做计算 / 激活条目）
+    output: { text: '', position: 'after_char', depth: 4, role: 'system', weight: 100 },
+    // AI 通过正文宏指令调用它（ILB-4.16）：默认不暴露
+    call: { exposed: false, params: [] },
+    ui: { order: 0 },
+    ...overrides,
+  };
+}
+
+export function normalizeLogic(raw, bookId) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const out = defaultLogic();
+  const prefix = bookId ? `${bookId}::L::` : '';
+  let localId = str(src.id, '');
+  if (prefix && localId.startsWith(prefix)) localId = localId.slice(prefix.length);
+  if (!localId) localId = `l-${Math.abs(hashString(str(src.name, 'logic')))}`;
+  out.id = `${prefix}${localId}`;
+  out.localId = localId;
+  out.name = str(src.name, '') || '未命名逻辑';
+  out.enabled = src.enabled !== false;
+  out.trigger = normalizeTrigger(src.trigger);
+  const within = src.scope?.within;
+  out.scope = { within: Number.isFinite(Number(within)) ? Math.min(50, Math.max(1, Math.trunc(Number(within)))) : null };
+  out.when = asArray(src.when).filter((c) => c && typeof c === 'object');
+  out.flow = normalizeFlow(src.flow);
+  out.output = {
+    text: str(src.output?.text, ''),
+    position: pickOne(src.output?.position, POSITIONS, 'after_char'),
+    depth: Math.max(0, Math.trunc(num(src.output?.depth, 4))),
+    role: pickOne(src.output?.role, ROLES, 'system'),
+    weight: Math.round(num(src.output?.weight, 100)),
+  };
+  out.call = {
+    exposed: src.call?.exposed === true,
+    params: asArray(src.call?.params).map((p) => str(p)).filter(Boolean),
+  };
+  out.ui = { order: num(src.ui?.order, 0) };
+  return out;
+}
+
 export function normalizeBook(raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const out = defaultBook();
@@ -177,6 +240,7 @@ export function normalizeBook(raw) {
     import_count: Math.max(0, Math.trunc(num(src._source?.import_count, 0))),
   };
   out.entries = asArray(src.entries).map((e) => normalizeEntry(e, out.book_id));
+  out.logic = asArray(src.logic).map((l) => normalizeLogic(l, out.book_id));
   return out;
 }
 
@@ -195,6 +259,13 @@ export function validateBook(book) {
     if (e.probability < 0 || e.probability > 100) problems.push(`条目「${e.title}」的概率超出 0–100`);
     if (e.scope.within != null && e.scope.within > 50) problems.push(`条目「${e.title}」的扫描条数超过上限`);
     if (e.timed.sticky < 0 || e.timed.cooldown < 0 || e.timed.delay < 0) problems.push(`条目「${e.title}」的时效是负数`);
+  }
+  const seenLogic = new Set();
+  for (const l of book.logic || []) {
+    if (!l.id) problems.push('有逻辑没有 id');
+    else if (seenLogic.has(l.id)) problems.push(`逻辑 id 重复：${l.id}`);
+    else seenLogic.add(l.id);
+    if (!l.name) problems.push('有逻辑没有名字');
   }
   return problems;
 }

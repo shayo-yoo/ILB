@@ -32,13 +32,51 @@ function formatTime(ms) {
 export function renderShelf(ctx) {
   const { repository, nativeWorlds } = ctx;
   const listHost = el('div', { class: 'ilb-booklist' });
+  const batchHost = el('div', { class: 'ilb-batchbar' });
   const counterLine = counter('');
   let checking = false;
+  if (!(ctx.state.bookSelected instanceof Set)) ctx.state.bookSelected = new Set();
+  const selected = ctx.state.bookSelected;
+
+  function drawBatch(shown) {
+    batchHost.innerHTML = '';
+    batchHost.appendChild(el('span', { class: 'ilb-counter', text: selected.size ? `已选 ${selected.size} 本` : '批量操作' }));
+    batchHost.appendChild(button('全选当前结果', () => {
+      for (const book of shown) selected.add(book.book_id);
+      draw();
+    }, { ghost: true }));
+    batchHost.appendChild(button('清空选择', () => {
+      selected.clear();
+      draw();
+    }, { ghost: true }));
+    if (selected.size === 0) return;
+    const targets = () => repository.listBooks().filter((b) => selected.has(b.book_id));
+    batchHost.appendChild(button('启用', () => {
+      for (const book of targets()) repository.setManualState(book.book_id, true);
+      ctx.toast(`已启用 ${targets().length} 本`);
+      draw();
+    }, { ghost: true }));
+    batchHost.appendChild(button('停用', () => {
+      for (const book of targets()) repository.setManualState(book.book_id, false);
+      ctx.toast(`已停用 ${targets().length} 本`);
+      draw();
+    }, { ghost: true }));
+    batchHost.appendChild(button('删除', () => {
+      const list = targets();
+      if (!window.confirm(`删除选中的 ${list.length} 本书？删了就找不回来了。`)) return;
+      for (const book of list) repository.deleteBook(book.book_id);
+      selected.clear();
+      ctx.toast(`已删除 ${list.length} 本`);
+      draw();
+    }, { ghost: true }));
+  }
 
   function draw() {
     const all = repository.listBooks();
     const manual = repository.getManualState();
     const shown = filterBooks(all, ctx.state.bookQuery);
+    const visible = new Set(shown.map((b) => b.book_id));
+    for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
 
     counterLine.textContent = ctx.state.bookQuery
       ? `命中 ${shown.length} / ${all.length} 本`
@@ -54,6 +92,7 @@ export function renderShelf(ctx) {
       return;
     }
     for (const book of shown) listHost.appendChild(renderBook(book, manual));
+    drawBatch(shown);
   }
 
   function renderBook(book, manual) {
@@ -68,6 +107,11 @@ export function renderShelf(ctx) {
 
     return card([
       el('div', { class: 'ilb-rule-head' }, [
+        checkbox(selected.has(book.book_id), (on) => {
+          if (on) selected.add(book.book_id);
+          else selected.delete(book.book_id);
+          draw();
+        }, '选择这本书'),
         el('div', { class: 'ilb-rule-titles' }, [
           el('button', {
             class: 'ilb-link ilb-title',
@@ -216,6 +260,7 @@ export function renderShelf(ctx) {
       counterLine,
     ]),
     hint('「手动开关」决定这本书参不参与判定；「进总条目池」表示即使这本书没启用，它的条目也能被别的书的规则引用。'),
+    batchHost,
     listHost,
   ]);
 

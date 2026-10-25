@@ -19,17 +19,15 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 1. 「扩展」设置区里一张小卡片：`世界书 · ILB`（总开关、两个常用数字、打开按钮）
 2. 页面右下角一个圆形的「书」字悬浮球
 
-**书架、规则、快照、状态、诊断、设置六页都在悬浮球里**，点一下打开浮窗；标签栏最右还有「使用说明」，讲清楚每个功能在哪、从哪开始。设置页里只留最常改的几项，这是有意为之：
+**书架、规则、快照、诊断、叙事、设置六页都在悬浮球里**，点一下打开浮窗。设置页里只留最常改的几项，这是有意为之：
 改规则是高频动作，不该每次都翻进设置页（见 `docs/决策记录.md` D-0019）。
-
-> 不想在 SillyTavern 里翻界面的话，同一份说明也导出在 [`docs/使用指南.md`](docs/使用指南.md)。
 
 ## 第一步：探针（Phase 0）
 
 打开浏览器控制台，看有没有这一行：
 
 ```
-[ILB] 已启动 v0.8.2（通过 ../../extensions.js , ../../../../script.js 拿到宿主；界面：悬浮球）
+[ILB] 已启动 v0.4.8（通过 ../../extensions.js , ../../../../script.js 拿到宿主；界面：悬浮球）
 ```
 
 括号里会写出这次实际命中哪几个路径、以及界面是哪一种。如果写着 `界面：退回设置页`，说明浮窗没挂上，
@@ -73,7 +71,8 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 | 布局计算 | `ui/layout.js` | 纯函数：判 PC/手机、算窗口与球的位置、防越界 |
 | 界面公共件 | `ui/dom.js` / `ui/help.js` / `ui/widgets.js` | 造元素、帮助浮层、控件工厂 |
 | 面板路由 | `ui/panel.js` | 只负责切标签与提供 `ctx`，一页坏了只坏一页 |
-| 五个页面 | `ui/view-shelf.js` / `view-rules.js` / `view-snapshots.js` / `view-diagnostics.js` / `view-settings.js` | 书架 / 规则 / 快照 / 诊断 / 设置 |
+| 六个页面 | `ui/view-shelf.js` / `view-rules.js` / `view-snapshots.js` / `view-state.js` / `view-diagnostics.js` / `view-settings.js` | 书架 / 规则 / 快照 / 状态 / 诊断 / 设置 |
+| 使用说明 | `ui/guide.js` + `data/guide/zh-cn.json` | 标签栏「使用说明」；同一份 JSON 导出成 `docs/使用指南.md` |
 | 编辑器 | `ui/editor.js` | 四段式规则编辑 + 「试一句」预演 + 「判定流程」原地展开 |
 | 流程编辑器 | `ui/flow-editor.js` | 树形节点编辑（不是连线画布），手机上不横滑 |
 | 导入界面 | `ui/importer.js` | 批量导入、选择浮层、导入结果报告 |
@@ -104,10 +103,10 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（128 个）
+# 1) 纯逻辑单元测试（145 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
   tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
-  tests/vars.test.mjs tests/flow-vars.test.mjs tests/fields.test.mjs
+  tests/vars.test.mjs tests/flow-vars.test.mjs tests/fields.test.mjs tests/logic.test.mjs
 
 # 2) 链接检查：每个模块都能被加载（能抓出"导入了不存在的名字"这类错）
 node tests/linkcheck.mjs
@@ -118,10 +117,18 @@ node tests/smoke-dom.mjs
 
 # 4) 抽卡演示（不是测试，是一段能读的假聊天）：字段默认值 → 次数递减 → 卡池带出金卡/白卡
 node tests/gacha-demo.mjs
+
+# 5) 独立逻辑演示（v0.9.0）：没有条目的书也能跑逻辑；AI 正文调用扣款；未开放的名字被拒
+node tests/logic-demo.mjs
+
+# 6) 把扩展里的「使用说明」导出成 docs/使用指南.md（改了 data/guide/zh-cn.json 就跑一次）
+node tests/export-guide.mjs
 ```
 
-三个检查都通过的结果（2026-10-24 实测）：单元 128/128、链接 43 个模块全通过（**包含入口 `index.js`**）、
-冒烟 19 步全过。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
+三个检查都通过的结果（2026-10-25 实测）：单元 145/145、链接 46 个模块全通过（**包含入口 `index.js`**）、
+冒烟 32 步全过（含「使用说明」入口与说明渲染）。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
+
+> 标签栏最右的「使用说明」读 `data/guide/zh-cn.json`；`docs/使用指南.md` 是它导出的同源副本，**不要手改 md**。
 
 > 叙事账本（`narrative/` 与它的测试、探针、截图）已于 v0.8.0 移到仓库根目录 `memory/`，不再随扩展加载；见 `memory/README.md`。
 
@@ -193,7 +200,7 @@ node tests/serve.mjs 8792
 - 保存是去抖的：改完立刻刷新页面，最后那次改动可能丢。
 - 群聊场景还没处理（ILB-D1）。
 - AI 体检只做了本地结构校验，模型那半还没接。
-- 帮助文案写了五个面板 + 悬浮球 + 设置卡片，具体到每个控件的浮层还缺。
+- 帮助文案写了六个面板 + 悬浮球 + 设置卡片 + 使用说明；具体到每个控件的浮层还缺。
 - 搜索、快照、批量、导入策略都是这一版新加的，**没有一个在真实环境里试过**：
   - 多词搜索的 AND 语义、搜触发词是否真的命中（正则源码也在搜索范围内）；
   - 快照恢复是否真的只改开关、不动正文；
@@ -230,7 +237,9 @@ node tests/serve.mjs 8792
   若识别不到会退回同一个默认桶，不同聊天可能共用检查点——这是下一轮实测要看的点。
 - 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
   只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（128 + 43 模块 + 19 步），但**它们用的都是假宿主与假 DOM**。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（145 + 46 模块 + 32 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
+- 独立逻辑、跳转/调用、AI 正文调用（v0.9.0）只在单元测试与 `tests/logic-demo.mjs` 里验证过；
+  真实模型会不会照着写 `[[ILB:…]]`、跳转长流程在界面上累不累，都要等实机。
 - 曾出过一次"整个扩展不加载"：`index.js` 被错误的文本替换写成乱码。现在入口已纳入检查，
   但这类故障**不会有任何界面提示**——扩展一行都不执行时，用户只看到"没反应"。

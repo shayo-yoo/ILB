@@ -9,6 +9,7 @@ import { DEFAULT_SETTINGS, POSITIONS, ROLES } from './settings-defaults.js';
 import { resolveBooks } from './resolve-books.js';
 import { evaluateFlow, hasFlow } from './flow.js';
 import { withFieldDefaults } from './fields.js';
+import { parseCalls, findCallable, withBoundParams } from './calls.js';
 
 const FALLBACK_CONTEXT_SIZE = 8192;
 
@@ -50,6 +51,42 @@ function buildText(messages, n, userInput) {
   }
   const ui = String(userInput ?? '').trim();
   if (ui) parts.push(ui);
+  return parts.join('\n');
+}
+
+/** 消息是"谁说的"：优先看明确字段，其次看 is_user，最后按位置猜（偶数=用户）。 */
+function roleOf(message, index) {
+  const m = message && typeof message === 'object' ? message : {};
+  if (m.is_user === true || m.isUser === true) return 'user';
+  if (m.is_user === false || m.isUser === false) return 'ai';
+  const role = String(m.role ?? '').toLowerCase();
+  if (role === 'user') return 'user';
+  if (role === 'assistant' || role === 'ai') return 'ai';
+  return index % 2 === 0 ? 'user' : 'ai';
+}
+
+/**
+ * 按触发来源拼文本（ILB-4.15）：
+ *   both = 最近几条消息 + 用户这一句（老行为）
+ *   user = 只有用户说的话
+ *   ai   = 只有 AI 说的话（不含用户这一句）
+ */
+function buildSourceText(messages, n, userInput, source) {
+  if (source !== 'user' && source !== 'ai') return buildText(messages, n, userInput);
+  const depth = clamp(Math.trunc(num(n, 3)), 0, 200);
+  const tail = depth > 0 ? messages.slice(-depth) : [];
+  const parts = [];
+  for (let i = 0; i < tail.length; i += 1) {
+    const msg = tail[i];
+    // 用绝对位置判断角色，避免 slice 后奇偶错位
+    if (roleOf(msg, messages.length - tail.length + i) !== source) continue;
+    const c = contentOf(msg);
+    if (c) parts.push(c);
+  }
+  if (source === 'user') {
+    const ui = String(userInput ?? '').trim();
+    if (ui) parts.push(ui);
+  }
   return parts.join('\n');
 }
 
@@ -171,6 +208,15 @@ export function evalCondition(card, ctx) {
     }
   }
 
+  if (card.type === 'messages') {
+    // 楼层数（ILB-4.15）：已经聊了多少条消息。
+    const need = Math.max(0, Math.trunc(num(card.count, 1)));
+    const count = Math.max(0, Math.trunc(num(ctx.messageCount, 0)));
+    const hit = count >= need;
+    const passed = card.negate === true ? !hit : hit;
+    return { passed, reason: `现在第 ${count} 条消息，要求${card.negate === true ? '少于' : '至少'} ${need} 条` };
+  }
+
   return { passed: true, reason: `不认识的条件类型 ${card.type}，已忽略` };
 }
 
@@ -241,12 +287,128 @@ export function evaluate(request = {}, options = {}) {
   const diagnostics = [];
   const activated = new Set();
 
+  // —— 独立逻辑（ILB-4.14）：书里的逻辑可以有自己的触发词，跑完写变量 / 激活条目 / 出正文 ——
+  const logics = Array.isArray(options.logics) ? options.logics.filter((l) => l && l.id && l.enabled !== false) : [];
+  const logicMap = new Map(logics.map((l) => [l.id, l]));
+  const ranLogics = new Set();
+  let logicBudget = Math.max(0, Math.trunc(num(settings.logicMaxPerTurn, 20)));
+  const logicRecords = [];
+
+  function pseudoEntryOf(logic, extraText) {
+    const body = String(logic.output?.text ?? '');
+    return {
+      id: logic.id,
+      title: `逻辑：${logic.name || logic.localId || logic.id}`,
+      content: extraText ? `${body}${body ? '\n' : ''}${extraText}` : body,
+      injection: { position: logic.output?.position, depth: logic.output?.depth, role: logic.output?.role },
+      weight: num(logic.output?.weight, 100),
+      group: null,
+      useProbability: false,
+      probability: 100,
+      enabled: true,
+      timed: {},
+      _isLogic: true,
+      extraText: extraText || '',
+    };
+  }
+
+  /**
+   * 跑一条独立逻辑。mode：auto = 自己检测触发词；call = 被流程「调用逻辑」叫来；
+   * forced = 被「激活条目」点名。只有 auto 看触发词。
+   */
+  function runLogicEntity(logic, depth = 0, mode = 'auto') {
+    if (!logic || logic.enabled === false) return null;
+    if (mode === 'auto' && settings.logicEnabled === false) return null;
+    if (ranLogics.has(logic.id)) {
+      return { passed: true, reason: '这条逻辑本轮已经跑过，不重复', writes: {}, extra: [], activations: [] };
+    }
+    if (depth > 5) return { passed: false, reason: '逻辑互相调用太深（最多 5 层）', writes: {}, extra: [], activations: [] };
+    if (logicBudget <= 0) {
+      diagnostics.push({ entryId: logic.id, passed: false, stage: 'logic', reason: '本轮逻辑次数用完了（可在设置里调大）' });
+      return null;
+    }
+    logicBudget -= 1;
+    ranLogics.add(logic.id);
+
+    const source = logic.trigger?.source ?? 'both';
+    const text = buildSourceText(messages, scanDepth, userInput, source);
+    const trig = logic.trigger ?? {};
+    const hasWords = toStringArray(trig.any).length + toStringArray(trig.all).length + toStringArray(trig.regex).length > 0;
+    if (mode === 'auto' && hasWords) {
+      const t = evalTrigger(trig, text);
+      if (!t.passed) {
+        diagnostics.push({ entryId: logic.id, passed: false, stage: 'trigger', reason: `逻辑没触发：${t.reason}` });
+        return null;
+      }
+    } else if (mode === 'auto' && !hasWords) {
+      // 没写触发词的逻辑只等调用/点名，不自己跑
+      ranLogics.delete(logic.id);
+      logicBudget += 1;
+      return null;
+    }
+    const when = evalWhenArray(logic.when, { text, activated, vars: effVars, messageCount: msgCount });
+    if (!when.passed) {
+      diagnostics.push({ entryId: logic.id, passed: false, stage: 'when', reason: when.reason });
+      return mode === 'auto' ? null : { passed: false, reason: when.reason, writes: {}, extra: [], activations: [] };
+    }
+
+    const flow = evaluateFlow(logic.flow, {
+      text,
+      messages,
+      userInput,
+      messageCount: msgCount,
+      vars: effVars,
+      activated,
+      callLogic: (nextId) => runLogicById(nextId, depth + 1),
+    });
+    if (!flow.passed) {
+      diagnostics.push({ entryId: logic.id, passed: false, stage: 'logic', reason: flow.reason });
+      return mode === 'auto' ? null : { passed: false, reason: flow.reason, writes: {}, extra: [], activations: [] };
+    }
+    const extraText = flow.extra.join('\n');
+    if (mode !== 'call') {
+      const hasOutput = String(logic.output?.text ?? '').length > 0 || extraText.length > 0;
+      if (hasOutput) {
+        const rec = { entry: pseudoEntryOf(logic, extraText), stage: 'logic', reason: mode === 'forced' ? '被逻辑激活' : '独立逻辑输出' };
+        logicRecords.push(rec);
+      }
+    }
+    diagnostics.push({
+      entryId: logic.id,
+      passed: true,
+      stage: 'logic',
+      reason: mode === 'call' ? '被流程调用，通过' : mode === 'forced' ? '被点名运行，通过' : '独立逻辑通过',
+    });
+    return {
+      passed: true,
+      reason: mode === 'call' ? '被调用的逻辑通过' : '逻辑通过',
+      writes: flow.writes ?? {},
+      extra: mode === 'call' ? [String(logic.output?.text ?? ''), ...flow.extra].filter(Boolean) : flow.extra,
+      activations: flow.activations ?? [],
+    };
+  }
+
+  function runLogicById(id, depth = 0) {
+    const logic = logicMap.get(String(id));
+    if (!logic) return null;
+    try {
+      return runLogicEntity(logic, depth, 'call');
+    } catch (err) {
+      return { passed: false, reason: `逻辑执行出错：${err?.message ?? err}`, writes: {}, extra: [], activations: [] };
+    }
+  }
+
   // —— 第 1–4 步：触发、条件、时效 ——
   const triggerPassers = [];
   for (const entry of pool) {
     if (!entry || !entry.id) continue;
     if (entry.enabled === false) {
       diagnostics.push({ entryId: entry.id, passed: false, reason: '条目被关闭', stage: 'trigger' });
+      continue;
+    }
+    if (entry.wait === true) {
+      // 等候模式（ILB-4.14.4）：不参与任何自动检测，只等独立逻辑「激活条目」来点它
+      diagnostics.push({ entryId: entry.id, passed: false, stage: 'trigger', reason: '等候模式：不会自己出现，只等逻辑点名' });
       continue;
     }
 
@@ -272,7 +434,10 @@ export function evaluate(request = {}, options = {}) {
       continue;
     }
 
-    const text = entry.scope?.within ? buildText(messages, entry.scope.within, userInput) : baseText;
+    const source = entry.trigger?.source ?? 'both';
+    const text = entry.scope?.within
+      ? buildSourceText(messages, entry.scope.within, userInput, source)
+      : buildSourceText(messages, scanDepth, userInput, source);
     // 流程设为"只用流程"时，关键词不参与判定（ILB-4.11.7）
     const flowOnly = hasFlow(entry) && entry.logic?.mode === 'only';
     const trig =
@@ -292,8 +457,50 @@ export function evaluate(request = {}, options = {}) {
   const afterWhen = [];
   const flowWrites = {};
   const requested = [];
+
+  // —— 第 3.5 步：AI 正文里的调用（ILB-4.16，默认关闭）——
+  const callLog = [];
+  if (settings.aiCallsEnabled === true && logics.length > 0) {
+    const scan = clamp(Math.trunc(num(settings.aiCallScan, 3)), 1, 50);
+    const maxCalls = clamp(Math.trunc(num(settings.aiCallMaxPerTurn, 3)), 0, 10);
+    const aiTexts = [];
+    for (let i = 0; i < messages.length; i += 1) {
+      if (roleOf(messages[i], i) === 'ai') aiTexts.push(contentOf(messages[i]));
+    }
+    let used = 0;
+    for (const text of aiTexts.slice(-scan)) {
+      for (const call of parseCalls(text, { limit: maxCalls + 1 })) {
+        if (used >= maxCalls) {
+          diagnostics.push({ entryId: '', passed: false, stage: 'call', reason: `本轮调用超过 ${maxCalls} 次，忽略「${call.name}」` });
+          callLog.push({ name: call.name, ok: false, reason: '超过本轮上限' });
+          continue;
+        }
+        const logic = findCallable(logics, call.name);
+        if (!logic) {
+          diagnostics.push({ entryId: '', passed: false, stage: 'call', reason: `AI 想调用「${call.name}」，但没有逻辑把它开放给 AI` });
+          callLog.push({ name: call.name, ok: false, reason: '没有开放给 AI 的同名逻辑' });
+          continue;
+        }
+        used += 1;
+        const res = withBoundParams(logic, call.args, effVars, () => runLogicById(logic.id, 0));
+        if (!res) {
+          callLog.push({ name: call.name, ok: false, reason: '这次没有执行（次数用完或已被别的步骤跑过）' });
+          continue;
+        }
+        if (res.writes && typeof res.writes === 'object') Object.assign(flowWrites, res.writes);
+        for (const id of Array.isArray(res.activations) ? res.activations : []) {
+          if (!requested.includes(id)) requested.push(id);
+        }
+        if (Array.isArray(res.extra) && res.extra.length > 0) {
+          const pseudo = pseudoEntryOf(logic, res.extra.join('\n'));
+          logicRecords.push({ entry: pseudo, stage: 'logic', reason: `AI 调用「${call.name}」的输出` });
+        }
+        callLog.push({ name: call.name, ok: res.passed !== false, reason: res.reason ?? '' });
+      }
+    }
+  }
   for (const rec of triggerPassers) {
-    const when = evalWhenArray(rec.entry.when, { text: rec.text ?? baseText, activated, vars: effVars });
+    const when = evalWhenArray(rec.entry.when, { text: rec.text ?? baseText, activated, vars: effVars, messageCount: msgCount });
     if (!when.passed) {
       diagnostics.push({ entryId: rec.entry.id, passed: false, stage: 'when', reason: when.reason });
       continue;
@@ -306,6 +513,7 @@ export function evaluate(request = {}, options = {}) {
       messageCount: msgCount,
       vars: effVars,
       activated,
+      callLogic: (id) => runLogicById(id),
     });
     if (!flow.passed) {
       diagnostics.push({ entryId: rec.entry.id, passed: false, stage: 'logic', reason: flow.reason });
@@ -318,6 +526,17 @@ export function evaluate(request = {}, options = {}) {
       if (!requested.includes(id)) requested.push(id);
     }
     afterWhen.push(rec);
+  }
+
+  // —— 第 4.2 步：独立逻辑自己跑（ILB-4.14）——
+  // 逻辑可以和世界书条目并存：条目照旧按触发词出现，逻辑按自己的触发词另外跑。
+  for (const logic of logics) {
+    const res = runLogicEntity(logic, 0, 'auto');
+    if (!res) continue;
+    if (res.writes && typeof res.writes === 'object') Object.assign(flowWrites, res.writes);
+    for (const id of Array.isArray(res.activations) ? res.activations : []) {
+      if (!requested.includes(id)) requested.push(id);
+    }
   }
 
   // —— 第 4.5 步：流程点名的条目（"激活条目"节点，v0.8.1 起可有限连锁）——
@@ -334,6 +553,27 @@ export function evaluate(request = {}, options = {}) {
     if (activated.has(id)) continue;
     const entry = pool.find((e) => e && e.id === id && e.enabled !== false);
     if (!entry) {
+      // 点名的也可能是一条独立逻辑（ILB-4.14）：把它当"被强制运行"处理
+      const logic = logicMap.get(id);
+      if (logic) {
+        activated.add(id);
+        diagnostics.push({
+          entryId: id,
+          passed: true,
+          stage: 'activate',
+          reason: depth === 0 ? '被流程点名的逻辑' : `第 ${depth} 层连锁点名的逻辑`,
+        });
+        const res = runLogicEntity(logic, depth, 'forced');
+        if (res) {
+          if (res.writes && typeof res.writes === 'object') Object.assign(flowWrites, res.writes);
+          if (depth < maxActivate) {
+            for (const nextId of Array.isArray(res.activations) ? res.activations : []) {
+              if (!seenRequested.has(nextId)) queue.push({ id: nextId, depth: depth + 1 });
+            }
+          }
+        }
+        continue;
+      }
       diagnostics.push({ entryId: id, passed: false, stage: 'activate', reason: '流程点名的条目不存在或已关闭' });
       continue;
     }
@@ -350,6 +590,7 @@ export function evaluate(request = {}, options = {}) {
       messageCount: msgCount,
       vars: effVars,
       activated,
+      callLogic: (id2) => runLogicById(id2),
     });
     if (!flow.passed) {
       // 点名本身已让它出现（和"正文标记"一样，出现的原因不是判定），但它的写入与后续点名不生效。
@@ -379,26 +620,31 @@ export function evaluate(request = {}, options = {}) {
       const newlyAdded = [];
       for (const entry of pool) {
         if (!entry || !entry.id || entry.enabled === false) continue;
+        if (entry.wait === true) continue;
         if (activated.has(entry.id)) continue;
         if (entry.chain?.participate !== true) continue;
         if (entry.always === true) continue;
 
+        // 连锁也尊重"只看用户 / 只看 AI"（ILB-4.15）；链上的新正文两边都算
+        const source = entry.trigger?.source ?? 'both';
+        const entryText = source === 'both' ? layerText : `${buildSourceText(messages, scanDepth, userInput, source)}\n${layerContents.join('\n')}`;
         const flowOnly = hasFlow(entry) && entry.logic?.mode === 'only';
-        const trig = flowOnly ? { passed: true, reason: '由判定流程决定' } : evalTrigger(entry.trigger, layerText);
+        const trig = flowOnly ? { passed: true, reason: '由判定流程决定' } : evalTrigger(entry.trigger, entryText);
         if (!trig.passed) continue;
-        const when = evalWhenArray(entry.when, { text: layerText, activated, vars: effVars });
+        const when = evalWhenArray(entry.when, { text: entryText, activated, vars: effVars, messageCount: msgCount });
         if (!when.passed) {
           diagnostics.push({ entryId: entry.id, passed: false, stage: 'when', reason: `连锁第 ${depth} 层：${when.reason}` });
           continue;
         }
         // 连锁时"最近的文本"就是这一层累积出来的文本，所以不传 messages。
         const flow = runEntryFlow(entry, {
-          text: layerText,
+          text: entryText,
           messages: [],
           userInput: '',
           messageCount: msgCount,
           vars: effVars,
           activated,
+          callLogic: (id) => runLogicById(id),
         });
         if (!flow.passed) {
           diagnostics.push({ entryId: entry.id, passed: false, stage: 'logic', reason: `连锁第 ${depth} 层：${flow.reason}` });
@@ -417,7 +663,7 @@ export function evaluate(request = {}, options = {}) {
 
   // —— 第 6 步：概率（只在用户明确打开时生效，且可复现）——
   const candidates = [];
-  for (const rec of [...afterWhen, ...activatedByFlow, ...chained]) {
+  for (const rec of [...afterWhen, ...logicRecords, ...activatedByFlow, ...chained]) {
     const entry = rec.entry;
     if (entry.useProbability !== true) {
       candidates.push(rec);
@@ -513,6 +759,8 @@ export function evaluate(request = {}, options = {}) {
     diagnostics,
     /** 本轮流程里"记住"的值；由调用方决定怎么落盘。 */
     varWrites: flowWrites,
+    /** AI 在正文里点名的调用（ILB-4.16）；没开就是空数组。 */
+    aiCalls: callLog,
     basedOnMessageCount: msgCount,
     budget: { limit, used, dropped },
     books: {
@@ -562,6 +810,7 @@ export function previewEntry(entry, options = {}) {
     text,
     activated: new Set((Array.isArray(options.activated) ? options.activated : []).map(String)),
     vars: options.vars && typeof options.vars === 'object' ? options.vars : {},
+    messageCount: msgCount,
   };
 
   const sticky = Math.max(0, num(entry.timed?.sticky, 0));

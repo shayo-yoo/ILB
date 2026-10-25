@@ -22,7 +22,6 @@ import {
   describeNode,
 } from '../core/flow.js';
 
-const KIND_ITEMS = FLOW_KINDS.map((k) => ({ value: k, label: FLOW_KIND_LABEL[k] }));
 const CONDITION_ITEMS = CONDITION_KINDS.map((k) => ({ value: k, label: CONDITION_KIND_LABEL[k] }));
 const BRANCH_KINDS = ['test', 'judge', 'compare'];
 
@@ -51,7 +50,27 @@ function checkbox(checked, onChange, labelText) {
 export function renderFlowEditor(options = {}) {
   const model = normalizeFlow(options.flow);
   const entries = Array.isArray(options.entries) ? options.entries.filter((e) => e && e.id) : [];
+  const logics = Array.isArray(options.logics) ? options.logics.filter((l) => l && l.id) : [];
   const root = el('div', { class: 'ilb-flow' });
+  /** 复制缓冲区：只在本编辑器内有效，粘过来会给所有节点换新 id，避免和原来的撞上 */
+  let copied = null;
+
+  function newId() {
+    return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  /** 深拷贝一个节点，并给节点与条件换新 id（复制粘贴后两棵子树互不影响） */
+  function cloneFresh(node) {
+    const copy = JSON.parse(JSON.stringify(node ?? {}));
+    const walk = (n) => {
+      if (!n || typeof n !== 'object') return;
+      n.id = newId();
+      if (Array.isArray(n.conditions)) n.conditions.forEach((c) => { c.id = newId(); });
+      ['then', 'else'].forEach((key) => (n[key] ?? []).forEach(walk));
+    };
+    walk(copy);
+    return copy;
+  }
 
   function notify() {
     if (typeof options.onChange !== 'function') return;
@@ -97,17 +116,34 @@ export function renderFlowEditor(options = {}) {
     redraw();
   }
 
+  // 先点「添加一步」，再选是哪一种（以前是下拉里选好了再点添加，顺序反着不好用）
   function addRow(list) {
-    let pending = 'test';
-    const select = selectBox('test', KIND_ITEMS, (value) => {
-      pending = value;
-    }, 'ilb-select ilb-flow-kind-select');
+    const picker = el('div', { class: 'ilb-flow-picker' });
+    picker.style.display = 'none';
+    for (const kind of FLOW_KINDS) {
+      picker.appendChild(
+        button(`＋ ${FLOW_KIND_LABEL[kind]}`, () => {
+          list.push(makeNode(kind));
+          notify();
+          redraw();
+        }, { ghost: true, title: FLOW_KIND_HINT[kind] ?? '' }),
+      );
+    }
     const add = button('＋ 添加一步', () => {
-      list.push(makeNode(pending));
-      notify();
-      redraw();
+      picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
     }, { ghost: true });
-    return el('div', { class: 'ilb-flow-add' }, [select, add]);
+
+    const row = el('div', { class: 'ilb-flow-add' }, [add, picker]);
+    if (copied) {
+      row.appendChild(
+        button('粘贴步骤', () => {
+          list.push(cloneFresh(copied));
+          notify();
+          redraw();
+        }, { ghost: true, title: '把刚才复制的步骤粘到这里' }),
+      );
+    }
+    return row;
   }
 
   function renderNodes(list) {
@@ -130,6 +166,16 @@ export function renderFlowEditor(options = {}) {
     ]);
     head.appendChild(
       el('div', { class: 'ilb-actions' }, [
+        button('复制', () => {
+          copied = JSON.parse(JSON.stringify(node));
+          redraw();
+        }, { ghost: true, title: '复制这个步骤（含它下面的分支）' }),
+        button('粘贴', () => {
+          if (!copied) return;
+          list.splice(index + 1, 0, cloneFresh(copied));
+          notify();
+          redraw();
+        }, { ghost: true, disabled: !copied, title: '粘在这条下面' }),
         button('↑', () => move(list, index, -1), { ghost: true, disabled: index === 0, title: '上移' }),
         button('↓', () => move(list, index, 1), { ghost: true, disabled: index === list.length - 1, title: '下移' }),
         button('删除', () => remove(list, index), { ghost: true }),
@@ -139,14 +185,14 @@ export function renderFlowEditor(options = {}) {
     card.appendChild(renderBody(node));
 
     if (BRANCH_KINDS.includes(node.kind)) {
-      card.appendChild(renderBranch('✓ 成立时', node.then, '成立时没有后续，就继续往下走'));
-      card.appendChild(renderBranch('✗ 不成立时', node.else, '不成立时留空，这条规则就不出现'));
+      card.appendChild(renderBranch('✓ 成立时', node.then, '成立时没有后续，就继续往下走', 'then'));
+      card.appendChild(renderBranch('✗ 不成立时', node.else, '不成立时留空，这条规则就不出现', 'else'));
     }
     return card;
   }
 
-  function renderBranch(title, list, emptyHint) {
-    const box = el('div', { class: 'ilb-flow-branch' });
+  function renderBranch(title, list, emptyHint, tone) {
+    const box = el('div', { class: `ilb-flow-branch ilb-flow-branch-${tone ?? 'then'}` });
     box.appendChild(el('div', { class: 'ilb-flow-branch-title', text: title }));
     if (list.length === 0) box.appendChild(el('p', { class: 'ilb-hint', text: emptyHint }));
     box.appendChild(renderNodes(list));
@@ -317,15 +363,14 @@ export function renderFlowEditor(options = {}) {
     }
 
     if (node.kind === 'activate') {
-      if (entries.length > 0) {
-        body.appendChild(
-          selectBox(node.entryId ?? '', [{ value: '', label: '（选择要一起出现的条目）' }].concat(
-            entries.map((e) => ({ value: e.id, label: e.title || e.id })),
-          ), (value) => {
-            node.entryId = value;
-            notify();
-          }, 'ilb-select'),
-        );
+      const items = [{ value: '', label: '（选择要一起出现的条目或逻辑）' }]
+        .concat(entries.map((e) => ({ value: e.id, label: `条目 · ${e.title || e.id}` })))
+        .concat(logics.map((l) => ({ value: l.id, label: `逻辑 · ${l.name || l.id}` })));
+      if (items.length > 1) {
+        body.appendChild(pickSelect(node.entryId, items, (value) => {
+          node.entryId = value;
+          notify();
+        }, '搜索条目或逻辑…'));
       } else {
         body.appendChild(
           input(node.entryId, (value) => {
@@ -335,8 +380,60 @@ export function renderFlowEditor(options = {}) {
         );
       }
       body.appendChild(
-        el('p', { class: 'ilb-hint', text: '被点名的条目会跳过关键词与条件直接出现；预算、分组与概率仍然生效。' }),
+        el('p', { class: 'ilb-hint', text: '被点名的条目会跳过关键词与条件直接出现；点名独立逻辑时，它也会照常跑完流程。预算、分组与概率仍然生效。' }),
       );
+      return body;
+    }
+
+    if (node.kind === 'goto') {
+      const targets = [{ value: '', label: '（选择跳到哪一步）' }].concat(
+        flattenNodes(model.nodes).map((n) => ({ value: n.id, label: `${n.path} · ${FLOW_KIND_LABEL[n.kind] ?? n.kind}` })),
+      );
+      body.appendChild(
+        pickSelect(node.target, targets, (value) => {
+          node.target = value;
+          notify();
+        }, '搜索步骤…'),
+      );
+      body.appendChild(
+        el('div', { class: 'ilb-inline' }, [
+          el('span', { class: 'ilb-sub', text: '最多跳' }),
+          input(node.max ?? 20, (value) => {
+            node.max = Number(value) || 20;
+            notify();
+          }, { type: 'number' }),
+          el('span', { class: 'ilb-sub', text: '次，超了' }),
+          selectBox(node.onLimit ?? 'stop', [
+            { value: 'stop', label: '直接终止这条流程' },
+            { value: 'continue', label: '跳过跳转、接着往下' },
+          ], (value) => {
+            node.onLimit = value;
+            notify();
+          }, 'ilb-select'),
+        ]),
+      );
+      body.appendChild(el('p', { class: 'ilb-hint', text: '可以往回跳，也可以在几段逻辑之间来回跑；次数用完按上面选的做，不会死循环。' }));
+      return body;
+    }
+
+    if (node.kind === 'call') {
+      const items = [{ value: '', label: '（选择要调用的逻辑）' }].concat(
+        logics.map((l) => ({ value: l.id, label: l.name || l.id })),
+      );
+      if (items.length > 1) {
+        body.appendChild(pickSelect(node.logicId, items, (value) => {
+          node.logicId = value;
+          notify();
+        }, '搜索逻辑…'));
+      } else {
+        body.appendChild(
+          input(node.logicId, (value) => {
+            node.logicId = value;
+            notify();
+          }, { placeholder: '逻辑 id（书id::L::本地id）' }),
+        );
+      }
+      body.appendChild(el('p', { class: 'ilb-hint', text: '把另一条独立逻辑当成这一步来跑：它写的变量、加的正文、点名的条目都会并进来；它不通过，这一步也不通过。' }));
       return body;
     }
 
@@ -400,15 +497,14 @@ export function renderFlowEditor(options = {}) {
     }
 
     if (cond.what === 'active') {
-      if (entries.length > 0) {
-        row.appendChild(
-          selectBox(cond.entryId ?? '', [{ value: '', label: '（选择一条规则）' }].concat(
-            entries.map((e) => ({ value: e.id, label: e.title || e.id })),
-          ), (value) => {
-            cond.entryId = value;
-            notify();
-          }, 'ilb-select'),
-        );
+      const items = [{ value: '', label: '（选择一条规则或逻辑）' }]
+        .concat(entries.map((e) => ({ value: e.id, label: `条目 · ${e.title || e.id}` })))
+        .concat(logics.map((l) => ({ value: l.id, label: `逻辑 · ${l.name || l.id}` })));
+      if (items.length > 1) {
+        row.appendChild(pickSelect(cond.entryId, items, (value) => {
+          cond.entryId = value;
+          notify();
+        }, '搜索…'));
       } else {
         row.appendChild(input(cond.entryId, (value) => {
           cond.entryId = value;
@@ -477,6 +573,50 @@ export function renderFlowEditor(options = {}) {
         notify();
       }, { placeholder: '文本' }));
     }
+    return wrap;
+  }
+
+  /** 所有步骤拍平，给「跳转」当目标列表用；path 是给人看的位置（例如 第 2✓.1 步） */
+  function flattenNodes(list, prefix = '', out = []) {
+    (Array.isArray(list) ? list : []).forEach((n, i) => {
+      const label = prefix ? `${prefix}.${i + 1}` : String(i + 1);
+      out.push({ id: n.id, kind: n.kind, path: `第 ${label} 步` });
+      flattenNodes(n.then ?? [], `${label}✓`, out);
+      flattenNodes(n.else ?? [], `${label}✗`, out);
+    });
+    return out;
+  }
+
+  /** 带搜索框的下拉：条目一多，纯下拉找起来太费眼 */
+  function pickSelect(initial, items, onPick, searchPlaceholder) {
+    const wrap = el('div', { class: 'ilb-flow-pick' });
+    const select = el('select', { class: 'ilb-select' });
+    let value = initial ?? '';
+    const search = el('input', {
+      class: 'ilb-input',
+      placeholder: searchPlaceholder ?? '搜索…',
+      oninput: (event) => fill(event.target.value),
+    });
+
+    function fill(query) {
+      const needle = String(query ?? '').trim().toLowerCase();
+      const visible = items.filter((it) => !needle
+        || String(it.label).toLowerCase().includes(needle)
+        || String(it.value).toLowerCase().includes(needle));
+      select.innerHTML = '';
+      for (const it of visible) select.appendChild(el('option', { value: it.value, text: it.label }));
+      if (items.some((it) => it.value === value)) select.value = value;
+      else if (visible.length > 0) select.value = visible[0].value;
+      value = select.value;
+    }
+
+    fill('');
+    select.addEventListener('change', (event) => {
+      value = event.target.value;
+      onPick(value);
+    });
+    wrap.appendChild(search);
+    wrap.appendChild(select);
     return wrap;
   }
 

@@ -87,6 +87,21 @@ export function renderSettings(ctx) {
     ]),
 
     el('div', { class: 'ilb-card' }, [
+      el('h5', { class: 'ilb-section-title', text: '独立逻辑' }),
+      toggle('启用独立逻辑', 'logicEnabled', '关掉之后，规则页里的独立逻辑一条都不跑，条目照常工作。'),
+      numberField('一轮最多跑几条逻辑', 'logicMaxPerTurn', 1, 200, 1, '防止逻辑互相调用绕圈。超出上限的会写进诊断。默认 20。'),
+      hint('独立逻辑在「规则」页最下面维护：它自己带触发词，不需要先命中一条世界书条目。'),
+    ]),
+
+    el('div', { class: 'ilb-card' }, [
+      el('h5', { class: 'ilb-section-title', text: 'AI 调用逻辑' }),
+      toggle('允许 AI 在正文里调用逻辑', 'aiCallsEnabled', '默认关闭。打开后，AI 正文里的 [[ILB:名字(参数)]] 会真的去跑那条逻辑；没开放给 AI 的名字会被拒绝并写进诊断。'),
+      numberField('一轮最多调用几次', 'aiCallMaxPerTurn', 0, 10, 1, '默认 3。0 = 一条都不执行。'),
+      numberField('往回看几条 AI 消息', 'aiCallScan', 1, 10, 1, '只扫最近这几条 AI 的回复，避免翻旧账。默认 3。'),
+      hint('AI 只能通过这个口改"聊天变量"（数字、文本），不能改 SillyTavern 或扩展本身的设置。每次调用都会在诊断里留下记录。'),
+    ]),
+
+    el('div', { class: 'ilb-card' }, [
       el('h5', { class: 'ilb-section-title', text: '预算' }),
       numberField('占上下文的比例', 'budgetRatio', 0.02, 0.6, 0.01, '默认 15%。这是上限的一部分。'),
       numberField('最多多少字', 'budgetCap', 200, 8000, 100, '默认 2000 字。最终取两者里更小的那个。'),

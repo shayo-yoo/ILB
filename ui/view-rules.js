@@ -8,13 +8,17 @@ import { validateBook, defaultEntry, normalizeEntry } from '../core/model.js';
 import { filterEntries, listGroups, describeFilter, RULE_MODES, RULE_MODE_LABEL } from '../core/search.js';
 import {
   el, option, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
-  searchInput, selectBox, actionRow, metaLine, card,
+  searchInput, selectBox, actionRow, metaLine, card, downloadJson,
 } from './widgets.js';
+import { openLogicEditor } from './logic-editor.js';
+import { countFlowNodes } from '../core/flow.js';
+import { normalizeLogic } from '../core/model.js';
 
 export const POSITION_LABEL = { before_char: '角色设定之前', after_char: '角色设定之后', in_chat: '聊天记录里' };
 export const ROLE_LABEL = { system: '系统', user: '用户', assistant: '角色' };
 
 export function describeTrigger(entry) {
+  if (entry.wait) return '等候模式（不自己出现，只等逻辑点名）';
   if (entry.always) return '常驻（一直在）';
   const any = entry.trigger?.any ?? [];
   const all = entry.trigger?.all ?? [];
@@ -117,6 +121,7 @@ export function renderRules(ctx) {
     const checked = state.selected.has(entry.id);
     const badges = [];
     if (entry.always) badges.push(badge('常驻', 'ok'));
+    if (entry.wait) badges.push(badge('等候模式', 'warn'));
     if (entry.useProbability) badges.push(badge(`${entry.probability}%`, 'warn'));
     if (entry.chain?.participate) badges.push(badge('可连锁'));
     if (entry.enabled === false) badges.push(badge('已停用', 'warn'));
@@ -193,6 +198,147 @@ export function renderRules(ctx) {
     batchHost.appendChild(button('删除', batchDelete, { ghost: true }));
   }
 
+  // —— 独立逻辑（ILB-4.14）：不靠条目也能运行的段落 ——
+  const logicHost = el('div', { class: 'ilb-logic-list' });
+
+  function describeLogic(logic) {
+    const parts = [];
+    const any = logic.trigger?.any ?? [];
+    const all = logic.trigger?.all ?? [];
+    if (any.length) parts.push(`出现任一：${any.slice(0, 4).join('、')}`);
+    if (all.length) parts.push(`同时出现：${all.slice(0, 4).join('、')}`);
+    if (logic.trigger?.source === 'user') parts.push('只看用户');
+    if (logic.trigger?.source === 'ai') parts.push('只看 AI');
+    if (!parts.length) parts.push('没有触发词（只能被调用或激活）');
+    const nodes = countFlowNodes(logic.flow?.nodes ?? []);
+    if (nodes > 0) parts.push(`${nodes} 个步骤`);
+    return parts.join('；');
+  }
+
+  function removeLogic(logic) {
+    if (!window.confirm(`删除逻辑「${logic.name || logic.id}」？`)) return;
+    book.logic = (book.logic ?? []).filter((l) => l.id !== logic.id);
+    repository.saveBook(book);
+    draw();
+    ctx.toast('逻辑已删除');
+  }
+
+  function importLogic() {
+    const picker = el('input', { type: 'file', accept: '.json,application/json' });
+    picker.style.display = 'none';
+    picker.addEventListener('change', () => {
+      const file = picker.files && picker.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(String(reader.result ?? '{}'));
+          const rawList = Array.isArray(data) ? data : (Array.isArray(data.logics) ? data.logics : []);
+          if (rawList.length === 0) {
+            ctx.toast('这个文件里没有逻辑', 'warn');
+            return;
+          }
+          const next = Array.isArray(book.logic) ? book.logic.slice() : [];
+          const idMap = new Map();
+          const added = [];
+          for (const raw of rawList) {
+            if (!raw || typeof raw !== 'object') continue;
+            const before = String(raw.id ?? '');
+            const fixed = normalizeLogic({ ...raw, id: undefined, localId: undefined }, book.book_id);
+            // 同名的不重复导：以"名字 + 触发词"为准，避免导入两遍出现两份
+            if (next.some((l) => l.name === fixed.name && JSON.stringify(l.trigger) === JSON.stringify(fixed.trigger))) continue;
+            if (before) idMap.set(before, fixed.id);
+            added.push(fixed);
+            next.push(fixed);
+          }
+          // 「跳转」的目标 id 跟着换成本书里的新 id，否则导进来的流程全指向空
+          const fixTargets = (nodes) => {
+            for (const node of Array.isArray(nodes) ? nodes : []) {
+              if (node?.target && idMap.has(String(node.target))) node.target = idMap.get(String(node.target));
+              fixTargets(node?.then);
+              fixTargets(node?.else);
+            }
+          };
+          added.forEach((l) => fixTargets(l.flow?.nodes));
+          book.logic = next;
+          repository.saveBook(book);
+          draw();
+          ctx.toast(added.length ? `已导入 ${added.length} 条逻辑` : '没有新逻辑（都和现有的重复）', added.length ? 'info' : 'warn');
+        } catch (error) {
+          ctx.toast(`这个文件读不了：${error?.message ?? error}`, 'warn');
+        } finally {
+          picker.remove();
+        }
+      };
+      reader.onerror = () => {
+        ctx.toast('读取文件失败', 'warn');
+        picker.remove();
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+    document.body.appendChild(picker);
+    picker.click();
+  }
+
+  function drawLogic() {
+    logicHost.innerHTML = '';
+    const items = Array.isArray(book.logic) ? book.logic : [];
+    logicHost.appendChild(
+      el('div', { class: 'ilb-logic-head' }, [
+        el('h5', { class: 'ilb-section-title', text: `独立逻辑（不靠条目也能运行，共 ${items.length} 条）` }),
+        button('新增逻辑', () => openLogicEditor(ctx, book, null), { ghost: true }),
+        button('导出逻辑', () => {
+          if (items.length === 0) {
+            ctx.toast('这本书还没有逻辑可导出', 'warn');
+            return;
+          }
+          downloadJson(`ilb-logic-${Date.now()}.json`, { kind: 'ilb-logic', version: 1, book: book.name, logics: items });
+          ctx.toast(`已导出 ${items.length} 条逻辑`);
+        }, { ghost: true }),
+        button('导入逻辑', () => importLogic(), { ghost: true }),
+      ]),
+    );
+    if (items.length === 0) {
+      logicHost.appendChild(hint('独立逻辑和规则的区别：它自己看触发词，不需要先命中一条世界书条目；也可以被别的逻辑「调用」。不想要就完全不用建，老规则照常工作。'));
+      return;
+    }
+    for (const logic of items) {
+      const badges = [];
+      if (logic.enabled === false) badges.push(badge('已停用', 'warn'));
+      if (logic.call?.exposed) badges.push(badge('AI 可调用', 'ok'));
+      if (logic.output?.text) badges.push(badge('有正文'));
+      const cardEl = el('div', { class: `ilb-card ilb-logic-card${logic.enabled === false ? ' ilb-card-off' : ''}` }, [
+        el('div', { class: 'ilb-rule-head' }, [
+          el('div', { class: 'ilb-rule-titles' }, [
+            el('div', { class: 'ilb-title', text: logic.name || '未命名逻辑' }),
+            el('div', { class: 'ilb-sub', text: describeLogic(logic) }),
+          ]),
+          el('div', { class: 'ilb-badges' }, badges),
+        ]),
+        actionRow([
+          button('编辑', () => openLogicEditor(ctx, book, logic), { ghost: true }),
+          button('试一句', () => {
+            // 借"试一句"的判定：把逻辑当成一条没有 key 的条目喂给预览
+            ctx.openPreview(book, {
+              ...logic,
+              title: logic.name,
+              content: logic.output?.text ?? '',
+              trigger: logic.trigger,
+              wait: false,
+            });
+          }, { ghost: true }),
+          button(logic.enabled === false ? '启用' : '停用', () => {
+            logic.enabled = logic.enabled === false;
+            repository.saveBook(book);
+            draw();
+          }, { ghost: true }),
+          button('删除', () => removeLogic(logic), { ghost: true }),
+        ]),
+      ]);
+      logicHost.appendChild(cardEl);
+    }
+  }
+
   function draw() {
     const rows = filtered();
     // 选了又被筛掉的不算：批量只作用在"当前看得到的"结果上（ILB-6.12.3）
@@ -220,6 +366,7 @@ export function renderRules(ctx) {
       selectAllBox.indeterminate = !all && rows.some((e) => state.selected.has(e.id));
     }
     drawBatch(rows);
+    drawLogic();
   }
 
   const groups = listGroups(book.entries);
@@ -267,6 +414,7 @@ export function renderRules(ctx) {
     batchHost,
     hint('「全选当前结果」只选搜索/筛选之后看得到的那些；批量操作也一样，不会波及被筛掉的规则。'),
     listHost,
+    logicHost,
   ]);
 
   draw();

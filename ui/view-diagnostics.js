@@ -11,6 +11,7 @@ const STAGE_LABEL = {
   budget: '预算',
   chain: '连锁',
   logic: '判定流程',
+  call: 'AI 调用',
   book: '书没启用',
   disabled: '规则被关掉',
 };
@@ -66,6 +67,17 @@ export function renderDiagnostics(ctx) {
       el('ul', { class: 'ilb-warn-list' }, inactive.map((b) => el('li', {
         text: `${b.name ?? b.book_id}：${last.books?.reasons?.[b.book_id] ?? '未说明原因'}`,
       }))),
+    ]));
+  }
+
+  const calls = Array.isArray(last.aiCalls) ? last.aiCalls : [];
+  if (calls.length) {
+    root.appendChild(el('div', { class: 'ilb-card' }, [
+      el('h5', { class: 'ilb-section-title', text: `AI 在正文里点了 ${calls.length} 次逻辑` }),
+      el('ul', { class: 'ilb-warn-list' }, calls.map((c) => el('li', {
+        text: `${c.name ?? '?'}：${c.ok ? '已执行' : `没执行 —— ${c.reason ?? '未说明'}`}`,
+      }))),
+      hint('AI 只能通过这里改聊天变量，改不了 SillyTavern 或扩展的设置。不想让它调用就去设置页关掉。'),
     ]));
   }
 

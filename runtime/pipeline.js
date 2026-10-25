@@ -163,7 +163,10 @@ export function createPipeline(deps) {
 
     let result;
     try {
-      result = evaluate(request, { resolved, settings });
+      // 独立逻辑（ILB-4.14）：只取"启用的书"里的逻辑，和条目的激活范围保持一致。
+      const activeIds = new Set(resolved.activeBooks ?? []);
+      const logics = books.filter((book) => activeIds.has(book.book_id)).flatMap((book) => book.logic ?? []);
+      result = evaluate(request, { resolved, settings, logics });
     } catch (err) {
       lastError = err;
       log.error('判定层出错，已降级为不注入', err);

@@ -4,7 +4,7 @@
 //   出现多久（延迟 / 持续 / 冷却）
 //   怎么出现（位置 / 深度 / 身份 / 权重 / 概率 / 连锁）
 
-import { POSITIONS, ROLES, SECONDARY_LOGIC, DEFAULT_SETTINGS } from '../core/settings-defaults.js';
+import { POSITIONS, ROLES, SECONDARY_LOGIC, DEFAULT_SETTINGS, TRIGGER_SOURCES } from '../core/settings-defaults.js';
 import { defaultEntry, normalizeEntry } from '../core/model.js';
 import { previewEntry } from '../core/evaluate.js';
 import { el, button, checkbox, field, hint, badge, selectBox } from './widgets.js';
@@ -49,6 +49,13 @@ export function openEditor(ctx, book, existing) {
   const titleInput = el('input', { class: 'ilb-input', type: 'text', value: entry.title ?? '' });
   const contentInput = el('textarea', { class: 'ilb-textarea', rows: '5' }, [entry.content ?? '']);
   const enabledBox = checkbox(entry.enabled !== false, () => {});
+  // 等候模式（ILB-4.14）：不自己出现，只等独立逻辑点名。
+  const waitBox = checkbox(entry.wait === true, () => {});
+  // 只看谁说的话（ILB-4.15）：两边 / 只看用户 / 只看 AI。
+  const sourceSelect = selectBox(entry.trigger?.source ?? 'both', TRIGGER_SOURCES.map((value) => ({
+    value,
+    label: value === 'both' ? '用户和 AI 都看' : value === 'user' ? '只看用户说的话' : '只看 AI 说的话',
+  })), () => {});
 
   // —— 触发 ——
   const triggerMode = selectBox(
@@ -239,6 +246,7 @@ export function openEditor(ctx, book, existing) {
     }
     const secKeys = splitList(secondaryKeys);
     if (secKeys.length) trigger.secondary = { keys: secKeys, logic: secondaryLogic.value };
+    trigger.source = sourceSelect.value;
 
     const when = combineMode === 'any' && cards.length
       ? [{ type: 'any', of: cards.map((c) => ({ ...c })) }]
@@ -249,6 +257,7 @@ export function openEditor(ctx, book, existing) {
       title: titleInput.value.trim() || '未命名规则',
       content: contentInput.value,
       enabled: enabledBox.checked,
+      wait: waitBox.checked,
       always: mode === 'always',
       trigger,
       when,
@@ -304,6 +313,11 @@ export function openEditor(ctx, book, existing) {
 
       el('h5', { class: 'ilb-section-title', text: '什么时候出现' }),
       field('触发方式', triggerMode),
+      field('谁说的话算数', sourceSelect, '默认两边都看。只看 AI 时，用户说触发词不会让它出现（也能靠独立逻辑点名）。'),
+      el('label', { class: 'ilb-inline' }, [
+        waitBox,
+        el('span', { class: 'ilb-sub', text: '等候模式：不自己出现，只等独立逻辑点名（适合被调用的段落）' }),
+      ]),
       triggerHost,
 
       el('h5', { class: 'ilb-section-title', text: '还要满足的条件（可以不加）' }),

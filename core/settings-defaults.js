@@ -32,9 +32,22 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 诊断
   showBudgetNotice: true,
   debugDiagnostics: false,
+
+  // 独立逻辑（ILB-4.14）：书里的"逻辑"可以有自己的触发词，跑完可以写变量/拉条目/出正文
+  logicEnabled: true,
+  logicMaxPerTurn: 20,   // 一轮最多跑几条逻辑，防止逻辑互相激活失控
+
+  // AI 通过正文宏指令调用逻辑（ILB-4.16）：默认关闭，开了也只认白名单
+  aiCallsEnabled: false,
+  aiCallMaxPerTurn: 3,   // 一轮最多认几条调用，多余的当普通文字
+  aiCallScan: 3,         // 只在最近几条 AI 消息里找调用
 });
 
 export const POSITIONS = Object.freeze(['before_char', 'after_char', 'in_chat']);
 export const ROLES = Object.freeze(['system', 'user', 'assistant']);
 export const SECONDARY_LOGIC = Object.freeze(['AND_ANY', 'AND_ALL', 'NOT_ANY', 'NOT_ALL']);
 export const ACTIVATION_MODES = Object.freeze(['always', 'character', 'manual']);
+// 触发词只看谁说的话：both = 都看；user = 只看用户；ai = 只看 AI（ILB-4.15）
+export const TRIGGER_SOURCES = Object.freeze(['both', 'user', 'ai']);
+// 「跳转」节点到达上限后的两种做法：stop = 直接终止；continue = 跳过这次跳转、继续往下
+export const GOTO_ON_LIMIT = Object.freeze(['stop', 'continue']);

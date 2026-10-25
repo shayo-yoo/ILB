@@ -279,8 +279,10 @@ step('规则编辑器里展开流程编辑器并加一个节点', () => {
   const book = repository.getBook('book-t');
   panel.openEditor(book, book.entries[0]);
   clickText(body, '编辑流程');
+  // 先点「添加一步」，再从展开的类型条里选（v0.9.0 改的顺序）
   clickText(body, '＋ 添加一步');
-  clickText(body, '＋ 添加一步');
+  clickText(body, '＋ 检测');
+  clickText(body, '＋ 检测');
   const kinds = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-kind'));
   if (kinds.length < 2) throw new Error('流程节点没有画出来');
 });
