@@ -468,6 +468,7 @@ export function evaluateFlow(flow, ctx = {}) {
   return {
     active: true,
     passed,
+    blocked: result?.blocked === true,
     reason: result?.reason ?? (passed ? '流程走完了，没有拦下这条规则' : '流程不通过'),
     steps,
     vars,
@@ -527,7 +528,9 @@ function runNode(node, ctx, steps, depth) {
   }
   if (node.kind === 'fail') {
     steps.push({ stage: 'logic', passed: false, reason: '走到「不通过」节点，这条规则不出现' });
-    return { status: 'fail', reason: '走到「不通过」节点' };
+    // blocked = 业务上的"正常拒绝"（次数不够、药水为 0），不是流程写错了。
+    // 给 runtime/api.js 区分 blocked 与 error 用；字符串状态仍是 'fail'，旧代码不受影响。
+    return { status: 'fail', blocked: true, reason: '走到「不通过」节点' };
   }
 
   if (node.kind === 'define') {
@@ -622,7 +625,9 @@ function runNode(node, ctx, steps, depth) {
       if (!ctx.activations.includes(entryId)) ctx.activations.push(entryId);
     }
     steps.push({ stage: 'logic', passed: res.passed !== false, reason: res.reason || `调用了 ${id}` });
-    if (res.passed === false) return { status: 'fail', reason: `被调用的逻辑不通过` };
+    if (res.passed === false) {
+      return { status: 'fail', blocked: res.blocked === true, reason: '被调用的逻辑不通过' };
+    }
     return null;
   }
 
@@ -633,7 +638,7 @@ function runNode(node, ctx, steps, depth) {
   const branch = ok.passed ? node.then : node.else;
   if (!Array.isArray(branch) || branch.length === 0) {
     if (ok.passed) return null; // 成立但没有写后续：继续往下
-    return { status: 'fail', reason: `${describeNode(node)} 不成立，且没有写"不成立时"要做什么` };
+    return { status: 'fail', blocked: true, reason: `${describeNode(node)} 不成立，且没有写"不成立时"要做什么` };
   }
   return runList(branch, ctx, steps, depth + 1);
 }

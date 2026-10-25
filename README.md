@@ -72,7 +72,7 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 | 界面公共件 | `ui/dom.js` / `ui/help.js` / `ui/widgets.js` | 造元素、帮助浮层、控件工厂 |
 | 面板路由 | `ui/panel.js` | 只负责切标签与提供 `ctx`，一页坏了只坏一页 |
 | 七个页面 | `ui/view-shelf.js` / `view-rules.js` / `view-logic.js` / `view-snapshots.js` / `view-state.js` / `view-diagnostics.js` / `view-settings.js` | 书架 / 规则 / 逻辑 / 快照 / 状态 / 诊断 / 设置 |
-| 对外接口 | `runtime/api.js` | `window.ILB.api` v1.0：`snapshot / set / remove / call / subscribe`，给以后的 UI 扩展用 |
+| 对外接口 | `runtime/api.js` | `window.ILB.api` v1.1：`snapshot / set / remove / call / subscribe`，失败用 `ok/blocked/error` 三态区分；给以后的 UI 扩展用 |
 | 独立逻辑 | `core/model.js` + `core/evaluate.js` | 逻辑可自带触发词、脱离条目运行；跳转/调用/随机数/元触发器都在 `core/flow.js` |
 | 使用说明 | `ui/guide.js` + `data/guide/zh-cn.json` | 标签栏「使用说明」；同一份 JSON 导出成 `docs/使用指南.md` |
 | 编辑器 | `ui/editor.js` | 四段式规则编辑 + 「试一句」预演 + 「判定流程」原地展开 |
@@ -105,7 +105,7 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（158 个）
+# 1) 纯逻辑单元测试（164 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
   tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
   tests/vars.test.mjs tests/flow-vars.test.mjs tests/fields.test.mjs tests/logic.test.mjs \
@@ -124,11 +124,14 @@ node tests/gacha-demo.mjs
 # 5) 独立逻辑演示（v0.9.0）：没有条目的书也能跑逻辑；AI 正文调用扣款；未开放的名字被拒
 node tests/logic-demo.mjs
 
-# 6) 把扩展里的「使用说明」导出成 docs/使用指南.md（改了 data/guide/zh-cn.json 就跑一次）
+# 6) 对外接口演示（v0.12.0）：模拟 UI 扩展走一遍 snapshot / set / call，看 ok / blocked / error 三种结果
+node tests/api-demo.mjs
+
+# 7) 把扩展里的「使用说明」导出成 docs/使用指南.md（改了 data/guide/zh-cn.json 就跑一次）
 node tests/export-guide.mjs
 ```
 
-三个检查都通过的结果（2026-10-25 实测）：单元 158/158、链接 48 个模块全通过（**包含入口 `index.js`**）、
+三个检查都通过的结果（2026-10-25 实测）：单元 164/164、链接 48 个模块全通过（**包含入口 `index.js`**）、
 冒烟 32 步全过（含「使用说明」入口与说明渲染）。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
 
 > 标签栏最右的「使用说明」读 `data/guide/zh-cn.json`；`docs/使用指南.md` 是它导出的同源副本，**不要手改 md**。
@@ -240,7 +243,7 @@ node tests/serve.mjs 8792
   若识别不到会退回同一个默认桶，不同聊天可能共用检查点——这是下一轮实测要看的点。
 - 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
   只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（158 + 48 模块 + 32 步），但**它们用的都是假宿主与假 DOM**。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（164 + 48 模块 + 32 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 独立逻辑、跳转/调用、AI 正文调用（v0.9.0）只在单元测试与 `tests/logic-demo.mjs` 里验证过；
   真实模型会不会照着写 `[[ILB:…]]`、跳转长流程在界面上累不累，都要等实机。

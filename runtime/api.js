@@ -1,29 +1,55 @@
 // runtime/api.js —— 给别的扩展（以及用户脚本）用的稳定接口（ILB-9.x）
 //
-// 为什么要有这一层：以后做"可定制 UI"扩展时，UI 扩展不该直接读 ILB 内部对象
-// （repository / pipeline / 书的字段结构都会变）。它只认下面这几个入口，
-// 入口的版本号写清楚；内部怎么改，是 ILB 自己的事。
+// 为什么要有这一层：别的扩展不该直接读 ILB 内部对象（repository / pipeline /
+// 书的字段结构都会变）。它只认下面这几个入口，入口的版本号写清楚；内部怎么改，
+// 是 ILB 自己的事。契约文档：docs/UI扩展接口.md。
 //
 // 原则：
 //   1. 只暴露"读快照、改变量、调用逻辑、订阅变化"四件事，不暴露宿主对象。
-//   2. 任何失败都返回 { ok:false, reason }，不把异常抛进调用方的事件循环。
+//   2. 任何失败都返回 { ok:false, outcome, reason }，不把异常抛进调用方。
 //   3. 只改变量，不改扩展设置、不改书本身——和 AI 调用的边界一致。
+//
+// 版本：1.1（在 1.0 上只加字段与可选参数，旧调用不受影响）
+//   - call 返回 outcome: 'ok' | 'blocked' | 'error'、ran、passed、vars、unusedArgs、missingParams
+//   - call 支持传逻辑 id、opts.nonce / text / messages / userInput / strict
+//   - 同一楼层重复调用默认仍给同一随机结果；要"再抽一次"请传新的 nonce
+//   - snapshot 的 logics[] 带 params
+//   - set 拒绝 NaN / Infinity
+//   - subscribe(非函数) 不再抛异常
 
 import { evaluateFlow } from '../core/flow.js';
 import { coerceValue, normalizeVars } from '../core/vars.js';
 
 /** 接口契约版本。加字段不算破坏性变更，改字段语义才算。 */
-export const API_VERSION = '1.0';
+export const API_VERSION = '1.1';
+
+/** 供 UI 扩展判断"这版有哪些能力"，比 version 字符串更好用。 */
+export const API_CAPS = [
+  'snapshot',
+  'set',
+  'remove',
+  'call',
+  'subscribe',
+  'outcome',
+  'byId',
+  'nonce',
+  'context',
+  'strict',
+  'vars',
+  'caps',
+];
 
 const NAME_MAX = 40;
+const CALL_DEPTH_MAX = 3;
 
-function asScalar(raw) {
-  if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'string') return raw;
-  return null;
+function scalarError(raw) {
+  if (typeof raw === 'number' && !Number.isFinite(raw)) return '数字不合法（不能是 NaN / Infinity）';
+  if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'string') return '';
+  return '只支持数字、文字、开关三种值';
 }
 
-function fail(reason) {
-  return { ok: false, reason };
+function fail(reason, extra = {}) {
+  return { ok: false, outcome: 'error', ran: false, passed: false, reason, ...extra };
 }
 
 export function createApi({ repository, getContext, getChatId, notify = () => {}, openPanel = null, closeUi = null } = {}) {
@@ -54,6 +80,10 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     }
   }
 
+  function enabledBooks() {
+    return booksOf().filter((b) => b && b.enabled !== false);
+  }
+
   function emit(reason, detail = {}) {
     const payload = { version: API_VERSION, reason, chatId: chatId(), tick: tick(), ...detail };
     for (const fn of [...listeners]) {
@@ -74,6 +104,7 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     const vars = repository.getVars(chatId());
     return {
       version: API_VERSION,
+      caps: [...API_CAPS],
       chatId: chatId(),
       tick: tick(),
       vars,
@@ -87,6 +118,7 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
           name: l.name,
           enabled: l.enabled !== false,
           exposed: l.call?.exposed === true,
+          params: Array.isArray(l.call?.params) ? l.call.params.slice(0, 12) : [],
         })),
       })),
     };
@@ -96,7 +128,8 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     const key = String(name ?? '').trim();
     if (!key) return fail('变量名不能为空');
     if (key.length > NAME_MAX) return fail(`变量名最长 ${NAME_MAX} 个字`);
-    if (asScalar(value) === null) return fail('只支持数字、文字、开关三种值');
+    const bad = scalarError(value);
+    if (bad) return fail(bad);
     try {
       const merged = repository.mergeVars(chatId(), normalizeVars({ [key]: coerceValue(value) }));
       emit('set', { name: key, value: merged[key] });
@@ -118,64 +151,145 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     }
   }
 
-  function call(name, args = {}) {
-    const target = String(name ?? '').trim();
-    if (!target) return fail('逻辑名不能为空');
-    let found = null;
-    for (const book of booksOf()) {
-      if (book.enabled === false) continue;
-      const hit = (Array.isArray(book.logic) ? book.logic : []).find((l) => l.enabled !== false && l.name === target);
-      if (hit) {
-        found = hit;
-        break;
+  /**
+   * 找逻辑：先按 id 精确，再按名字。
+   * @returns {{logic?: object, ambiguous?: Array<{id,name,book}>}}
+   */
+  function findLogic(target) {
+    const books = enabledBooks();
+    for (const book of books) {
+      const hit = (Array.isArray(book.logic) ? book.logic : []).find((l) => l.enabled !== false && l.id === target);
+      if (hit) return { logic: hit };
+    }
+    const matches = [];
+    for (const book of books) {
+      for (const l of Array.isArray(book.logic) ? book.logic : []) {
+        if (l.enabled !== false && l.name === target) matches.push({ id: l.id, name: l.name, book: book.name || book.book_id, logic: l });
       }
     }
-    if (!found) return fail(`没有叫「${target}」的已启用逻辑`);
+    if (matches.length === 0) return {};
+    if (matches.length > 1) return { ambiguous: matches.map(({ id, name, book }) => ({ id, name, book })) };
+    return { logic: matches[0].logic };
+  }
+
+  function callLogicResolver(seed, depth = 0) {
+    return (id) => {
+      if (depth >= CALL_DEPTH_MAX) return null;
+      const found = findLogic(String(id ?? '').trim());
+      if (!found.logic) return null;
+      try {
+        return evaluateFlow(found.logic.flow, {
+          text: '',
+          messages: [],
+          userInput: '',
+          messageCount: tick(),
+          seed: `${seed}:${found.logic.id}`,
+          vars: {},
+          activated: new Set(),
+          callLogic: callLogicResolver(`${seed}:${found.logic.id}`, depth + 1),
+        });
+      } catch {
+        return null;
+      }
+    };
+  }
+
+  /**
+   * 调用一条独立逻辑。
+   * @param {string} name 逻辑名，或逻辑 id（`<书id>::L::<序号>`，推荐，跨书同名时用它）
+   * @param {object} [args] 参数对象，键是 call.params 里的参数名（不是数组、不是顺序）
+   * @param {{nonce?:string, text?:string, messages?:Array, userInput?:string, strict?:boolean}} [opts]
+   */
+  function call(name, args = {}, opts = {}) {
+    const target = String(name ?? '').trim();
+    if (!target) return fail('逻辑名不能为空');
+    const found = findLogic(target);
+    if (found.ambiguous) {
+      const list = found.ambiguous.map((m) => `${m.book} / ${m.name}（${m.id}）`).join('、');
+      return fail(`有 ${found.ambiguous.length} 条同名逻辑，请改传 id：${list}`, { candidates: found.ambiguous });
+    }
+    if (!found.logic) return fail(`没有叫「${target}」的已启用逻辑`);
+    const logic = found.logic;
     try {
-      const vars = { ...repository.getVars(chatId()) };
+      const params = Array.isArray(logic.call?.params) ? logic.call.params : [];
       const bound = {};
-      const params = Array.isArray(found.call?.params) ? found.call.params : [];
-      params.forEach((param, index) => {
+      const unusedArgs = [];
+      if (args && typeof args === 'object' && !Array.isArray(args)) {
+        for (const key of Object.keys(args)) {
+          if (!params.includes(key)) unusedArgs.push(key);
+        }
+      } else if (Array.isArray(args)) {
+        return fail('args 要传对象（键是参数名），不是数组', { unusedArgs: [], missingParams: params.slice() });
+      }
+      for (const param of params) {
         const value = args && Object.prototype.hasOwnProperty.call(args, param) ? args[param] : undefined;
-        if (value !== undefined) bound[param] = coerceValue(value);
-      });
-      Object.assign(vars, bound);
-      const seed = `api:${chatId()}:${tick()}:${found.id}`;
-      const result = evaluateFlow(found.flow, {
-        text: '',
-        messages: [],
-        userInput: '',
+        if (value !== undefined) {
+          const bad = scalarError(value);
+          if (bad) return fail(`参数「${param}」${bad}`);
+          bound[param] = coerceValue(value);
+        }
+      }
+      const missingParams = params.filter((p) => !Object.prototype.hasOwnProperty.call(bound, p));
+      if (opts && opts.strict === true && (unusedArgs.length > 0 || missingParams.length > 0)) {
+        const bits = [];
+        if (unusedArgs.length > 0) bits.push(`多余的参数：${unusedArgs.join('、')}`);
+        if (missingParams.length > 0) bits.push(`缺少的参数：${missingParams.join('、')}`);
+        return fail(`参数不对（${bits.join('；')}）`, { unusedArgs, missingParams });
+      }
+      const vars = { ...repository.getVars(chatId()), ...bound };
+      const nonce = String(opts?.nonce ?? '').trim();
+      const seed = `api:${chatId()}:${tick()}:${logic.id}${nonce ? `:${nonce}` : ''}`;
+      const messages = Array.isArray(opts?.messages) ? opts.messages : [];
+      const text = String(opts?.text ?? '');
+      const userInput = String(opts?.userInput ?? '');
+      const result = evaluateFlow(logic.flow, {
+        text,
+        messages,
+        userInput,
         messageCount: tick(),
         seed,
         vars,
-        activated: [],
-        callLogic: null,
+        activated: new Set(),
+        callLogic: callLogicResolver(seed),
       });
       const writes = result.writes ?? {};
       if (Object.keys(writes).length > 0) {
         repository.mergeVars(chatId(), normalizeVars(writes));
       }
-      emit('call', { name: target, ok: result.passed !== false, writes });
-      return {
-        ok: result.passed !== false,
+      const passed = result.passed !== false;
+      const outcome = passed ? 'ok' : result.blocked === true ? 'blocked' : 'error';
+      const out = {
+        ok: passed,
+        outcome,
+        ran: true,
+        passed,
         reason: result.reason ?? '',
         writes,
         extra: result.extra ?? [],
         steps: result.steps ?? [],
+        vars: repository.getVars(chatId()),
+        unusedArgs,
+        missingParams,
       };
+      emit('call', { name: target, id: logic.id, ok: passed, outcome, writes });
+      return out;
     } catch (err) {
       return fail(String(err?.message ?? err));
     }
   }
 
   function subscribe(fn) {
-    if (typeof fn !== 'function') throw new TypeError('subscribe 需要传一个函数');
+    if (typeof fn !== 'function') {
+      console.warn('[ILB] subscribe 需要传一个函数，已忽略');
+      return () => {};
+    }
     listeners.add(fn);
     return () => listeners.delete(fn);
   }
 
   const api = {
     version: API_VERSION,
+    caps: [...API_CAPS],
     snapshot,
     set,
     remove,
@@ -184,10 +298,12 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     notify: (reason = 'manual') => emit(String(reason)),
     describe: () => ({
       version: API_VERSION,
+      caps: [...API_CAPS],
       methods: ['snapshot', 'set', 'remove', 'call', 'subscribe'],
       ui: ['openPanel', 'close'],
-      events: ['ilb:change'],
-      notes: '只写聊天变量；不改设置与书。失败返回 { ok:false, reason }。',
+      events: ['ilb:ready', 'ilb:change'],
+      callReturns: ['ok', 'outcome', 'ran', 'passed', 'reason', 'writes', 'extra', 'steps', 'vars', 'unusedArgs', 'missingParams'],
+      notes: '只写聊天变量；不改设置与书。失败返回 { ok:false, outcome:"error", reason }。',
     }),
     ui: {
       openPanel: (tab) => {
@@ -213,7 +329,7 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
 
   // 提示一下：别的扩展加载得比 ILB 早时，它拿不到 window.ILB；监听这个事件即可。
   try {
-    document.dispatchEvent(new CustomEvent('ilb:ready', { detail: { version: API_VERSION } }));
+    document.dispatchEvent(new CustomEvent('ilb:ready', { detail: { version: API_VERSION, caps: [...API_CAPS] } }));
   } catch {
     /* 没 document 就算了 */
   }

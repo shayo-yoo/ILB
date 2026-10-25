@@ -1,6 +1,7 @@
 # 下一阶段：可定制 UI 扩展（草稿，待拍板）
 
-> 状态：**讨论稿**。四个待定问题见文末；定稿后再进 `参考文档.md` 与 `docs/决策记录.md`。
+> 状态：**讨论稿，不是契约**。接口、字段、事件名以 `docs/UI扩展接口.md`（v1.1）为准；本文只保留"为什么这样设计"与分期建议。
+> 2026-10-25 按 v0.12.0 校对过一遍，已删掉与实现不符的设想（去抖、事件名、`add` 动作）。
 > 目标读者：之后接手开发这个新扩展的智能体。
 
 ## 1. 一句话
@@ -39,19 +40,19 @@ globalThis.ILB.api = {
   },
 
   // 写：UI 不直接赋值，走"写 + 重算"
-  set(name, value, type) { /* 返回 {ok, reason?} */ },
+  set(name, value) { /* 返回 {ok, outcome, reason?} */ },
 
-  // 调：按名字跑一条独立逻辑（白名单：只认 call.exposed 或 UI 专用名单）
-  call(logicName, args) { /* 返回 {ok, reason?, writes, text} */ },
+  // 调：按 id 或名字跑一条已启用逻辑（不要求 exposed；exposed 只约束 AI 正文调用）
+  call(nameOrId, args, opts) { /* 返回 {ok, outcome, ran, passed, reason, writes, extra, steps, vars, unusedArgs, missingParams} */ },
 
-  // 订阅：变化时回调（去抖 100ms，一次事件合并）
+  // 订阅：变化时回调（不防抖，一次变化一次事件；UI 自己节流）
   subscribe(fn) { /* 返回取消函数 */ },
 };
 ```
 
 ILB 侧改动：
 1. `set` 之后必须让下一轮注入反映新值——已经是每轮重算（`replay`），只需触发一次 `pipeline` 的"计划刷新"。
-2. `subscribe` 在四个时机发事件：`chat_changed`、`vars_changed`（自己 set 或逻辑写入）、`turn_end`（AI 回复完成）、`tick`。
+2. `subscribe` 的事件 `reason` 只有这几个：`run`（ILB 跑完一轮）、`set`、`remove`、`call`、`chat_changed`、`manual`（`api.notify()`）。没有 `vars_changed` / `turn_end` / `tick`——那些是草稿里的旧设想。
 3. `call` 复用 `evaluate.js` 里已有的 `runLogicById` 与 `withBoundParams`，不要新写一套。
 4. 文档里固定写死：**接口只保证上面这个形状**，UI 扩展不得依赖 `repository` 内部。
 
@@ -64,30 +65,30 @@ ILB 侧改动：
   "kind": "ilb-ui", "version": 1, "name": "行囊",
   "grid": { "cols": 4, "rows": 6, "gap": 8, "cell": 56 },
   "widgets": [
-    { "id": "hp",  "type": "bar",    "area": [1, 1, 4, 1], "bind": "生命", "max": 100, "label": "生命" },
-    { "id": "gold","type": "number", "area": [1, 2, 2, 1], "bind": "金币" },
-    { "id": "bag", "type": "list",   "area": [1, 3, 4, 3], "bind": "背包", "columns": 2 },
-    { "id": "draw","type": "button", "area": [3, 2, 2, 1], "text": "抽一次",
+    { "id": "hp",  "type": "bar",    "area": [0, 0, 4, 1], "bind": "生命", "max": 100, "label": "生命" },
+    { "id": "gold","type": "number", "area": [0, 1, 2, 1], "bind": "金币" },
+    { "id": "bag", "type": "list",   "area": [0, 2, 4, 3], "bind": "背包", "columns": 2 },
+    { "id": "draw","type": "button", "area": [2, 1, 2, 1], "text": "抽一次",
       "action": { "type": "call", "logic": "抽卡" } }
   ]
 }
 ```
 
-- `area: [col, row, colSpan, rowSpan]`（从 1 数）；窄屏时 `cols` 自动降为 2，超出按行堆叠。
-- 第一批控件只做六个：`text`、`number`、`bar`、`toggle`、`list`、`button`。够搭出"行囊/属性/抽卡"。
+- `area: [col, row, colSpan, rowSpan]`（**从 0 数**，和 CSS Grid 一致）；窄屏时 `cols` 自动降为 2，超出按行堆叠。
+- 控件统一 7 类：`text`、`number`、`bar`、`toggle`、`list`、`stat`（只读数值）、`button`。够搭出"行囊/属性/抽卡"。
 - 值一律来自 `bind`（ILB 变量名），控件本身不存值——避免两套真相。
 
 ## 5. 动作（点击后发生什么）
 
-只允许四种，全部是声明式的，**不引入表达式语言**（沿用 D-0006 红线）：
+只允许**三种**，全部是声明式的，**不引入表达式语言**（沿用 D-0006 红线）：
 
 ```json
 { "type": "set",  "name": "金币", "value": 10 }        // 直接写
-{ "type": "add",  "name": "金币", "by": -1 }            // 加减
-{ "type": "call", "logic": "抽卡", "args": [1] }        // 跑逻辑，由逻辑决定写什么
+{ "type": "call", "logic": "抽卡", "args": { "次数": 1 } }  // 跑逻辑，由逻辑决定写什么；args 是对象
 { "type": "open", "target": "page", "page": "背包" }    // 切页
 ```
 
+- **没有 `add` 动作**：要"金币 -1"，按钮先 `snapshot().vars` 读值、算完再 `set`，或者干脆放进 ILB 逻辑用 `call`。
 - 推荐**多用 `call` 少用 `set`**：数值规则应该待在 ILB 的逻辑里，UI 只负责"点了一下"。
 - 失败（逻辑不存在、变量只读、参数不合法）要就地显示一句人话，不弹 alert。
 
@@ -108,7 +109,7 @@ ILB 侧改动：
 
 ## 8. 分期
 
-- **P0 契约先行**（ILB 侧，半天）：补 `api.version / snapshot / set / call / subscribe`，加 6 条契约测试；写 `docs/接口-ILB.md`。
+- **P0 契约先行**（ILB 侧，已完成）：`api.version / caps / snapshot / set / remove / call / subscribe`，契约文档 `docs/UI扩展接口.md`，测试 `tests/api.test.mjs`（12 条）。
 - **P1 只读面板**（UI 扩展）：一个页面、四个控件、只读绑定；能跟着聊天换。
 - **P2 点击动作**：`call` + `set` + 失败提示；抽卡 Demo 跑通。
 - **P3 声明编辑**：网格可视化编辑（先做"选区域 + 选控件 + 选变量"的表单，不做拖拽）。
@@ -127,9 +128,9 @@ ILB 侧改动：
 4. 手机宽度 375px：不横向滚动，按钮可点。
 5. 关掉 UI 扩展，ILB 与主聊天完全不受影响。
 
-## 10. 待拍板
+## 10. 已拍板（原"待拍板"，2026-10-25 结论）
 
-1. **随机数**：同一楼层重放要不要结果一致？（推荐：种子 = 聊天 id + 消息序号 + 节点 id，保证可重放；另给一个"真随机"开关）
-2. **常驻逻辑**：每轮都跑并注入，还是每聊天只跑一次？（推荐：两种触发器分开做，「常驻」= 每轮跑但记住"已注入过的正文"，不重复注入）
-3. **布局放哪**：UI 扩展自己的设置（推荐）还是塞进 ILB 的书里？
-4. **网格**：区域式（推荐）还是你写的坐标式（x1/x2/y1/y2）？
+1. **随机数**：同一楼层重放结果一致（种子 = 聊天 id + 消息数 + 节点 id）；要"再抽一次"时接口传 `nonce`。已实现（D-0047）。
+2. **常驻逻辑**：元触发器分四档 `none / always / on_ai / on_user`，「每轮」就是每轮跑、不依赖触发词。已实现（D-0047）。
+3. **布局放哪**：UI 扩展自己的设置，不进 ILB 的书。
+4. **网格**：区域式 `area: [列, 行, 跨列, 跨行]`（0 起），不做坐标式。

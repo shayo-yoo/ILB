@@ -2,7 +2,7 @@
 
 > 这份文档只讲**怎么做一个绑定 ILB 的 UI 扩展**，不讲 ILB 本身怎么实现。
 > 交接对象：下一个负责写 UI 扩展的 AI（或人）。
-> 写于 2026-10-25，ILB 版本 v0.11.0（接口 v1.0）。
+> 写于 2026-10-25，ILB 版本 v0.12.0（接口 v1.1）。
 
 ---
 
@@ -24,7 +24,7 @@
 - `参考文档.md` 全文（1600 行，绝大部分是 ILB 内部契约）；
 - `docs/决策记录.md` 全文、`docs/history/*`、`memory/*`、`backup/*`。
 
-**原因**：ILB 的内部实现随时会改，而 `window.ILB.api` v1.0 是稳定契约。你按内部代码写，等于给自己埋一个"ILB 一升级就坏"的雷；你读 1600 行，只会让真正要用的那 100 行被淹没。
+**原因**：ILB 的内部实现随时会改，而 `window.ILB.api` v1.1 是稳定契约。你按内部代码写，等于给自己埋一个"ILB 一升级就坏"的雷；你读 1600 行，只会让真正要用的那 100 行被淹没。
 
 如果你想确认某个行为，**优先问接口**（`api.snapshot()` 实际返回什么），而不是读源码猜。
 
@@ -46,7 +46,7 @@
 
 ---
 
-## 2. 你唯一该依赖的东西：`window.ILB.api` v1.0
+## 2. 你唯一该依赖的东西：`window.ILB.api` v1.1
 
 ### 2.1 怎么拿
 
@@ -54,8 +54,9 @@
 // 等 ILB 就绪；不要轮询，也不要假设加载顺序
 window.addEventListener('ilb:ready', () => {
   const api = window.ILB.api;
-  if (!api || api.version !== '1.0') {
-    console.warn('[my-ui] 需要 ILB 接口 v1.0');
+  // 用 caps 判断能力，比版本字符串稳（加字段不换大版本）
+  if (!api || !api.caps?.includes('outcome')) {
+    console.warn('[my-ui] 需要 ILB 接口 v1.1（扩展 v0.12.0 以上）');
     return;
   }
   start(api);
@@ -68,24 +69,29 @@ window.addEventListener('ilb:ready', () => {
 
 | 方法 | 签名 | 说明 |
 |---|---|---|
-| `snapshot()` | → `{version, chatId, tick, vars, books}` | 只读快照。`vars` 是扁平标量表：`{生命:90, 背包:'铁钥匙', 安静:true}` |
-| `set(name, value)` | → `{ok, reason?}` | 写/增变量。名字非空、≤40 字；值只收 number / string / boolean |
-| `remove(name)` | → `{ok, reason?}` | 删变量 |
-| `call(name, args?)` | → `{ok, reason?, writes, extra, steps}` | 调用**已启用**的独立逻辑；`args` 按该逻辑的 `call.params` 顺序绑定 |
-| `subscribe(fn)` | → `unsubscribe()` | 任何变量变化后回调；同时 `document` 上会发 `ilb:change` |
+| `snapshot()` | → `{version, caps, chatId, tick, vars, books}` | 只读快照。`vars` 是扁平标量表：`{生命:90, 背包:'铁钥匙', 安静:true}`；`books[].logics[].params` 是参数名数组 |
+| `set(name, value)` | → `{ok, outcome, reason?}` | 写/增变量。名字非空、≤40 字；值只收 number / string / boolean；`NaN/Infinity` 会被拒绝 |
+| `remove(name)` | → `{ok, outcome, reason?}` | 删变量 |
+| `call(nameOrId, args?, opts?)` | → `{ok, outcome, ran, passed, reason, writes, extra, steps, vars, unusedArgs, missingParams}` | 调用**已启用**的独立逻辑。`args` 是**对象**，键是 `call.params` 里的参数名（**按名绑定，不是按顺序**）；跨书同名时传 id（`B1::L::1`） |
+| `subscribe(fn)` | → `unsubscribe()` | 任何变化后回调（**不防抖**，UI 自己节流）；同时 `document` 上会发 `ilb:change`；`fn` 不是函数时返回空函数，不抛异常 |
 | `ui.openPanel(tab?)` / `ui.close()` | — | 打开 ILB 面板（`shelf/rules/logic/snapshots/state/diagnostics/settings`）或收起 |
+
+`call` 的 `opts`（都可选）：`nonce`（同一楼层"再抽一次"）、`text` / `messages` / `userInput`（给带文本条件的逻辑用；**默认空上下文**）、`strict`（参数多余/缺失直接报错）。
+
+`outcome` 三态：`'ok'` / `'blocked'`（业务拒绝，画黄字）/ `'error'`（调用或流程出错，画红字）。`ok` 仍等于 `passed`，旧写法不变。
 
 `snapshot()` 的形状：
 
 ```js
 {
-  version: '1.0',
+  version: '1.1',
+  caps: ['snapshot', 'set', 'remove', 'call', 'subscribe', 'outcome', 'byId', 'nonce', 'context', 'strict', 'vars', 'caps'],
   chatId: 'abc123',
   tick: 12,                     // 当前楼层
   vars: { 生命: 90, 药水冷却: 0, 委托: '未接' },
   books: [
     { id: 'B1', name: '王国', enabled: true, entries: 12,
-      logics: [{ id: 'B1::L::1', name: '扣款', enabled: true, exposed: true }] }
+      logics: [{ id: 'B1::L::1', name: '扣款', enabled: true, exposed: true, params: ['次数'] }] }
   ]
 }
 ```
@@ -100,9 +106,10 @@ window.addEventListener('ilb:ready', () => {
 
 ### 2.4 失败了怎么办
 
-- `set/remove/call` 返回 `{ok:false, reason}`：在界面上给一句人话（例如"变量名太长，最多 40 字"），不要静默吞掉。
-- 拿不到 `window.ILB.api`：显示"未检测到 ILB（需要 v0.11.0 以上）"，而不是白屏。
-- `subscribe` 回调里做渲染要节流（例如 50ms），别每来一次变化就整页重建。
+- `set/remove/call` 返回 `{ok:false, outcome, reason}`：在界面上给一句人话（例如"变量名太长，最多 40 字"），不要静默吞掉。`outcome === 'blocked'` 是业务拒绝（用黄字），`'error'` 才是真错（红字）。
+- 拿不到 `window.ILB.api`：显示"未检测到 ILB（需要 v0.12.0 以上）"，而不是白屏。
+- 跨书同名逻辑：`call` 会返回 `candidates` 让你选；别猜，直接把候选列给用户，或一开始就用 id。
+- `subscribe` 回调里做渲染要节流（例如 50ms），别每来一次变化就整页重建（接口本身不防抖）。
 
 ---
 
@@ -165,8 +172,10 @@ my-ilb-ui/
 }
 ```
 
-- `area: [列, 行, 跨列, 跨行]`，从 0 开始；超界要夹到网格内，别让控件跑到屏幕外。
-- `action.kind` 先只支持三种：`set`（写变量）、`call`（调逻辑）、`open`（打开另一个声明页或 ILB 页面）。
+- `area: [列, 行, 跨列, 跨行]`，**从 0 开始**（和 CSS Grid 一致；`docs/下一阶段-UI扩展方案.md` 同此约定）；超界要夹到网格内，别让控件跑到屏幕外。
+- 控件类型统一为 **7 类**，够用就别再加：`text`（文字）、`number`（数字，可带输入）、`bar`（进度条，读一个数字 + `max`）、`toggle`（开关，写 true/false）、`list`（一列条目，读文字）、`stat`（只读数值，点一下可以什么都不做）、`button`（动作）。
+- `action.kind` 只有三种：`set`（写变量）、`call`（调逻辑）、`open`（打开另一个声明页或 ILB 页面）。
+  - **没有 `add` 动作**：要"加 1"，让按钮先 `snapshot().vars` 读值、自己加完再 `set`。接口是同步的，这样不会写出两套加法语义。
 - 控件只读 `bind` 指向的变量；值不合法（绑定的变量不存在）显示 `—`，不要抛错。
 - 声明校验失败要给"第几个控件、哪一项不对"的人话，不要只说"JSON 无效"。
 
@@ -192,12 +201,12 @@ my-ilb-ui/
 
 ```js
 const fake = {
-  version: '1.0',
+  version: '1.1',
   vars: { 生命: 90 },
   calls: [],
   snapshot() { return { vars: this.vars }; },
-  set(k, v) { this.vars[k] = v; return { ok: true }; },
-  call(n, a) { this.calls.push([n, a]); return { ok: true }; }
+  set(k, v) { this.vars[k] = v; return { ok: true, outcome: 'ok' }; },
+  call(n, a) { this.calls.push([n, a]); return { ok: true, outcome: 'ok', writes: {} }; }
 };
 ```
 
@@ -278,7 +287,7 @@ const fake = {
 ## 8. 第一次开工的检查单
 
 1. [ ] 读完本文 + `docs/UI扩展接口.md` + `docs/下一阶段-UI扩展方案.md`（**不要**去读 ILB 核心代码）；
-2. [ ] 在真实页面里 `console.log(window.ILB.api.snapshot())`，确认接口在（ILB v0.11.0+）；
+2. [ ] 在真实页面里 `console.log(window.ILB.api.snapshot())`，确认接口在（ILB v0.12.0+，接口 v1.1）；
 3. [ ] 建独立仓库骨架：`manifest.json` / `index.js` / `core/` / `ui/` / `tests/`；
 4. [ ] 先写 `core/declare.js` + `core/layout.js` + 单测（此时还不需要 DOM）；
 5. [ ] 再写 `ui/grid.js`，用 `data/example.json` 渲染出第一屏；

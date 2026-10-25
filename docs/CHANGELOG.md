@@ -15,6 +15,36 @@
 
 ---
 
+## 0.12.0 · 2026-10-25 · 修订 · ILB-4.18.6–4.18.12 · 对外接口升到 1.1：失败三态、按 id 调用、参数校验
+
+**一句话**：UI 扩展调 ILB 时不再"只知道失败了"——`call` 区分"业务拒绝"和"真出错"，能按 id 找逻辑，参数拼错会明说；`set` 不再把 `NaN` 写成 `null`，`subscribe` 传错参数不再抛异常。
+
+**依据**：用户给的《给ILB的问题清单》14 条（m05300），逐条核对全部成立；用户批准 A→D 修复计划（m05325："没有异议，可以自行开始 A 到 D"）。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `core/flow.js` | 业务拒绝标 `blocked:true`：「不通过」节点、判断不成立且没写「不成立时」、被调用逻辑的 blocked 向上传；`evaluateFlow` 返回值透传 `blocked` |
+| `runtime/api.js` | `API_CAPS` 能力清单；`call(nameOrId, args, opts)` 支持 id 精确查找、`opts.nonce/text/messages/userInput/strict`、返回 `outcome/ran/vars/unusedArgs/missingParams`；`snapshot().logics[].params`；`set` 拒绝 `NaN/Infinity`；`subscribe(非函数)` 只 warn；`describe()` 带 caps；`notify(reason)` |
+| `tests/api.test.mjs` | 12 条契约测试（原 6 条扩到 12：blocked/error、nonce、按 id、同名歧义、opts.text、参数缺失与多余、NaN、subscribe 不抛、params、嵌套调用） |
+| `tests/api-demo.mjs` | 给用户看的接口演示：快照 → 改变量 → 调用 → blocked → error → strict → nonce → 订阅，一条 `node tests/api-demo.mjs` 跑完 |
+
+**修订**
+
+| 位置 | 变化 |
+|---|---|
+| `docs/UI扩展接口.md` | 按 1.1 重写：`args` 是对象不是数组（原第 74 行写成"按顺序绑定"，是错的）、`outcome` 三态、`opts` 表、`set` 强制转换表、`subscribe` 不防抖、`reason` 枚举、默认无上下文、同名歧义要传 id、没有 `api.add` |
+| `docs/交接-UI扩展.md` | 接口版本 1.1；参数**按名**绑定；`area` 从 0 起；控件统一 7 类（加 `stat`）；动作 3 种，`add` 属 UI 侧"读-算-写"；`subscribe` 不防抖；同名逻辑给候选 |
+| `docs/下一阶段-UI扩展方案.md` | 顶部标"草案，以接口文档为准"；`area` 改 0 起；删"去抖 100ms"；事件名对齐实现（`run/set/remove/call/chat_changed/manual`）；删 `add` 动作；P0 标已完成；"待拍板"改为"已拍板" |
+| `参考文档.md` | 版本 3.7.0；§4.18 标题改 1.1，新增 ILB-4.18.6–4.18.12 |
+| `extension/index.js` / `manifest.json` | 版本 0.12.0（接口 1.1） |
+| `extension/README.md` | 单测 158→164，加 `node tests/api-demo.mjs` |
+
+**验收**：单元 **164/164**（新增 6 条 API 用例）；linkcheck 48/48；冒烟 32 步 0 失败；`node tests/api-demo.mjs` 全流程无异常，输出中 `outcome` 分别为 `ok` / `blocked` / `error`，`nonce` 前后随机值不同、不加 nonce 两次相同。
+
+**未验证**：真实 SillyTavern 里 UI 扩展加载顺序（`ilb:ready` 时序）；真实模型行为未变，本次只动接口层。
+
 ## 0.11.1 · 2026-10-25 · 修订 · ILB-0.6 · 交接文档按"接手对象"拆成两份
 
 **一句话**：交接文档不再一份通吃——接手 ILB 本体看 `docs/交接-给下个智能体.md`，只做 UI 扩展看 `docs/交接-UI扩展.md`；后者不要求读 ILB 内部代码，并附了留痕格式与开发理念。
