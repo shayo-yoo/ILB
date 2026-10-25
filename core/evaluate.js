@@ -463,13 +463,21 @@ export function evaluate(request = {}, options = {}) {
   if (settings.aiCallsEnabled === true && logics.length > 0) {
     const scan = clamp(Math.trunc(num(settings.aiCallScan, 3)), 1, 50);
     const maxCalls = clamp(Math.trunc(num(settings.aiCallMaxPerTurn, 3)), 0, 10);
+    // 幂等：每条 AI 消息里的每个调用只执行一次。重放（重画、编辑、刷新）时
+    // 已经在 seen 里的 key 直接跳过，避免同一笔扣款执行两遍。
+    const seenRaw = effVars.__ilbCallsSeen;
+    const seen = typeof seenRaw === 'string' ? seenRaw.split('|').filter(Boolean) : [];
+    const nextSeen = seen.slice();
     const aiTexts = [];
     for (let i = 0; i < messages.length; i += 1) {
-      if (roleOf(messages[i], i) === 'ai') aiTexts.push(contentOf(messages[i]));
+      if (roleOf(messages[i], i) === 'ai') aiTexts.push({ text: contentOf(messages[i]), index: i });
     }
     let used = 0;
-    for (const text of aiTexts.slice(-scan)) {
+    for (const { text, index } of aiTexts.slice(-scan)) {
       for (const call of parseCalls(text, { limit: maxCalls + 1 })) {
+        const key = `${index}:${call.name}:${call.args.join(',')}`;
+        if (nextSeen.includes(key)) continue;
+        nextSeen.push(key);
         if (used >= maxCalls) {
           diagnostics.push({ entryId: '', passed: false, stage: 'call', reason: `本轮调用超过 ${maxCalls} 次，忽略「${call.name}」` });
           callLog.push({ name: call.name, ok: false, reason: '超过本轮上限' });
@@ -498,6 +506,7 @@ export function evaluate(request = {}, options = {}) {
         callLog.push({ name: call.name, ok: res.passed !== false, reason: res.reason ?? '' });
       }
     }
+    if (nextSeen.length !== seen.length) flowWrites.__ilbCallsSeen = nextSeen.slice(-80).join('|');
   }
   for (const rec of triggerPassers) {
     const when = evalWhenArray(rec.entry.when, { text: rec.text ?? baseText, activated, vars: effVars, messageCount: msgCount });

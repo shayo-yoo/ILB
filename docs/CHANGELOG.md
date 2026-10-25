@@ -15,6 +15,46 @@
 
 ---
 
+## 0.9.0 · 2026-10-25 · 新增 · ILB-4.11–4.15 / 6.22–6.23 · 独立逻辑、跳转/调用、AI 正文调用、来源与等候、书架批量
+
+**一句话**：逻辑不再必须挂在条目上——每本书可以有自带触发词的"独立逻辑"，不命中世界书条目也能跑；流程里能「跳转」（带次数上限，允许往回跳）和「调用逻辑」；打开开关后 AI 能在正文里用 `[[ILB:名字(参数)]]` 调用逻辑，只改变量、改不了宿主；条目与逻辑都能选"只看用户 / 只看 AI"；书架支持多选批量启用/停用/删除。
+
+**依据**：用户 m03828《ILB改进想法.md》与 m03835 拍板（逻辑独立、不限制跳转方向只限次数、AI 只改环境内状态、三期一次做完由用户统一检验）。
+
+**新增**
+
+| 位置 | 内容 |
+|---|---|
+| `core/calls.js` | `parseCalls`（`[[ILB:名字(参数)]]`，同名同参去重、最多 8 参）、`findCallable`、`withBoundParams`（临时绑定参数、跑完还原） |
+| `core/model.js` | `normalizeTrigger`（条目与逻辑共用）、`defaultLogic / normalizeLogic`（id 形如 `<bookId>::L::<localId>`）、条目 `wait`、书 `logic[]`、`validateBook` 检查逻辑 id 与重名 |
+| `core/settings-defaults.js` | `logicEnabled: true`、`logicMaxPerTurn: 20`、`aiCallsEnabled: false`、`aiCallMaxPerTurn: 3`、`aiCallScan: 3`；常量 `TRIGGER_SOURCES`、`GOTO_ON_LIMIT` |
+| `core/flow.js` | 节点 `goto`（target / max 20 / onLimit stop\|continue）与 `call`（logicId）；跳转计数按节点、超限终止或跳过继续；`buildNodeIndex` |
+| `core/evaluate.js` | 独立逻辑自触发（不依赖条目）、`runLogicEntity` 三模式 auto/call/forced、逻辑输出伪条目、`logicMaxPerTurn` 预算、去重、最多 5 层调用；`roleOf / buildSourceText`；等候模式跳过；条件 `type:'messages'` 与 `messageCount` 透传；AI 调用扫描与拒绝记录（`aiCalls`）；调用幂等（`__ilbCallsSeen`，重放不重复执行） |
+| `ui/logic-editor.js` | 独立逻辑新增/编辑浮层（名称、触发词与来源、条件、流程、输出、允许 AI 调用与参数） |
+| `ui/view-rules.js` | 规则页底部「独立逻辑」列表；导出 JSON；导入 JSON（按名字+触发词去重、跳转目标 id 自动映射）；条目编辑器加"等候模式" |
+| `ui/flow-editor.js` | 「跳转」「调用逻辑」节点表单；复制/粘贴（粘贴换新节点 id）；分支按"成立/不成立"着色；「＋ 添加一步」先弹类型条再选类型 |
+| `ui/view-shelf.js` | 书架多选与批量启用/停用/删除；选择只作用于当前筛选结果 |
+| `ui/view-settings.js` | 「独立逻辑」与「AI 调用逻辑」两张卡（开关、上限、回看条数） |
+| `ui/view-diagnostics.js` | 显示 AI 调用记录（执行/拒绝原因） |
+| `tests/logic.test.mjs` | 17 条：触发来源、等候模式、跳转向前/超限终止/超限继续/目标不存在、调用逻辑、楼层条件、AI 调用绑定参数、未开放名字、默认关闭、`parseCalls` 去重 |
+| `tests/logic-demo.mjs` | 验收演示：只有逻辑没有条目的书也能跑；AI 调用扣款成功；调用未开放名字被拒；关闭时无动作 |
+
+**修订**
+
+| 位置 | 内容 |
+|---|---|
+| `runtime/pipeline.js` | 把当前在场书的 `logic[]` 一起交给判定 |
+| `ui/editor.js` | 触发词下方加"触发来源"选择（都看 / 只看用户 / 只看 AI） |
+| `参考文档.md` | 版本 3.4.0；新增 §4.11–§4.15、§6.22–§6.23 |
+| `docs/决策记录.md` | 追加 D-0046（独立逻辑与二次触发系统、跳转只限次数、AI 调用白名单与默认关闭、字段复用变量表） |
+| `tests/smoke-dom.mjs` | 流程编辑器"添加一步"改为先选类型 |
+
+**验收**：单元 146/146（新增 18 条）；链接检查 46/46；假 DOM 冒烟 0 失败；`node tests/logic-demo.mjs` 四段输出符合预期；`node tests/gacha-demo.mjs` 仍为原四轮。
+
+**未验证**：真实 SillyTavern 里的独立逻辑、跳转长流程、AI 调用（真实模型是否会照着写 `[[ILB:…]]`）、手机端的逻辑编辑页；这些留给用户统一检验。
+
+---
+
 ## 0.8.2 · 2026-10-24 · 新增 · ILB-6.20 / 6.21 · 扩展内「使用说明」、每页一句话、帮助文案补齐
 
 **一句话**：标签栏最右加了「使用说明」（电脑浮层 / 手机二级页共用同一个出口），正文来自 `data/guide/zh-cn.json`；每个页面顶部加一句"这页管什么"；`data/help/zh-cn.json` 补上「状态」页与「记住 / 激活条目 / 计算存进聊天」；同一份说明导出成 `docs/使用指南.md` 给 GitHub 读者。

@@ -1,4 +1,4 @@
-﻿// tests/logic-demo.mjs —— 三期验收演示（v0.9.0）：逻辑不靠条目也能跑，AI 能调用它
+// tests/logic-demo.mjs —— 三期验收演示（v0.9.0）：逻辑不靠条目也能跑，AI 能调用它
 //
 // 跑法：node tests/logic-demo.mjs
 // 它不连模型、不开界面，只证明：
@@ -80,7 +80,9 @@ function run({ label, messages, vars, settings = {} }) {
   );
   console.log(`\n== ${label} ==`);
   console.log('注入的内容：', result.activated.map((a) => a.content).filter(Boolean).join(' / ') || '（无正文）');
-  console.log('写回的变量：', JSON.stringify(result.varWrites));
+  const writes = { ...result.varWrites };
+  delete writes.__ilbCallsSeen; // 内部账本，演示里不占地方
+  console.log('写回的变量：', JSON.stringify(writes));
   console.log('AI 调用记录：', result.aiCalls.length ? JSON.stringify(result.aiCalls) : '（无）');
   const calls = result.diagnostics.filter((d) => d.stage === 'call');
   if (calls.length) console.log('被拒绝的调用：', calls.map((d) => d.reason).join('；'));

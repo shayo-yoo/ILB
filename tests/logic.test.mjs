@@ -199,8 +199,38 @@ test('AI 调用：只认开放给 AI 的逻辑，参数按声明顺序绑定', (
   assert.equal(r.aiCalls[0].ok, true);
 });
 
-test('AI 调用：没开放的名字会被说出来，不会悄悄吞掉', () => {
-  const book = bookWith([{ id: 'l1', name: '补给', trigger: { any: ['x'] }, flow: { nodes: [] } }]);
+test('AI 调用幂等：同一段正文重放不会再把扣款执行一遍', () => {
+  const book = bookWith([
+    {
+      id: 'l1',
+      name: '扣款',
+      call: { exposed: true, params: ['数量'] },
+      trigger: { any: ['不会出现'] },
+      flow: {
+        nodes: [
+          { kind: 'calc', target: '余额', op: '-', left: { type: 'var', name: '余额' }, right: { type: 'var', name: '数量' }, persist: true },
+        ],
+      },
+    },
+  ]);
+  const messages = [
+    { is_user: true, content: '买咖啡' },
+    { is_user: false, content: '好。[[ILB:扣款(3)]]' },
+  ];
+  const first = evaluate(
+    { messages, vars: { 余额: 10 } },
+    { pool: [], logics: book.logic, settings: { aiCallsEnabled: true } },
+  );
+  assert.equal(first.varWrites['余额'], 7);
+  const second = evaluate(
+    { messages, vars: { 余额: 7, __ilbCallsSeen: first.varWrites['__ilbCallsSeen'] } },
+    { pool: [], logics: book.logic, settings: { aiCallsEnabled: true } },
+  );
+  assert.equal(second.varWrites['余额'], undefined, '重放时不能再写一次');
+  assert.equal(second.aiCalls.length, 0, '重放时不应再执行调用');
+});
+
+test('AI 调用：没开放的名字会被说出来，不会悄悄吞掉', () => {  const book = bookWith([{ id: 'l1', name: '补给', trigger: { any: ['x'] }, flow: { nodes: [] } }]);
   const r = evaluate(
     {
       messages: [
