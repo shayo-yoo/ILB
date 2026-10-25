@@ -15,6 +15,7 @@ import { createRepository } from './adapters/repository.js';
 import { createNativeWorlds } from './adapters/native-worlds.js';
 import { createInjector } from './adapters/inject.js';
 import { createPipeline } from './runtime/pipeline.js';
+import { createApi } from './runtime/api.js';
 import { resolveChatId, normalizeVars } from './core/vars.js';
 import { createRegistry } from './runtime/registry.js';
 import { createPanel } from './ui/panel.js';
@@ -24,7 +25,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -157,7 +158,27 @@ async function boot() {
     openState: () => panel.setTab('state'),
   });
 
+  // 对外接口：别的扩展/脚本只走这层，不直接碰 repository（见 runtime/api.js）
+  const getChatIdSafe = () => {
+    try {
+      return resolveChatId(getContext());
+    } catch {
+      return 'default';
+    }
+  };
+
   const shellReady = shell.mount();
+  const api = createApi({
+    repository,
+    getContext,
+    getChatId: getChatIdSafe,
+    notify,
+    openPanel: (tab) => {
+      if (tab) panel.setTab(tab);
+      if (shellReady) shell.open();
+    },
+    closeUi: () => shell.close(),
+  });
   notifyVia = (message, kind = 'info') => shell.notify(message, kind);
   let panelReady = false;
   if (shellReady) {
@@ -214,6 +235,11 @@ async function boot() {
     try {
       const injected = pipeline.run(getContext, reason);
       updateStatusDot(injected);
+      try {
+        api.notify('run');
+      } catch {
+        /* 订阅者报错不影响判定 */
+      }
       return injected;
     } catch (err) {
       console.error('[ILB] 判定失败，这一轮不注入', err);
@@ -241,6 +267,7 @@ async function boot() {
           panel.render();
           card.render();
           shell.setStatus('idle');
+          api.notify('chat_changed');
         } catch (err) {
           console.warn('[ILB] 切换对话后刷新界面失败', err);
         }
@@ -255,6 +282,7 @@ async function boot() {
   // 给高级用户排障用
   globalThis.ILB = {
     version: VERSION,
+    api,
     registry,
     repository,
     pipeline,
