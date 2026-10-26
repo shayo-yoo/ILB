@@ -21,6 +21,7 @@ import {
   countFlowNodes,
   describeNode,
 } from '../core/flow.js';
+import { renderFlowText, parseFlowText, FLOW_TEXT_HINT } from '../core/flow-text.js';
 
 const CONDITION_ITEMS = CONDITION_KINDS.map((k) => ({ value: k, label: CONDITION_KIND_LABEL[k] }));
 const BRANCH_KINDS = ['test', 'judge', 'compare'];
@@ -48,12 +49,14 @@ function checkbox(checked, onChange, labelText) {
  * @returns {HTMLElement}
  */
 export function renderFlowEditor(options = {}) {
-  const model = normalizeFlow(options.flow);
+  let model = normalizeFlow(options.flow);
   const entries = Array.isArray(options.entries) ? options.entries.filter((e) => e && e.id) : [];
   const logics = Array.isArray(options.logics) ? options.logics.filter((l) => l && l.id) : [];
   const root = el('div', { class: 'ilb-flow' });
   /** 复制缓冲区：只在本编辑器内有效，粘过来会给所有节点换新 id，避免和原来的撞上 */
   let copied = null;
+  /** 表单 / 文本两种写法，改的是同一个 model（ILB-4.20） */
+  let textMode = false;
 
   function newId() {
     return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -89,7 +92,20 @@ export function renderFlowEditor(options = {}) {
       el('strong', { text: '判定流程' }),
       el('span', { class: 'ilb-hint', text: `共 ${countFlowNodes(model.nodes)} 个节点` }),
     ]);
+    head.appendChild(
+      button(textMode ? '切回表单' : '文本模式', () => {
+        if (textMode) commitText(); // 切回之前，把文本收成节点树
+        textMode = !textMode;
+        redraw();
+      }, { ghost: true, title: '表单和文本改的是同一份流程，随时换着用' }),
+    );
     root.appendChild(head);
+
+    if (textMode) {
+      root.appendChild(renderTextMode());
+      return;
+    }
+
     root.appendChild(
       el('p', {
         class: 'ilb-hint',
@@ -99,6 +115,70 @@ export function renderFlowEditor(options = {}) {
 
     root.appendChild(renderNodes(model.nodes, 0));
     root.appendChild(addRow(model.nodes));
+  }
+
+  /** 文本模式：和表单改的是同一份 model.nodes，切回去之前用 parseFlowText 收口 */
+  function renderTextMode() {
+    const box = el('div', { class: 'ilb-flow-text' });
+    const area = el('textarea', { class: 'ilb-input ilb-flow-area', spellcheck: 'false' });
+    area.value = renderFlowText(model, { entries, logics });
+    area.rows = 12;
+
+    const report = el('div', { class: 'ilb-flow-problems' });
+    const preview = el('p', { class: 'ilb-hint' });
+
+    const sync = (announce) => {
+      const parsed = parseFlowText(area.value, { entries, logics });
+      report.innerHTML = '';
+      if (parsed.problems.length === 0) {
+        report.appendChild(el('p', { class: 'ilb-hint', text: '没有看不懂的行。' }));
+      } else {
+        for (const p of parsed.problems) {
+          report.appendChild(
+            el('p', { class: 'ilb-bad', text: `第 ${p.line} 行：${p.reason}` }),
+          );
+        }
+      }
+      const count = countFlowNodes(parsed.flow.nodes);
+      preview.textContent = announce
+        ? `已经收下了：${count} 个节点${parsed.problems.length > 0 ? `（${parsed.problems.length} 行没看懂，那几行没生效）` : ''}`
+        : `现在能读懂 ${count} 个节点，${parsed.problems.length} 行有问题。`;
+      return parsed;
+    };
+
+    area.addEventListener('input', () => sync(false));
+
+    box.appendChild(el('p', { class: 'ilb-hint', text: FLOW_TEXT_HINT }));
+    box.appendChild(area);
+    box.appendChild(
+      el('div', { class: 'ilb-actions' }, [
+        button('收下这段文本', () => {
+          const parsed = sync(true);
+          model = parsed.flow;
+          notify();
+          redraw();
+        }, { title: '把文本变成节点树并保存；看不懂的行会列出来' }),
+        button('清空', () => {
+          area.value = renderFlowText({ mode: model.mode, nodes: [] }, { entries, logics });
+          sync(false);
+        }, { ghost: true }),
+      ]),
+    );
+    box.appendChild(report);
+    box.appendChild(preview);
+    sync(false);
+    return box;
+  }
+
+  /** 离开文本模式时把 textarea 里的内容收进 model（没看懂的行不生效，但不静默） */
+  function commitText() {
+    // redraw 会把 DOM 拆掉，所以这里只能靠最后一次 input 的结果；
+    // 保险起见再从当前 textarea 读一次。
+    const area = root.querySelector ? root.querySelector('.ilb-flow-area') : null;
+    if (!area) return;
+    const parsed = parseFlowText(area.value, { entries, logics });
+    model = parsed.flow;
+    notify();
   }
 
   function move(list, index, delta) {

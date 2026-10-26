@@ -275,16 +275,42 @@ function clickText(rootEl, text) {
   return node;
 }
 
-step('规则编辑器里展开流程编辑器并加一个节点', () => {
+step('流程编辑器能在表单和文本之间来回切', () => {
   const book = repository.getBook('book-t');
   panel.openEditor(book, book.entries[0]);
   clickText(body, '编辑流程');
-  // 先点「添加一步」，再从展开的类型条里选（v0.9.0 改的顺序）
   clickText(body, '＋ 添加一步');
   clickText(body, '＋ 检测');
   clickText(body, '＋ 检测');
   const kinds = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-kind'));
   if (kinds.length < 2) throw new Error('流程节点没有画出来');
+
+  // 切到文本模式：应该看到刚才那两个节点被写成文字（v0.13.0）
+  clickText(body, '文本模式');
+  const area = walk(body).find((n) => n.className && String(n.className).includes('ilb-flow-area'));
+  if (!area) throw new Error('文本模式没有文本框');
+  if (!area.value || !area.value.includes('检测')) throw new Error('文本里没有把节点写出来');
+  const typed = `${area.value}\n添加 "测试时写进去的一句话"\n`;
+  area.value = typed;
+  area.dispatch('input');
+  clickText(body, '收下这段文本');
+
+  // 切回表单：多出来的那个「添加」要能在表单里看见
+  clickText(body, '切回表单');
+  const addNodes = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-kind'));
+  if (addNodes.length < 3) throw new Error(`文本加的一行没有回到表单（现在 ${addNodes.length} 个节点）`);
+});
+
+step('文本模式里看不懂的行会当场列出来', () => {
+  clickText(body, '文本模式');
+  const area = walk(body).find((n) => n.className && String(n.className).includes('ilb-flow-area'));
+  if (!area) throw new Error('没有文本框');
+  area.value = `${area.value}\n这一行不是任何关键字\n`;
+  area.dispatch('input');
+  const bad = walk(body).filter((n) => n.className && String(n.className).includes('ilb-bad'));
+  if (bad.length === 0) throw new Error('坏行没有被列出来');
+  clickText(body, '清空');
+  clickText(body, '切回表单');
 });
 
 step('导入选择浮层能打开并渲染', async () => {

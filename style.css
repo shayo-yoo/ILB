@@ -888,6 +888,37 @@ body.ilb-overlay-open .ilb-fab {
   flex-wrap: wrap;
 }
 
+/* 文本模式（v0.13.0）：和表单改的是同一份流程，只是换个写法 */
+.ilb-flow-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ilb-flow-area {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  min-height: 180px;
+  resize: vertical;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+.ilb-flow-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.ilb-bad {
+  color: #c2410c;
+  word-break: break-word;
+}
+
 .ilb-flow-list {
   display: flex;
   flex-direction: column;
