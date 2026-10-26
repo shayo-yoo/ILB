@@ -15,6 +15,22 @@
 
 ---
 
+## 0.14.0 · 2026-10-27 · 新增 · ILB-10.19.8 / ILB-10.19.9 · 补记：「界面」步骤在真酒馆里跑通了
+
+**一句话**：上一条 0.14.0 写完后又在真实 SillyTavern（1.19.0）里跑了一遍，接口 1.2 带出界面指令这条链路是通的，不是推断。
+
+| 文件 | 改动 |
+| --- | --- |
+| `tests/live/st-ui-step.mjs` | 新增：造临时书（`live-ui-probe`）→ `api.call` 拿 `ui {page,toast,select}` 与 `durationMs`；没有界面步骤时 `ui === null`；`callAsync` 同形、失败返回 `outcome:'error'` 不抛；订阅顺序 `call,ui`；真 DOM 里「界面」节点 6 个输入格、横向溢出 0 |
+| `tests/live/cdp.mjs` | `screenshot(send, path, clip?)` 支持按元素矩形裁图（不再为了截图去删宿主 DOM） |
+| `tests/live/st-live-check.mjs` | 断言从"接口 1.1"改成"接口 1.2 + `caps` 含 `ui`/`callAsync` + `callAsync` 是函数" |
+| `ui/flow-editor.js` | 「界面」节点几个标签写清楚一点：「翻到哪页」「问题标题」「问题正文」「按钮文字」 |
+| `tests/live/README.md` | 补第三个脚本的跑法与断言说明 |
+
+**实测结论**（同一台机器、同一版宿主）：`ILB.version 0.14.0`、`api 1.2`、`caps` 含 `ui`/`callAsync`、八个页签、横向溢出 0；界面指令 `{page:'结果页', toast:'SSR！', select:'card-3'}` 原样带回，`durationMs` 非负；没有界面步骤的那条逻辑 `ui` 是 `null`，说明"空对象冒充指令"这条不会发生。
+
+**仍未验证**：ILBUI 侧拿到指令后真正翻页/提示的观感（要等它落地联调）；手机外壳里执行界面指令（本版不发任何 UI 代码，只交数据）。
+
 ## 0.14.0 · 2026-10-27 · 新增 · ILB-4.21 / ILB-4.10.12 / ILB-4.18.4 · 流程里能写「界面」步骤，接口升到 1.2
 
 **一句话**：逻辑流程里多了一种节点「界面」——翻到某页、提示一句、聚焦某个控件、或者问一句；它只在"用户点了按钮来调用"时生效，聊天里自动触发一律不发。给界面扩展的接口因此升到 1.2（`caps` 加 `ui`/`callAsync`、`call` 返回顶层 `ui` 与 `durationMs`、新增 `callAsync`）。

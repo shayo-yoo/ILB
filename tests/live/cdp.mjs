@@ -73,8 +73,10 @@ export async function waitForIlb(evaluate, timeoutMs = 60000) {
   return false;
 }
 
-export async function screenshot(send, path) {
-  const shot = await send('Page.captureScreenshot', { format: 'png' });
+export async function screenshot(send, path, clip) {
+  const params = { format: 'png' };
+  if (clip) params.clip = clip;
+  const shot = await send('Page.captureScreenshot', params);
   const { writeFileSync } = await import('node:fs');
   writeFileSync(path, Buffer.from(shot.result.data, 'base64'));
 }

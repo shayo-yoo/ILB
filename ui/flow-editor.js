@@ -607,13 +607,13 @@ export function renderFlowEditor(options = {}) {
         );
         return box;
       };
-      body.appendChild(row('翻到页', 'page', { placeholder: '页面 id，例如 结果页（留空就不翻页）' }));
+      body.appendChild(row('翻到哪页', 'page', { placeholder: '页面 id，例如 结果页（留空就不翻页）' }));
       body.appendChild(row('提示一句', 'toast', { placeholder: '底栏提示，例如 SSR！（留空就不提示）' }));
       body.appendChild(row('聚焦控件', 'select', { placeholder: '控件 id，例如 card-3（留空就不聚焦）' }));
       body.appendChild(el('p', { class: 'ilb-sub', text: '问一句（只提示，不会停下来等用户点）' }));
-      body.appendChild(row('标题', 'askTitle', { placeholder: '例如 确认抽卡？' }));
-      body.appendChild(row('正文', 'askText', { placeholder: '例如 消耗 10 金币' }));
-      body.appendChild(row('按钮', 'askOk', { placeholder: '例如 确定（可留空）' }));
+      body.appendChild(row('问题标题', 'askTitle', { placeholder: '例如 确认抽卡？' }));
+      body.appendChild(row('问题正文', 'askText', { placeholder: '例如 消耗 10 金币' }));
+      body.appendChild(row('按钮文字', 'askOk', { placeholder: '例如 确定（可留空）' }));
 
       const problems = checkUiNode(node);
       const line = el('p', { class: problems.length > 0 ? 'ilb-warn' : 'ilb-hint', text: problems.length > 0 ? problems.join('；') : describeNode(node) });

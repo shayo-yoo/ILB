@@ -29,10 +29,12 @@ cd /d D:\文档\1\DSH\ILB\extension
 set ST_DIR=D:\1\APP\SillyTavern
 node tests/live/st-live-check.mjs
 node tests/live/st-flow-text.mjs
+node tests/live/st-ui-step.mjs
 ```
 
-- `st-live-check.mjs`：`globalThis.ILB` 是否加载、接口版本、桌面外壳能开面板、不横向溢出；截图 `live/last-panel.png`。
+- `st-live-check.mjs`：`globalThis.ILB` 是否加载、接口版本（现 1.2）与 `caps`（要含 `ui`、`callAsync`）、桌面外壳能开面板、不横向溢出；截图 `live/last-panel.png`。
 - `st-flow-text.mjs`：流程文本模式能渲染、**点一次「复制给 AI 的说明」并要求控制台零错误**（v0.13.2 加，之前这里报过 `ctx is not defined`）、手机视口下编辑框 ≥ 半屏；截图 `live/last-flow-mobile.png`。
+- `st-ui-step.mjs`：v0.14.0 的「界面」步骤。造一本临时书（`live-ui-probe`，跑完可从书架删掉），验 `api.call` 带回顶层 `ui` 与 `durationMs`、没有界面步骤时是 `null`、`callAsync` 同形且失败不 reject、事件顺序 `call,ui`；再在真 DOM 里画一个「界面」节点（`<dialog>` 里画，免得被宿主初始化白板挡住），数输入格与横向溢出。截图 `live/last-ui-step.png`。
 
 环境变量：`ST_DIR`（酒馆根目录，用来找 `ws` 模块）、`ST_URL`（默认 `http://127.0.0.1:8000/`）、`CDP_PORT`（默认 `9222`）。
 
