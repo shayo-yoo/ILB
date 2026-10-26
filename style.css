@@ -180,7 +180,10 @@
 .ilb-input,
 .ilb-textarea,
 .ilb-num {
-  background: var(--SmartThemeInputColor, #1b1b1b);
+  /* 不能写死深色底：浅色主题下 --SmartThemeInputColor 往往是空的，
+     写死 #1b1b1b 会让继承来的深色文字糊在深色底上（v0.13.1 实测发现）。
+     半透明灰在深浅两种主题下都能保持"字和底是一套配色"。 */
+  background: var(--SmartThemeInputColor, rgba(127, 127, 127, 0.14));
   color: inherit;
   border: 1px solid var(--SmartThemeBorderColor, #555);
   border-radius: 4px;

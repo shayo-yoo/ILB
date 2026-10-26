@@ -50,7 +50,20 @@
 
 **验收**：单元 **181/181**、linkcheck **49/49**、`smoke-dom.mjs` 22 步 0 失败。
 
-**已知未完成**：真实 SillyTavern 里尚未点过这套界面（本轮只把本地酒馆 `D:\1\APP\SillyTavern` 的 `ILB` 目录同步到本版，供下次实测）；提示词没有按不同模型分别调优。
+**真实 SillyTavern 实测（首次，2026-10-27）**：本地酒馆 `D:\1\APP\SillyTavern`（SillyTavern 1.19.0 / release `06bde939f`），扩展目录 `public\scripts\extensions\third-party\ILB` 拉到本版后用无头 Chrome + CDP 打开真页面验证：
+
+| 项目 | 结果 |
+| --- | --- |
+| 扩展加载 | `globalThis.ILB` 存在，`version = 0.13.1`、`api = 1.1`、悬浮入口在，`globalThis.SillyTavern` 为真 |
+| 桌面外壳 | 面板能开，八个页签（书架/规则/逻辑/快照/状态/诊断/设置/使用说明），脚本量到横向溢出节点 **0** |
+| 流程文本模式 | 真 DOM 里渲染出「关键词 + 流程 / 比较 $升级经验 >= $所需升级经验 / 成立 …」，「复制给 AI 的说明」按钮在，问题区显示「没有看不懂的行。」 |
+| 手机视口（390×844） | 文本编辑框高度 **422px = 视口的一半**，`50dvh` 生效 |
+| 发现并修掉的问题 | `.ilb-input` 的背景 fallback 写死 `#1b1b1b`，而颜色 `inherit` 来自主题（浅色主题下是深蓝 `rgb(23,63,121)`）→ **深色底 + 深色字**，实测几乎看不清。改成 `rgba(127,127,127,0.14)`，深浅主题都跟主题同调 |
+| 仍未验证 | 真实生成（要有模型）、手机真机 WebView、深色主题实机、`navigator.clipboard` 在 WebView 里是否被拒 |
+
+**新增（实测脚本）**：`tests/live/cdp.mjs`、`tests/live/st-live-check.mjs`、`tests/live/st-flow-text.mjs`、`tests/live/README.md`。它们**不进 `node --test`**（要一个真在跑的宿主 + 带调试端口的 Chrome），回答的是假 DOM 回答不了的问题；用 `ST_DIR=D:\1\APP\SillyTavern node tests/live/st-live-check.mjs` 跑。
+
+**已知未完成**：真实生成流程仍未跑过（要有模型接口）；提示词没有按不同模型分别调优。
 
 ---
 
