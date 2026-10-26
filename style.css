@@ -919,6 +919,21 @@ body.ilb-overlay-open .ilb-fab {
   word-break: break-word;
 }
 
+/* 看得懂、但大概不是你要的：比错误轻一档 */
+.ilb-warn {
+  color: #a16207;
+  word-break: break-word;
+}
+
+/* 手机上要给文本编辑器留出至少半屏（v0.13.1）：手写长流程时小框根本没法改 */
+@media (max-width: 700px) {
+  .ilb-flow-area {
+    min-height: 50dvh;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+}
+
 .ilb-flow-list {
   display: flex;
   flex-direction: column;

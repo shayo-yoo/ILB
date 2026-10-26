@@ -33,7 +33,7 @@ export const FLOW_KIND_HINT = {
   judge: '把几个条件放在一起，全部满足或任一满足',
   compare: '比两个值的大小（变量、数字、文本都行）',
   define: '给一个变量起个值，后面可以拿来比较或计算',
-  calc: '用两个值算出第三个值存进变量',
+  calc: '用两个值算出第三个值存进变量；选「=」就是直接把右边的值存进去',
   add: '往这条规则的正文后面追加一段话',
   remember: '把这个值记进这张聊天的状态，下一轮还在（写 {{ILB:chat.名字}} 就能读）',
   activate: '把另一条规则也拉进这一轮，像它自己出现一样',
@@ -54,7 +54,8 @@ export const CONDITION_KIND_LABEL = {
 };
 
 export const COMPARE_OPS = ['>', '>=', '<', '<=', '==', '!='];
-export const CALC_OPS = ['+', '-', '*', '/', 'min', 'max'];
+/** 计算能用的运算符。'=' 是「直接赋值」：不再拿左右两个值算，而是把右边的值原样存进去。 */
+export const CALC_OPS = ['+', '-', '*', '/', 'min', 'max', '='];
 export const OPERAND_TYPES = ['var', 'number', 'text'];
 export const OPERAND_TYPE_LABEL = { var: '变量', number: '数字', text: '文本' };
 
@@ -343,7 +344,11 @@ export function describeNode(node) {
   }
   if (node.kind === 'compare') return `比较：${describeOperand(node.left)} ${node.op} ${describeOperand(node.right)}`;
   if (node.kind === 'define') return `定义：${node.name || '（未命名）'} = ${describeOperand(node.value)}`;
-  if (node.kind === 'calc') return `计算：${node.target || '（未命名）'} = ${describeOperand(node.left)} ${node.op} ${describeOperand(node.right)}`;
+  if (node.kind === 'calc') {
+    return node.op === '='
+      ? `计算：${node.target || '（未命名）'} = ${describeOperand(node.left)}`
+      : `计算：${node.target || '（未命名）'} = ${describeOperand(node.left)} ${node.op} ${describeOperand(node.right)}`;
+  }
   if (node.kind === 'random') {
     return `随机数：${node.target || '（未命名）'} = ${node.min}–${node.max}${node.integer ? ' 的整数' : ''}（同一楼层结果固定）`;
   }
@@ -541,12 +546,15 @@ function runNode(node, ctx, steps, depth) {
   }
 
   if (node.kind === 'calc') {
-    const value = calcValue(operandValue(node.left, ctx.vars), operandValue(node.right, ctx.vars), node.op);
+    // '=' 是直接赋值：把右边的值原样存进去（数字、文本都行），不参与算术。
+    const value = node.op === '='
+      ? operandValue(node.left, ctx.vars)
+      : calcValue(operandValue(node.left, ctx.vars), operandValue(node.right, ctx.vars), node.op);
     if (node.target) {
       ctx.vars[node.target] = value;
       if (node.persist) ctx.writes[node.target] = value;
     }
-    steps.push({ stage: 'logic', passed: true, reason: `计算 ${node.target || '（未命名）'} = ${value}` });
+    steps.push({ stage: 'logic', passed: true, reason: `计算 ${node.target || '（未命名）'} = ${JSON.stringify(value)}` });
     return null;
   }
 

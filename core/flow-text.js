@@ -52,12 +52,83 @@ const INDENT = '  ';
 export const FLOW_TEXT_HINT = [
   '一个节点一行，写在分支里的行往右缩进两格。',
   '三种值：$名字 是变量，12 是数字，"文字" 是文本（带引号）。',
+  '计算分两种：计算 $变量 = $甲 - $乙 [存]（算），计算 $变量 = 0 [存]（直接赋值）。',
   '引用别的东西：激活 #条目名、调用 >逻辑名、跳转 @2✓.1（位置）。',
   '判断节点写在上一行，它的两个分支各占一块，块头就是「成立」和「不成立」。',
   `开头可以写一行「${MODE_ONLY}」或「${MODE_AND}」；不写按后者算。`,
-  '以 // 开头的行是注释，不参与执行，切换模式后会丢掉。',
+  '以 // 开头的行是注释；行尾写 // 后面的部分也会被忽略。',
   '看不懂的行会被列出来，不会瞎猜；能看懂的部分照常生效。',
 ].join('\n');
+
+/**
+ * 给 AI 的整份提示词：用户复制这段，粘给模型，再说自己的诉求就行。
+ * 这里只描述格式，不描述执行——写坏了由 parseFlowText 一行行报出来。
+ */
+export const FLOW_TEXT_AI_PROMPT = `你在帮我把「判定流程」写成一种固定的文本格式。这种格式只有下面这些词，**不要发明新语法**，也不要写代码块以外的解释。
+
+## 一条流程长什么样
+第一行（可省略）写模式：
+- 关键词 + 流程   ← 默认，先按关键词判定，再跑下面这些步骤
+- 只看流程       ← 不看关键词，直接跑
+
+之后一个节点一行。写在分支里的行，**缩进两格**。
+
+## 全部可用的词（就只有这些）
+检测 包含 "词" 在最近3条        检测 不包含 "词" 在最近3条
+检测 已激活 #条目名             检测 未激活 #条目名
+检测 已聊至少 5 条
+检测 匹配 /正则/i               检测 不匹配 /正则/i
+检测 $变量 有值                 检测 $变量 没有值
+判定 全部满足  /  判定 任一满足   （下面缩进写若干行「条件 …」，条件就是上面「检测」后面的那部分）
+比较 $甲 >= 0                    （比较符：> >= < <= == !=）
+定义 $名字 = "值"
+计算 $变量 = $甲 + 1 [存]        （运算符：+ - * / min max）
+计算 $变量 = 0 [存]              （没有运算符就是直接赋值）
+随机数 $变量 = 1..6              （可加 [小数] 表示小数、[临时] 表示不存进聊天）
+添加 "要追加到正文的一段话"
+记住 $变量 = "值"                （记住会写进这张聊天，下一轮还在）
+激活 #条目名                     （让另一条规则也出场）
+调用 >逻辑名                     （把另一条独立逻辑当子步骤跑）
+跳转 @2✓.1                       （跳到某个位置，可加「最多20次 超了终止」或「超了跳过继续」）
+通过                             （到此为止，这条规则出现）
+不通过                           （到此为止，这条规则不出现）
+
+## 值的写法（只有三种）
+$变量名 ／ 数字（如 12、0.5、-3）／ "带引号的文本"
+不要写 true/false 以外的裸词，不要写表达式（没有 + - 之外的运算符优先级）。
+
+## 位置怎么数
+第 1 个节点是 1；它的「成立」分支里的第 1 个是 1✓.1，「不成立」分支里的是 1✗.1；再往里继续 .1。
+例：2✓.1 表示「第 2 个节点 · 成立分支 · 第 1 个节点」。
+
+## 分支怎么写
+判断类节点（检测 / 判定 / 比较）下面可以有两块：
+  成立
+    缩进两格的步骤
+  不成立
+    缩进两格的步骤
+块可以留空，也可以不写（等同于不成立时什么都不做）。
+
+## 硬规定
+1. 一行只写一个节点，不要合并。
+2. 缩进只用空格（两格一层），不要用 Tab。
+3. 行首或行尾可以写 // 注释，注释不执行。
+4. 变量名不要带空格；中文可以。
+5. 不要写「如果/否则/循环」这类词，流程本身就按顺序执行，跳转用 跳转 @位置。
+6. 只输出这段文本，不要输出 JSON、不要输出解释。
+
+## 例子
+比较 $升级经验 >= $所需升级经验
+  成立
+    计算 $升级经验 = $升级经验 - $所需升级经验 [存]
+    计算 $等级 = $等级 + 1 [存]
+    添加 "你升了一级。"
+  不成立
+    添加 "经验还不够。"
+`;
+
+/** 让用户改脚本时给 AI 的第二句话（拼在提示词后面用）。 */
+export const FLOW_TEXT_AI_TAIL = '请按上面的格式，把我的诉求写成流程文本。只输出文本本身。';
 
 // —— 值（变量 / 数字 / 文本）——
 
@@ -249,7 +320,9 @@ function renderNode(node, label, entries, logics, labels) {
     case 'define':
       return `定义 $${node.name || ''} = ${renderOperand(node.value)}`;
     case 'calc':
-      return `计算 $${node.target || ''} = ${renderOperand(node.left)} ${node.op} ${renderOperand(node.right)}${node.persist ? ' [存]' : ''}`;
+      return node.op === '='
+        ? `计算 $${node.target || ''} = ${renderOperand(node.left)}${node.persist ? ' [存]' : ''}`
+        : `计算 $${node.target || ''} = ${renderOperand(node.left)} ${node.op} ${renderOperand(node.right)}${node.persist ? ' [存]' : ''}`;
     case 'random':
       return `随机数 $${node.target || ''} = ${node.min}..${node.max}${node.integer ? '' : ' [小数]'}${node.persist ? '' : ' [临时]'}`;
     case 'add':
@@ -275,23 +348,36 @@ function renderNode(node, label, entries, logics, labels) {
 
 // —— 解析 ——
 
+/** 把一行里的 // 注释切掉（引号里的 // 不算）。AI 经常一行写完再补一句解释。 */
+function stripComment(text) {
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"') quoted = !quoted;
+    if (!quoted && ch === '/' && text[i + 1] === '/') return text.slice(0, i);
+  }
+  return text;
+}
+
 /** 把文本切成带缩进的行；空行与 // 注释丢掉，行号保留原样给人报错用。 */
 function toLines(text) {
   return String(text ?? '')
     .replace(/\r\n?/g, '\n')
     .split('\n')
     .map((raw, index) => {
-      const expanded = raw.replace(/\t/g, INDENT);
+      const expanded = stripComment(raw).replace(/\t/g, INDENT);
       const body = expanded.trim();
       return { no: index + 1, indent: expanded.length - expanded.trimStart().length, body };
     })
-    .filter((line) => line.body !== '' && !line.body.startsWith('//'));
+    .filter((line) => line.body !== '');
 }
 
-const GOTO_RE = /^跳转\s+@(\S*)\s*最多\s*(\d+)\s*次\s*超了\s*(跳过继续|终止)$/;
+const GOTO_RE = /^跳转\s+@(\S+?)(?:\s+最多\s*(\d+)\s*次)?(?:\s*超了\s*(跳过继续|终止))?\s*(?:[（(][^）)]*[）)])?$/;
 const JUDGE_RE = /^判定\s+(全部满足|任一满足)$/;
 const COMPARE_RE = /^比较\s+(.+?)\s*(>=|<=|==|!=|>|<)\s*(.+)$/;
 const CALC_RE = /^计算\s+(\$[^\s]+)\s*=\s*(.+?)\s*(\+|-|\*|\/|min|max)\s+(.+?)(\s*\[存\])?$/;
+/** 直接赋值：计算 $变量 = 值 [存]。AI 很爱这么写，所以必须认。 */
+const CALC_SET_RE = /^计算\s+(\$[^\s]+)\s*=\s*(.+?)(\s*\[存\])?$/;
 const DEFINE_RE = /^定义\s+(\$[^\s]+)\s*=\s*(.*)$/;
 const REMEMBER_RE = /^记住\s+(\$[^\s]+)\s*=\s*(.*)$/;
 const RANDOM_RE = /^随机数\s+(\$[^\s]+)\s*=\s*(-?\d+)\s*\.\.\s*(-?\d+)(\s*\[小数\])?(\s*\[临时\])?$/;
@@ -409,15 +495,40 @@ export function parseFlowText(text, refs = {}) {
           node.target = '';
         }
         delete node.wanted;
-        delete node.lineNo;
+        // lineNo 留给后面的「跳转指向自己」检查用，检查完再清
       }
       fixGoto(node.then ?? []);
       fixGoto(node.else ?? []);
     });
   })(built.nodes);
 
+  // 「跳转 @2」写在 2 号节点里 = 原地打转。这不是写错语法，是多半写错了位置，
+  // 所以只当警告报出来（problems 仍然是"看不懂的行"，两者分开显示）。
+  const warnings = [];
+  (function checkSelfJump(list) {
+    (Array.isArray(list) ? list : []).forEach((node) => {
+      if (node.kind === 'goto' && node.target && node.target === node.id) {
+        warnings.push({
+          line: node.lineNo ?? 0,
+          text: '跳转',
+          reason: `这条跳转指向自己：会原地打转，最多跑到 ${node.max ?? 20} 次就停下。想回到上一步，看它上面那个节点是几号，写成 @1 这样。`,
+        });
+      }
+      checkSelfJump(node.then ?? []);
+      checkSelfJump(node.else ?? []);
+    });
+  })(built.nodes);
+
+  (function dropLineNo(list) {
+    (Array.isArray(list) ? list : []).forEach((node) => {
+      delete node.lineNo;
+      dropLineNo(node.then ?? []);
+      dropLineNo(node.else ?? []);
+    });
+  })(built.nodes);
+
   const flow = normalizeFlow({ mode, nodes: built.nodes });
-  return { flow, problems };
+  return { flow, problems, warnings };
 }
 
 let condCounter = 0;
@@ -451,17 +562,17 @@ function readNode(line, entries, logics, note) {
   if (body.startsWith(`${FLOW_TEXT_KEYWORDS.compare} `)) {
     const m = COMPARE_RE.exec(body);
     if (!m) {
-      note(line, '比较要写成：比较 $生命 > 0');
+      note(line, `比较看不懂：「${body}」；要写成 比较 $变量 > 0（比较符可用 ${COMPARE_OPS.join(' ')}）`);
       return null;
     }
     if (!COMPARE_OPS.includes(m[2])) {
-      note(line, `不认识的比较符：${m[2]}`);
+      note(line, `不认识的比较符「${m[2]}」；能用的是 ${COMPARE_OPS.join(' ')}`);
       return null;
     }
     const left = parseOperand(m[1]);
     const right = parseOperand(m[3]);
     if (!left || !right) {
-      note(line, '比较的两边只能是 $变量、数字或 "文本"');
+      note(line, `「${body}」两边看不懂；只能是 $变量、数字或 "文本"`);
       return null;
     }
     return { ...makeNode('compare'), left, op: m[2], right };
@@ -469,21 +580,44 @@ function readNode(line, entries, logics, note) {
 
   if (body.startsWith(`${FLOW_TEXT_KEYWORDS.calc} `)) {
     const m = CALC_RE.exec(body);
-    if (!m) {
-      note(line, '计算要写成：计算 $生命 = $生命 - 1 [存]');
-      return null;
+    if (m) {
+      if (!CALC_OPS.includes(m[3])) {
+        note(line, `不认识的运算符「${m[3]}」；能用的是 ${CALC_OPS.filter((op) => op !== '=').join(' ')}`);
+        return null;
+      }
+      const left = parseOperand(m[2]);
+      const right = parseOperand(m[4]);
+      if (!left || !right) {
+        note(line, `「${body}」里算子看不懂；两边的值只能是 $变量、数字或 "文本"`);
+        return null;
+      }
+      return { ...makeNode('calc'), target: m[1].slice(1), op: m[3], left, right, persist: Boolean(m[5]) };
     }
-    if (!CALC_OPS.includes(m[3])) {
-      note(line, `不认识的运算符：${m[3]}`);
-      return null;
+
+    // 没有运算符 → 当成直接赋值（计算 $变量 = 值）。AI 写初始化时几乎都是这种。
+    const set = CALC_SET_RE.exec(body);
+    if (set) {
+      const value = parseOperand(set[2]);
+      if (!value) {
+        note(line, `「${body}」右边看不懂：${String(set[2]).slice(0, 20)}；只能写 $变量、数字或 "文本"`);
+        return null;
+      }
+      return {
+        ...makeNode('calc'),
+        target: set[1].slice(1),
+        op: '=',
+        left: value,
+        right: { type: 'number', value: 0 },
+        persist: Boolean(set[3]),
+      };
     }
-    const left = parseOperand(m[2]);
-    const right = parseOperand(m[4]);
-    if (!left || !right) {
-      note(line, '计算的两边只能是 $变量、数字或 "文本"');
-      return null;
+
+    if (!body.includes('=')) {
+      note(line, `计算少了一个等号：「${body}」；要写成 计算 $变量 = 值 [存]`);
+    } else {
+      note(line, `「${body}」看不懂；要写成 计算 $变量 = 值 [存]，或者 计算 $变量 = $甲 - $乙 [存]`);
     }
-    return { ...makeNode('calc'), target: m[1].slice(1), op: m[3], left, right, persist: Boolean(m[5]) };
+    return null;
   }
 
   if (body.startsWith(`${FLOW_TEXT_KEYWORDS.define} `)) {
@@ -517,7 +651,7 @@ function readNode(line, entries, logics, note) {
   if (body.startsWith(`${FLOW_TEXT_KEYWORDS.random} `)) {
     const m = RANDOM_RE.exec(body);
     if (!m) {
-      note(line, '随机数要写成：随机数 $点数 = 1..6 [小数] [临时]');
+      note(line, `随机数看不懂：「${body}」；要写成 随机数 $点数 = 1..6（可加 [小数] [临时]）`);
       return null;
     }
     const min = Number(m[2]);
@@ -573,10 +707,15 @@ function readNode(line, entries, logics, note) {
   if (body.startsWith(`${FLOW_TEXT_KEYWORDS.goto} `)) {
     const m = GOTO_RE.exec(body);
     if (!m) {
-      note(line, '跳转要写成：跳转 @2✓.1 最多20次 超了终止');
+      note(line, `跳转看不懂：「${body}」；要写成 跳转 @2✓.1（后面可以加 最多20次 超了终止）`);
       return null;
     }
-    const node = { ...makeNode('goto'), target: '', max: Number(m[2]), onLimit: m[3] === '跳过继续' ? 'continue' : 'stop' };
+    const node = {
+      ...makeNode('goto'),
+      target: '',
+      max: m[2] ? Number(m[2]) : 20,
+      onLimit: m[3] === '跳过继续' ? 'continue' : 'stop',
+    };
     node.wanted = m[1];
     node.lineNo = line.no;
     return node;

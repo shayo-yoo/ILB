@@ -21,7 +21,7 @@ import {
   countFlowNodes,
   describeNode,
 } from '../core/flow.js';
-import { renderFlowText, parseFlowText, FLOW_TEXT_HINT } from '../core/flow-text.js';
+import { renderFlowText, parseFlowText, FLOW_TEXT_HINT, FLOW_TEXT_AI_PROMPT, FLOW_TEXT_AI_TAIL } from '../core/flow-text.js';
 
 const CONDITION_ITEMS = CONDITION_KINDS.map((k) => ({ value: k, label: CONDITION_KIND_LABEL[k] }));
 const BRANCH_KINDS = ['test', 'judge', 'compare'];
@@ -139,6 +139,10 @@ export function renderFlowEditor(options = {}) {
           );
         }
       }
+      // 警告不是"看不懂"，而是"看得懂但大概不是你要的"（比如跳转原地打转）
+      for (const w of parsed.warnings ?? []) {
+        report.appendChild(el('p', { class: 'ilb-warn', text: `第 ${w.line} 行：${w.reason}` }));
+      }
       const count = countFlowNodes(parsed.flow.nodes);
       preview.textContent = announce
         ? `已经收下了：${count} 个节点${parsed.problems.length > 0 ? `（${parsed.problems.length} 行没看懂，那几行没生效）` : ''}`
@@ -158,6 +162,7 @@ export function renderFlowEditor(options = {}) {
           notify();
           redraw();
         }, { title: '把文本变成节点树并保存；看不懂的行会列出来' }),
+        button('复制给 AI 的说明', () => copyForAi(), { ghost: true, title: '复制一段提示词，粘给 AI，它就会按这个格式写' }),
         button('清空', () => {
           area.value = renderFlowText({ mode: model.mode, nodes: [] }, { entries, logics });
           sync(false);
@@ -168,6 +173,33 @@ export function renderFlowEditor(options = {}) {
     box.appendChild(preview);
     sync(false);
     return box;
+  }
+
+  /** 把语法说明 + 一句"按这个格式写"复制到剪贴板；剪贴板不可用时退回旧办法。 */
+  async function copyForAi() {
+    const text = `${FLOW_TEXT_AI_PROMPT}\n${FLOW_TEXT_AI_TAIL}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        if (ctx?.toast) ctx.toast('提示词已复制，直接粘给 AI 就行');
+        return;
+      }
+    } catch (error) {
+      // 某些 WebView 没给剪贴板权限，往下走兜底
+    }
+    try {
+      const holder = el('textarea', { class: 'ilb-input' });
+      holder.value = text;
+      holder.style.position = 'fixed';
+      holder.style.left = '-9999px';
+      document.body.appendChild(holder);
+      holder.select();
+      const ok = document.execCommand && document.execCommand('copy');
+      holder.remove();
+      if (ctx?.toast) ctx.toast(ok ? '提示词已复制，直接粘给 AI 就行' : '复制没成功，可以手动选中文本框里的内容');
+    } catch (error) {
+      if (ctx?.toast) ctx.toast('这个浏览器不让复制，请手动选择文本');
+    }
   }
 
   /** 离开文本模式时把 textarea 里的内容收进 model（没看懂的行不生效，但不静默） */

@@ -77,7 +77,7 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 | 使用说明 | `ui/guide.js` + `data/guide/zh-cn.json` | 标签栏「使用说明」；同一份 JSON 导出成 `docs/使用指南.md` |
 | 编辑器 | `ui/editor.js` | 四段式规则编辑 + 「试一句」预演 + 「判定流程」原地展开 |
 | 流程编辑器 | `ui/flow-editor.js` | 树形节点编辑（不是连线画布），手机上不横滑；右上角可切成文本写法 |
-| 流程文本层 | `core/flow-text.js` | 纯函数：节点树 ⇄ 文本（13 个固定关键词），只做转译、不参与执行（v0.13.0） |
+| 流程文本层 | `core/flow-text.js` | 纯函数：节点树 ⇄ 文本（13 个固定关键词、三种值），只做转译、不参与执行；自带可复制的 AI 提示词（v0.13.1） |
 | 导入界面 | `ui/importer.js` | 批量导入、选择浮层、导入结果报告 |
 | 自检 | `ui/selftest.js` | 一键回答"哪一环断了"：样式表、浮层规则、浮层能否开出来、扩展是否就绪 |
 | 浏览器探针 | `tests/browser-probe.html` | 用真实 Chrome 量浮层矩形与关闭按钮，布局结论不靠推断 |
@@ -106,7 +106,7 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（176 个）
+# 1) 纯逻辑单元测试（181 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
   tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
   tests/vars.test.mjs tests/flow-vars.test.mjs tests/fields.test.mjs tests/logic.test.mjs \
@@ -132,7 +132,7 @@ node tests/api-demo.mjs
 node tests/export-guide.mjs
 ```
 
-三个检查都通过的结果（2026-10-26 实测）：单元 176/176、链接 49 个模块全通过（**包含入口 `index.js`**）、
+三个检查都通过的结果（2026-10-27 实测）：单元 181/181、链接 49 个模块全通过（**包含入口 `index.js`**）、
 冒烟 22 步全过（含「使用说明」入口与说明渲染）。注意这仍然**不是浏览器实测**：DOM 是假的，宿主是假的。
 
 > 标签栏最右的「使用说明」读 `data/guide/zh-cn.json`；`docs/使用指南.md` 是它导出的同源副本，**不要手改 md**。
@@ -244,9 +244,9 @@ node tests/serve.mjs 8792
   若识别不到会退回同一个默认桶，不同聊天可能共用检查点——这是下一轮实测要看的点。
 - 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
   只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
-- 流程的文本模式（v0.13.0）只有 `tests/flow-text.test.mjs` 12 条用例与冒烟 2 步兜底；真实 SillyTavern 里没试过，
-  也没有语法高亮/自动补全。它和表单改的是同一份 `flow.nodes`，不是第二套执行逻辑（D-0050）。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（176 + 49 模块 + 22 步），但**它们用的都是假宿主与假 DOM**。
+- 流程的文本模式（v0.13.0，v0.13.1 认直接赋值与行内注释）只有 `tests/flow-text.test.mjs` 的 17 条用例与冒烟 2 步兜底；
+  真实 SillyTavern 里没试过，也没有语法高亮/自动补全。它和表单改的是同一份 `flow.nodes`，不是第二套执行逻辑（D-0050）。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（181 + 49 模块 + 22 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 独立逻辑、跳转/调用、AI 正文调用（v0.9.0）只在单元测试与 `tests/logic-demo.mjs` 里验证过；
   真实模型会不会照着写 `[[ILB:…]]`、跳转长流程在界面上累不累，都要等实机。

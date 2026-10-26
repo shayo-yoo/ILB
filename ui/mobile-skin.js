@@ -391,6 +391,14 @@ dialog.ilb-m .ilb-textarea {
   font-family: inherit;
 }
 dialog.ilb-m .ilb-textarea { min-height: 120px; }
+/* 流程的文本编辑器：手机上至少半屏，否则手写长流程根本改不动（v0.13.1） */
+dialog.ilb-m .ilb-flow-area {
+  min-height: 50dvh;
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
 
 dialog.ilb-m .ilb-card {
   display: block;

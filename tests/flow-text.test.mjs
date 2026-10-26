@@ -243,3 +243,100 @@ test('describeFlow 与文本层互不干扰（表单那边仍读节点树）', (
   const flow = kitchenSink();
   assert.match(describeFlow(flow), /^关键词 \+ 流程，共 \d+ 个节点$/);
 });
+
+// —— v0.13.1：AI 真写出来的那种脚本要能认 ——
+
+const AI_SCRIPT = `// 第一部分：初始化与判定（对应你写的第一次触发逻辑）
+比较 $升级经验 == 0
+  成立
+    // 按照你的公式：(等级x10) x (等级x0.1) - 等级
+    计算 $等级系数1 = $等级 * 10 [存]
+    计算 $等级系数2 = $等级 * 0.1 [存]
+    计算 $系数乘积 = $等级系数1 * $等级系数2 [存]
+    计算 $所需升级经验 = $系数乘积 - $等级 [存]
+
+    // 初始化当前经验为0，防止死循环（如果你的$升级经验就是当前经验的话）
+    计算 $升级经验 = 0 [存]
+  不成立
+    // 如果不是第一次触发，什么都不做，继续往下走
+
+// 第二部分：升级判定（假设此时$升级经验已经通过其他途径增加）
+比较 $升级经验 >= $所需升级经验
+  成立
+    计算 $升级经验 = $升级经验 - $所需升级经验 [存]
+    计算 $等级 = $等级 + 1 [存]
+    计算 $等级系数1 = $等级 * 10 [存]
+    计算 $等级系数2 = $等级 * 0.1 [存]
+    计算 $系数乘积 = $等级系数1 * $等级系数2 [存]
+    计算 $所需升级经验 = $系数乘积 - $等级 [存]
+    // 如果只升一级，就留空，直接结束
+    跳转 @2 (回到判断所需经验的前一行)
+  不成立
+    // 经验不足，直接结束`;
+
+test('AI 写的那种脚本能整份读进来（直接赋值、行内注释、跳转后带括号说明）', () => {
+  const got = parseFlowText(AI_SCRIPT, {});
+  assert.deepEqual(got.problems, []);
+  assert.equal(got.flow.nodes.length, 2);
+
+  const [first, second] = got.flow.nodes;
+  assert.equal(first.kind, 'compare');
+  // 「计算 $升级经验 = 0」不是算术，是直接赋值
+  const init = first.then.find((n) => n.target === '升级经验');
+  assert.equal(init.kind, 'calc');
+  assert.equal(init.op, '=');
+  assert.deepEqual(init.left, { type: 'number', value: 0 });
+  assert.equal(init.persist, true);
+
+  // 「跳转 @2 (回到…)」里括号那段是说明，不该影响解析
+  const jump = second.then.find((n) => n.kind === 'goto');
+  assert.ok(jump);
+  assert.equal(jump.target, second.id);
+  assert.equal(jump.max, 20);
+});
+
+test('直接赋值认数字、文本与变量；写回文本再读回来还是赋值不是算术', () => {
+  const flow = normalizeFlow({
+    mode: 'only',
+    nodes: [
+      { ...makeNode('calc'), target: '人数', op: '=', left: { type: 'number', value: 3 }, right: { type: 'number', value: 0 }, persist: true },
+      { ...makeNode('calc'), target: '称号', op: '=', left: { type: 'text', value: '勇者' }, right: { type: 'number', value: 0 }, persist: false },
+      { ...makeNode('calc'), target: '副本', op: '=', left: { type: 'var', name: '原值' }, right: { type: 'number', value: 0 }, persist: true },
+    ],
+  });
+  const text = renderFlowText(flow, {});
+  assert.match(text, /计算 \$人数 = 3 \[存\]/);
+  assert.match(text, /计算 \$称号 = "勇者"\n/);
+  const back = parseFlowText(text, {});
+  assert.deepEqual(back.problems, []);
+  assert.deepEqual(stripIds(back.flow.nodes), stripIds(flow.nodes));
+});
+
+test('直接赋值在执行层就是"存进去"，不参与加法', () => {
+  const flow = normalizeFlow({
+    mode: 'only',
+    nodes: [
+      { ...makeNode('calc'), target: '称号', op: '=', left: { type: 'text', value: '勇者' }, right: { type: 'number', value: 0 }, persist: true },
+    ],
+  });
+  const result = evaluateFlow(flow, { text: '', vars: {}, messageCount: 1 });
+  assert.deepEqual(result.writes, { 称号: '勇者' });
+});
+
+test('看不懂时把这一行原样念出来，不拿别处的例子糊弄人', () => {
+  const got = parseFlowText('计算 这个东西\n计算 $甲 = \n比较 $甲 >=', {});
+  assert.equal(got.problems.length, 3);
+  for (const p of got.problems) assert.ok(p.reason.includes('「') || p.reason.includes('这一行'));
+  assert.ok(got.problems.some((p) => p.reason.includes('计算 这个东西')));
+  assert.ok(!got.problems.some((p) => p.reason.includes('$生命')));
+});
+
+test('跳转指向自己时报警告（不是错误），不影响保存', () => {
+  // 第 2 个节点写「跳转 @2」，就是它自己 —— 会原地打转
+  const got = parseFlowText(`添加 "开始"
+跳转 @2 最多5次 超了终止`, {});
+  assert.deepEqual(got.problems, []);
+  assert.equal(got.warnings.length, 1);
+  assert.ok(got.warnings[0].reason.includes('原地打转'));
+  assert.equal(got.warnings[0].line, 2);
+});
