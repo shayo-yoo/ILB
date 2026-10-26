@@ -15,3 +15,6 @@ desktop.ini
 
 # 浏览器探针生成的量测结果（每次跑都会变，不进版本库）
 tests/last-report.json
+
+# 真实宿主验收脚本的截图（本地跑一次就变，不进版本库）
+tests/live/last-*.png
