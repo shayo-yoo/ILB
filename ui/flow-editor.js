@@ -52,6 +52,8 @@ export function renderFlowEditor(options = {}) {
   let model = normalizeFlow(options.flow);
   const entries = Array.isArray(options.entries) ? options.entries.filter((e) => e && e.id) : [];
   const logics = Array.isArray(options.logics) ? options.logics.filter((l) => l && l.id) : [];
+  /** 提示（toast）走外面传进来的 ctx；没传就安静跳过，不能因为"没地方弹提示"而抛错 */
+  const ctx = options.ctx ?? null;
   const root = el('div', { class: 'ilb-flow' });
   /** 复制缓冲区：只在本编辑器内有效，粘过来会给所有节点换新 id，避免和原来的撞上 */
   let copied = null;
@@ -162,7 +164,10 @@ export function renderFlowEditor(options = {}) {
           notify();
           redraw();
         }, { title: '把文本变成节点树并保存；看不懂的行会列出来' }),
-        button('复制给 AI 的说明', () => copyForAi(), { ghost: true, title: '复制一段提示词，粘给 AI，它就会按这个格式写' }),
+        button('复制给 AI 的说明', () => {
+          // 复制是异步的（可能等剪贴板权限），这里必须接住，否则失败会变成"未处理的异步错误"
+          copyForAi().catch(() => {});
+        }, { ghost: true, title: '复制一段提示词，粘给 AI，它就会按这个格式写' }),
         button('清空', () => {
           area.value = renderFlowText({ mode: model.mode, nodes: [] }, { entries, logics });
           sync(false);

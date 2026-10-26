@@ -170,6 +170,9 @@ const { createPanel } = await import('../ui/panel.js');
 const { openOverlay } = await import('../ui/help.js');
 
 let failures = 0;
+/** 没被接住的异步错误也算失败：浏览器里表现为"未处理的异步错误"，用户会看到红字 */
+const unhandled = [];
+process.on('unhandledRejection', (reason) => unhandled.push(reason));
 function step(name, fn) {
   try {
     fn();
@@ -313,6 +316,19 @@ step('文本模式里看不懂的行会当场列出来', () => {
   clickText(body, '切回表单');
 });
 
+// 复制给 AI 的说明：v0.13.1 真机上点它报过 "ctx is not defined"（假 DOM 没抓到，因为没有 navigator.clipboard
+// 就没人走到那段）。这里点一次，然后等一个 tick，看有没有未处理的异步错误。
+clickText(body, '文本模式');
+clickText(body, '复制给 AI 的说明');
+await new Promise((resolve) => setTimeout(resolve, 50));
+step('「复制给 AI 的说明」点了不抛错，并且给了提示', () => {
+  if (unhandled.length > 0) {
+    throw new Error(`有未处理的异步错误：${unhandled[0] && unhandled[0].message}`);
+  }
+  if (!notes.some((n) => n.includes('复制'))) throw new Error('点了复制但没有任何提示');
+});
+clickText(body, '切回表单');
+
 step('导入选择浮层能打开并渲染', async () => {
   const { openImportDialog } = await import('../ui/importer.js');
   const ctx = {
@@ -441,4 +457,9 @@ step('标签栏有「使用说明」，内容能画出来', async () => {
 
 console.log(`\n界面冒烟：失败 ${failures} 个；toast 记录 ${notes.length} 条`);
 if (notes.length) console.log(notes.slice(0, 8).join('\n'));
+if (unhandled.length > 0) {
+  failures += unhandled.length;
+  console.log(`未处理的异步错误 ${unhandled.length} 个（在浏览器里会显示成红字）：`);
+  unhandled.slice(0, 3).forEach((e) => console.log(`  ${e && (e.message || e)}`));
+}
 process.exitCode = failures > 0 ? 1 : 0;

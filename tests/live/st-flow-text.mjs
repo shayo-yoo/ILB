@@ -35,10 +35,21 @@ const desktop = await page.evaluate(`(async () => {
   await new Promise((r) => setTimeout(r, 300));
   const area = box.querySelector('.ilb-flow-area');
   const copy = [...box.querySelectorAll('button')].find((b) => /复制给 AI/.test(b.textContent || ''));
+  // 点一下「复制给 AI 的说明」：v0.13.1 真机上这里报过 "ctx is not defined"，
+  // 复制虽然成功，但控制台一片红。现在要求点了之后一条错误都不许有。
+  const errors = [];
+  const onError = (e) => errors.push(String(e.reason?.message || e.message || e));
+  window.addEventListener('unhandledrejection', onError);
+  window.addEventListener('error', onError);
+  if (copy) copy.click();
+  await new Promise((r) => setTimeout(r, 700));
+  window.removeEventListener('unhandledrejection', onError);
+  window.removeEventListener('error', onError);
   return {
     area: Boolean(area),
     firstLines: area ? area.value.split('\\n').slice(0, 3) : null,
     copyButton: Boolean(copy),
+    copyErrors: errors,
     problems: box.querySelector('.ilb-flow-problems')?.textContent?.slice(0, 60) ?? null,
   };
 })()`);
@@ -60,7 +71,7 @@ const mobile = await page.evaluate(`(() => {
 console.log('手机高度：', JSON.stringify(mobile));
 await screenshot(page.send, 'tests/live/last-flow-mobile.png');
 
-const ok = desktop.area && desktop.copyButton && mobile.pass;
+const ok = desktop.area && desktop.copyButton && desktop.copyErrors.length === 0 && mobile.pass;
 console.log(ok ? '✅ 通过' : '❌ 有项目没通过');
 page.close();
 process.exit(ok ? 0 : 1);
