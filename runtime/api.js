@@ -280,6 +280,9 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
         outcome,
         ran: true,
         passed,
+        // 这条逻辑是谁：按 id 调用时名字可能重名，界面要分组记账就用 id（v0.14.1）
+        id: logic.id,
+        name: logic.name,
         reason: result.reason ?? '',
         writes,
         extra: result.extra ?? [],
@@ -343,7 +346,7 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
       methods: ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe'],
       ui: ['openPanel', 'close'],
       events: ['ilb:ready', 'ilb:change'],
-      callReturns: ['ok', 'outcome', 'ran', 'passed', 'reason', 'writes', 'extra', 'ui', 'durationMs', 'steps', 'vars', 'unusedArgs', 'missingParams'],
+      callReturns: ['ok', 'outcome', 'ran', 'passed', 'id', 'name', 'reason', 'writes', 'extra', 'ui', 'durationMs', 'steps', 'vars', 'unusedArgs', 'missingParams'],
       notes: '只写聊天变量；不改设置与书。失败返回 { ok:false, outcome:"error", reason }。',
     }),
     ui: {

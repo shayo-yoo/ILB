@@ -72,7 +72,7 @@ window.addEventListener('ilb:ready', () => {
 | `snapshot()` | → `{version, caps, chatId, tick, vars, books}` | 只读快照。`vars` 是扁平标量表：`{生命:90, 背包:'铁钥匙', 安静:true}`；`books[].logics[].params` 是参数名数组 |
 | `set(name, value)` | → `{ok, outcome, reason?}` | 写/增变量。名字非空、≤40 字；值只收 number / string / boolean；`NaN/Infinity` 会被拒绝 |
 | `remove(name)` | → `{ok, outcome, reason?}` | 删变量 |
-| `call(nameOrId, args?, opts?)` | → `{ok, outcome, ran, passed, reason, writes, extra, steps, vars, unusedArgs, missingParams, ui, durationMs}` | 调用**已启用**的独立逻辑。`args` 是**对象**，键是 `call.params` 里的参数名（**按名绑定，不是按顺序**）；跨书同名时传 id（`B1::L::1`） |
+| `call(nameOrId, args?, opts?)` | → `{ok, outcome, ran, passed, id, name, reason, writes, extra, steps, vars, unusedArgs, missingParams, ui, durationMs}` | 调用**已启用**的独立逻辑。`args` 是**对象**，键是 `call.params` 里的参数名（**按名绑定，不是按顺序**）；跨书同名时传 id（`B1::L::1`） |
 | `callAsync(nameOrId, args?, opts?)` | 同 `call` | 先让出一帧再跑，返回值同形，**永不 reject**（1.2 新增） |
 | `subscribe(fn)` | → `unsubscribe()` | 任何变化后回调（**不防抖**，UI 自己节流）；同时 `document` 上会发 `ilb:change`；`fn` 不是函数时返回空函数，不抛异常 |
 | `ui.openPanel(tab?)` / `ui.close()` | — | 打开 ILB 面板（`shelf/rules/logic/snapshots/state/diagnostics/settings`）或收起 |
@@ -82,6 +82,8 @@ window.addEventListener('ilb:ready', () => {
 `outcome` 三态：`'ok'` / `'blocked'`（业务拒绝，画黄字）/ `'error'`（调用或流程出错，画红字）。`ok` 仍等于 `passed`，旧写法不变。
 
 `ui`（1.2 新增）：逻辑里写了「界面」步骤时，`call` 会带回一条指令 `{ v, page?, toast?, select?, ask?, seq? }`，没写就是 `null`。它**只在用户调 `call` 时**产生（聊天里自动触发不发），**一次只有一条**，不落盘、不进提示词、也不会等你点。详细字段与四条规矩见 `docs/UI扩展接口.md` §4「带回来的界面指令」。
+
+三条容易踩的（v0.14.1 写死）：`page` 和 `select` 都是 **id**，不是标题/label；`seq` 是"一条逻辑一格"，分桶要用 `call` 返回的 `id`（不是 `name`，跨书会重名）；`page` 优先于 `select`，只给 `select` 时你可以自己翻到那一页，给了 `page` 就按 `page` 来。
 
 `snapshot()` 的形状：
 

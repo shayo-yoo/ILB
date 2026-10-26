@@ -121,7 +121,11 @@ test('调用逻辑：也可以直接传 id，跨书同名时要用 id', () => {
   assert.equal(dup.candidates.length, 2);
   assert.match(dup.reason, /请改传 id/);
   const idA = books[0].logic[0].id;
-  assert.equal(api.call(idA).ok, true);
+  const byId = api.call(idA);
+  assert.equal(byId.ok, true);
+  // 界面要分组记账（比如 seq）就得知道是谁，重名时只能靠 id（v0.14.1）
+  assert.equal(byId.id, idA);
+  assert.equal(byId.name, '同名');
 });
 
 test('业务拒绝是 blocked，流程写错是 error（ILB-UI-01）', () => {
