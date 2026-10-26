@@ -23,6 +23,8 @@ if (!loaded) {
 const state = await page.evaluate(`(() => ({
   version: globalThis.ILB.version ?? null,
   api: globalThis.ILB.api?.version ?? null,
+  caps: globalThis.ILB.api?.caps ?? [],
+  callAsync: typeof globalThis.ILB.api?.callAsync,
   fab: Boolean(document.querySelector('.ilb-fab, #ilb-fab, .ilb-window')),
   host: Boolean(globalThis.SillyTavern),
 }))()`);
@@ -56,7 +58,8 @@ console.log('面板：', JSON.stringify(panel));
 await screenshot(page.send, 'tests/live/last-panel.png');
 console.log('截图：tests/live/last-panel.png');
 
-const ok = state.api === '1.1' && panel.shell === 'desktop' && panel.overflowNodes === 0;
+const ok = state.api === '1.2' && state.caps.includes('ui') && state.callAsync === 'function'
+  && panel.shell === 'desktop' && panel.overflowNodes === 0;
 console.log(ok ? '✅ 通过' : '❌ 有项目没通过');
 page.close();
 process.exit(ok ? 0 : 1);

@@ -1,4 +1,4 @@
-# ILB 对外接口（给别的扩展用）· API v1.1
+# ILB 对外接口（给别的扩展用）· API v1.2
 
 > 这份文件是**契约**。ILB 内部的 `repository / pipeline / 书的字段结构` 都可能在版本间改动；别的扩展只许用下面这些入口，不要直接读 `window.ILB.repository` 之类的东西。
 >
@@ -14,14 +14,14 @@ const api = window.ILB?.api;
 
 // 方式二：不确定加载顺序，等它
 window.addEventListener('ilb:ready', (event) => {
-  // event.detail.version === '1.1'
+  // event.detail.version === '1.2'
   const api = window.ILB.api;
 });
 ```
 
 如果拿不到 `window.ILB.api`，说明 ILB 没装、没启用，或者版本低于 v0.11.0 —— 自己降级成"不显示"，不要报错刷屏。
 
-## 2. 五个入口
+## 2. 六个入口
 
 | 方法 | 作用 | 返回 |
 |---|---|---|
@@ -29,11 +29,12 @@ window.addEventListener('ilb:ready', (event) => {
 | `set(name, value)` | 写一个聊天变量（数字/文字/开关） | `{ ok:true, name, value }` 或 `{ ok:false, outcome:'error', reason }` |
 | `remove(name)` | 删一个聊天变量 | `{ ok:true, name }` / `{ ok:false, outcome:'error', reason }` |
 | `call(nameOrId, args?, opts?)` | 跑一条已启用的独立逻辑 | 见 §4 |
+| `callAsync(nameOrId, args?, opts?)` | 同上，但会先让出一帧再跑（1.2 新增） | 与 `call` 同形；**永不 reject** |
 | `subscribe(fn)` | 订阅变化，返回退订函数 | `unsubscribe()`；`fn` 不是函数时返回空函数，不抛异常 |
 
 另有：
-- `version`（契约版本，现在是 `'1.1'`）；
-- `caps`（能力清单，如 `'nonce'`、`'strict'`，比版本号更适合做特性判断）；
+- `version`（契约版本，现在是 `'1.2'`）；
+- `caps`（能力清单，如 `'nonce'`、`'strict'`、`'ui'`、`'callAsync'`，比版本号更适合做特性判断）；
 - `describe()`（自述，打印出来就知道这版有什么）；
 - `ui.openPanel(tab?)` / `ui.close()`（打开/关闭 ILB 面板，`tab` 可以是 `'shelf' | 'rules' | 'logic' | 'snapshots' | 'state' | 'diagnostics' | 'settings'`）；
 - `notify(reason?)`（让 ILB 主动广播一次变化，给"我改完自己的 UI 想顺手刷新别人"的场景）。
@@ -42,8 +43,8 @@ window.addEventListener('ilb:ready', (event) => {
 
 ```json
 {
-  "version": "1.1",
-  "caps": ["snapshot", "set", "remove", "call", "subscribe", "outcome", "byId", "nonce", "context", "strict", "vars", "caps"],
+  "version": "1.2",
+  "caps": ["snapshot", "set", "remove", "call", "callAsync", "ui", "subscribe", "outcome", "byId", "nonce", "context", "strict", "vars", "caps"],
   "chatId": "某场聊天",
   "tick": 12,
   "vars": { "金币": 5, "天气": "雨" },
@@ -114,6 +115,8 @@ const again  = api.call('b1::L::1', { 次数: 1 }, { nonce: '再来一次', stri
   vars: { … },          // 跑完之后的完整变量表（= snapshot().vars）
   unusedArgs: [],       // 传了但逻辑没声明的参数名  ← 1.1 新增
   missingParams: [],    // 声明了但没传的参数名      ← 1.1 新增
+  ui: null,             // 这次调用带回的界面指令，没有就是 null  ← 1.2 新增
+  durationMs: 3,        // 这次调用花了多少毫秒（非负整数）      ← 1.2 新增
   candidates: undefined // 只在"同名逻辑"时出现
 }
 ```
@@ -132,6 +135,46 @@ const again  = api.call('b1::L::1', { 次数: 1 }, { nonce: '再来一次', stri
 
 能。1.1 起，`call` 里带「调用逻辑」节点的逻辑会正常往下跑（深度上限 3 层），被调用的逻辑同样只能看已启用、按 id/名字解析。1.0 里这里会静默跳过。
 
+### 带回来的界面指令（1.2 新增）
+
+逻辑流程里可以放「界面」步骤。它**不画界面、不改状态**，只是把一条指令交给你：
+
+```js
+const result = api.call('抽卡', { 次数: 1 });
+if (result.ui) {
+  // 一条指令，形如下面这样；没有就是 null
+}
+```
+
+```json
+{
+  "v": 1,
+  "page": "结果页",
+  "toast": "SSR！",
+  "select": "card-3",
+  "seq": 7,
+  "ask": { "title": "确认抽卡？", "text": "消耗 10 金币", "ok": "确定" }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `v` | `1` | 指令格式版本，以后加字段会升 |
+| `page` | 字符串 ≤64 | 翻到哪个页面（页面 id 是你自己的约定） |
+| `toast` | 字符串 ≤80 | 提示一句 |
+| `select` | 字符串 ≤64 | 聚焦/高亮哪个控件（控件 id） |
+| `ask` | `{title?, text?, ok?}` | 问一句；`ok` 是按钮文字，只是个提示 |
+| `seq` | 正整数 | 可选序号，逻辑里写了才有 |
+
+规矩只有四条，但都很硬：
+
+1. **只有你调 `call`/`callAsync` 才会有**。聊天里被关键词自动触发的逻辑**发不出指令**（`uiAllowed` 默认关）——否则导入一本书就等于允许它翻你的页、弹你的框。被忽略的指令会出现在步骤日志里（`steps` 的 `reason` 带"被忽略"），返回值里还有 `uiSkipped` 数组可查。
+2. **一次调用只有一条**。流程里写两个「界面」步骤，只有第一个生效。
+3. **不落盘、不进提示词、不重放**。它没有第二次生命：这一秒拿到就是全部，别想着"下次打开还在"。
+4. **不等待**。`ask` 不会让流程停下等你点；要"确认后再扣钱"，让逻辑拆成两条（预检返回 `ask`，用户点确定后再调提交那条）。
+
+`durationMs` 是配套的：按钮点下去先置灰，拿到结果后按用掉的毫秒数决定提示停多久，比拍脑袋写 `setTimeout` 准。想省事就用 `callAsync`，它先让出一帧再跑，界面不会卡住，失败也照样 resolve。
+
 ## 5. subscribe 会收到什么
 
 ```js
@@ -141,7 +184,7 @@ const off = api.subscribe((payload) => {
 });
 ```
 
-- `reason` 是固定枚举：`'set'`、`'remove'`、`'call'`、`'run'`（ILB 自己跑了一轮）、`'chat_changed'`、`'manual'`（`api.notify()`）。
+- `reason` 是固定枚举：`'set'`、`'remove'`、`'call'`、`'ui'`（这次调用带回了一条界面指令，紧跟 `'call'` 之后）、`'run'`（ILB 自己跑了一轮）、`'chat_changed'`、`'manual'`（`api.notify()`）。
 - **不防抖**：一次 `set` 一次事件。UI 自己用 `requestAnimationFrame` 或短定时器合并重绘。
 - 同时会往 `document` 发一个 `CustomEvent('ilb:change', { detail: payload })`，给不方便保存回调的脚本用。
 - `subscribe(fn)` 的 `fn` 不是函数时：`console.warn` 一句 + 返回空退订函数，**不抛异常**。
@@ -154,12 +197,14 @@ const off = api.subscribe((payload) => {
 - **失败不抛异常**：一律 `{ ok:false, outcome, reason }`；调用方自己决定是静默、还是画一行字。
 - **不保证顺序**：`call` 不参与注入预算与排序，它不会替 UI 扩展决定"这条内容该不该进提示词"——那是 UI 扩展自己的业务。
 - **没有 `api.add`**："加一个数值"由 UI 自己 `snapshot().vars` 取值、算完再 `set`。同步接口下这样够用，少一个入口少一套错误语义。
+- **界面指令不是权限**：`ui` 只描述"想做什么"，执行权在你手里——校验 `page`/`select` 是否是你认识的 id、`toast` 要不要显示，都由你决定；不认识的 id 就忽略，不要 `eval` 或当 HTML 插。
 
 ## 7. 版本策略
 
-- `API_VERSION` 是**契约**版本，与扩展版本号（`manifest.json` 的 `0.12.0`）分开。
+- `API_VERSION` 是**契约**版本，与扩展版本号（`manifest.json` 的 `0.14.0`）分开。
 - 加字段、加可选参数、加方法：小版本（`1.0 → 1.1`），老调用不受影响。
   - 1.1 相对 1.0：`outcome/ran/vars/unusedArgs/missingParams`、`snapshot` 的 `params`、`call` 的 `opts`、`subscribe` 不再抛异常、`set` 拒绝 `NaN/Infinity`。其中"同名逻辑不再取第一个"会让**原本静默成功的旧写法**变成报错——这是有意的修正，写进了 D-0049。
+  - 1.2 相对 1.1：`call` 返回值加顶层 `ui` 与 `durationMs`、新增 `callAsync`、`caps` 加 `'ui'` / `'callAsync'`、`subscribe` 多一个 `'ui'` 事件。**纯加法**，只认 `ok`/`outcome` 的旧代码行为不变；`extra` 仍是 `string[]`（没改成对象，见 D-0053）。
 - 改字段语义、删方法：大版本（`1.x → 2.0`），并至少在旧版本里保留一个发布周期的兼容层。
 - 破坏性变更必须写进 `docs/决策记录.md` 与 `参考文档.md` 的编号条款。
 
@@ -171,10 +216,12 @@ UI 扩展（独立仓库/独立 SillyTavern 扩展）不需要 import ILB 的任
 function mount(widget) {
   const api = window.ILB.api;
   const off = api.subscribe(() => render(api.snapshot()));
-  widget.querySelector('[data-action="roll"]').addEventListener('click', () => {
-    const result = api.call('掷骰', {});
+  widget.querySelector('[data-action="roll"]').addEventListener('click', async () => {
+    widget.querySelector('.status').textContent = '抽卡中…';
+    const result = await api.callAsync('掷骰', {});
     const tone = result.outcome === 'ok' ? 'ok' : result.outcome === 'blocked' ? 'warn' : 'error';
     widget.querySelector('.status').textContent = `${tone}：${result.reason}`;
+    if (result.ui) applyUiCommand(result.ui);   // 1.2：逻辑让界面翻页/提示
     if (!result.ok && result.outcome === 'error') console.warn('[UI]', result);
   });
   return () => off();
@@ -185,7 +232,7 @@ function mount(widget) {
 - 动作只有三种：`set`（写变量）、`call`（走逻辑）、`open`（打开别的界面/ILB 面板）。`add` 不是接口动作，是 UI 侧的"读-算-写"。
 - 布局、样式、声明格式由 UI 扩展自己负责；ILB 不解释布局。
 
-## 9. 现在的已知限制（v1.1）
+## 9. 现在的已知限制（v1.2）
 
 | 限制 | 说明 |
 |---|---|
@@ -193,4 +240,7 @@ function mount(widget) {
 | 没有"变量变了"的细粒度事件 | 只有整场 `ilb:change`，UI 需要自己 diff |
 | `call` 没有事务 | 流程里已经写下的值，不会因为后面「不通过」而回滚；要原子性得自己先算后写 |
 | 没有写权限委托 | UI 扩展不能替 ILB 改书/改设置，这是有意的 |
-| 没有异步 | 全部同步返回；耗时的动画/网络请 UI 自己做 |
+| 界面指令只有一条 | 一次调用只带一条，要连做两件事就分两次调 |
+| 界面指令不能等用户 | `ask` 只是显示；"确认后继续"要靠拆两条逻辑 |
+| 指令里不能写变量 | 字段是常量字符串，不拼 `$变量`（没有表达式语言，D-0006） |
+| 没有异步逻辑 | `callAsync` 只是让出一帧，逻辑本身仍是同步的，没有 `await` 逻辑内部的写法 |

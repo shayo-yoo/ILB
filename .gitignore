@@ -18,3 +18,6 @@ tests/last-report.json
 
 # 真实宿主验收脚本的截图（本地跑一次就变，不进版本库）
 tests/live/last-*.png
+
+# 旧的手机端截图（早期探针留下的，只作本地参考）
+tests/shot-*.png

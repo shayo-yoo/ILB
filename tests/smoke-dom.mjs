@@ -304,6 +304,18 @@ step('流程编辑器能在表单和文本之间来回切', () => {
   if (addNodes.length < 3) throw new Error(`文本加的一行没有回到表单（现在 ${addNodes.length} 个节点）`);
 });
 
+// 「界面」步骤：v0.14.0 新节点，表单里要有它那几格，空着要当场提示（ILB-4.21）
+step('流程里能加「界面」步骤，空着会当场提示', () => {
+  clickText(body, '＋ 添加一步');
+  clickText(body, '＋ 界面');
+  const kinds = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-kind'));
+  if (!kinds.some((n) => String(n.textContent ?? '').includes('界面'))) throw new Error('「界面」节点没有出现在流程里');
+  const rows = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-ui-row'));
+  if (rows.length < 6) throw new Error(`界面节点的输入框不全（现在 ${rows.length} 个）`);
+  const warns = walk(body).filter((n) => n.className && String(n.className).includes('ilb-warn'));
+  if (!warns.some((n) => String(n.textContent ?? '').includes('这一步是空的'))) throw new Error('空着的界面步骤没有提示');
+});
+
 step('文本模式里看不懂的行会当场列出来', () => {
   clickText(body, '文本模式');
   const area = walk(body).find((n) => n.className && String(n.className).includes('ilb-flow-area'));

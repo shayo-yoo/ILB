@@ -38,6 +38,8 @@ function kitchenSink() {
           { ...makeNode('calc'), target: '临时值', op: 'min', left: { type: 'var', name: '幸运' }, right: { type: 'number', value: 10 }, persist: false },
           { ...makeNode('activate'), entryId: 'E1' },
           { ...makeNode('call'), logicId: 'B::L::1' },
+          { ...makeNode('ui'), page: '结果页', toast: 'SSR！', select: 'card-3', askTitle: '', askText: '', askOk: '' },
+          { ...makeNode('ui'), page: '', toast: '只提示', select: '', askTitle: '确认抽卡？', askText: '消耗 10 金币', askOk: '确定' },
           { ...makeNode('random'), target: '点数', min: 1, max: 6, integer: true, persist: true },
           { ...makeNode('random'), target: '小数', min: 0, max: 1, integer: false, persist: false },
           { ...makeNode('define'), name: '问候', value: { type: 'text', value: '你好' } },
@@ -235,7 +237,7 @@ test('写出来的文本里带着说明与关键字表（给界面和 AI 看）'
   assert.ok(FLOW_TEXT_HINT.includes('$名字'));
   assert.ok(FLOW_TEXT_HINT.includes('成立'));
   assert.deepEqual(Object.keys(FLOW_TEXT_KEYWORDS).sort(), [
-    'activate', 'add', 'calc', 'call', 'compare', 'define', 'fail', 'goto', 'judge', 'pass', 'random', 'remember', 'test',
+    'activate', 'add', 'calc', 'call', 'compare', 'define', 'fail', 'goto', 'judge', 'pass', 'random', 'remember', 'test', 'ui',
   ]);
 });
 
@@ -339,4 +341,37 @@ test('跳转指向自己时报警告（不是错误），不影响保存', () =>
   assert.equal(got.warnings.length, 1);
   assert.ok(got.warnings[0].reason.includes('原地打转'));
   assert.equal(got.warnings[0].line, 2);
+});
+
+// —— v0.14.0：「界面」步骤（ILB-4.21）——
+
+test('界面 一行写全：页面、提示、聚焦、问一句', () => {
+  const got = parseFlowText(`界面 结果页 "SSR！" 聚焦 card-3
+界面 - "只提示"
+界面 结果页 问 "确认抽卡？" "消耗 10 金币" "确定"`, {});
+  assert.deepEqual(got.problems, []);
+  const [a, b, c] = got.flow.nodes;
+  assert.equal(a.kind, 'ui');
+  assert.deepEqual([a.page, a.toast, a.select], ['结果页', 'SSR！', 'card-3']);
+  assert.equal(b.page, '');
+  assert.equal(b.toast, '只提示');
+  assert.deepEqual([c.askTitle, c.askText, c.askOk], ['确认抽卡？', '消耗 10 金币', '确定']);
+});
+
+test('界面 写坏了逐行说清楚，不猜', () => {
+  const got = parseFlowText(`界面 结果页 "没收尾
+界面 结果页 乱写
+界面`, {});
+  assert.equal(got.flow.nodes.length, 0);
+  assert.equal(got.problems.length, 3);
+  const text = got.problems.map((p) => p.reason).join('\n');
+  assert.match(text, /引号没有关上/);
+  assert.match(text, /看不懂「乱写」/);
+  assert.match(text, /界面要写成/);
+});
+
+test('界面的字段也会被尖括号拦住（那是 html，不是文本）', () => {
+  const got = parseFlowText('界面 <script>', {});
+  assert.equal(got.problems.length, 1);
+  assert.match(got.problems[0].reason, /页面 id 里不能有这些字符/);
 });

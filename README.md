@@ -72,7 +72,7 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 | 界面公共件 | `ui/dom.js` / `ui/help.js` / `ui/widgets.js` | 造元素、帮助浮层、控件工厂 |
 | 面板路由 | `ui/panel.js` | 只负责切标签与提供 `ctx`，一页坏了只坏一页 |
 | 七个页面 | `ui/view-shelf.js` / `view-rules.js` / `view-logic.js` / `view-snapshots.js` / `view-state.js` / `view-diagnostics.js` / `view-settings.js` | 书架 / 规则 / 逻辑 / 快照 / 状态 / 诊断 / 设置 |
-| 对外接口 | `runtime/api.js` | `window.ILB.api` v1.1：`snapshot / set / remove / call / subscribe`，失败用 `ok/blocked/error` 三态区分；给以后的 UI 扩展用 |
+| 对外接口 | `runtime/api.js` | `window.ILB.api` v1.2：`snapshot / set / remove / call / callAsync / subscribe`（调用可带回一条界面指令 `ui`），失败用 `ok/blocked/error` 三态区分；给以后的 UI 扩展用 |
 | 独立逻辑 | `core/model.js` + `core/evaluate.js` | 逻辑可自带触发词、脱离条目运行；跳转/调用/随机数/元触发器都在 `core/flow.js` |
 | 使用说明 | `ui/guide.js` + `data/guide/zh-cn.json` | 标签栏「使用说明」；同一份 JSON 导出成 `docs/使用指南.md` |
 | 编辑器 | `ui/editor.js` | 四段式规则编辑 + 「试一句」预演 + 「判定流程」原地展开 |
@@ -106,11 +106,11 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 ```bash
 cd extension
 
-# 1) 纯逻辑单元测试（181 个）
+# 1) 纯逻辑单元测试（199 个）
 node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
   tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs \
   tests/vars.test.mjs tests/flow-vars.test.mjs tests/fields.test.mjs tests/logic.test.mjs \
-  tests/logic-v2.test.mjs tests/api.test.mjs tests/flow-text.test.mjs
+  tests/logic-v2.test.mjs tests/api.test.mjs tests/flow-text.test.mjs tests/flow-ui.test.mjs
 
 # 2) 链接检查：每个模块都能被加载（能抓出"导入了不存在的名字"这类错）
 node tests/linkcheck.mjs
@@ -132,7 +132,7 @@ node tests/api-demo.mjs
 node tests/export-guide.mjs
 ```
 
-三个检查都通过的结果（2026-10-27 实测）：单元 181/181、链接 49 个模块全通过（**包含入口 `index.js`**）、
+三个检查都通过的结果（2026-10-27 实测）：单元 199/199、链接 49 个模块全通过（**包含入口 `index.js`**）、
 冒烟 22 步全过（含「使用说明」入口与说明渲染）。注意这三样**都不是浏览器实测**：DOM 是假的，宿主是假的。
 
 > **真实宿主验收（v0.13.1 起）**：`tests/live/` 下四个文件用 CDP 连一个真在跑的 SillyTavern（无头 Chrome），

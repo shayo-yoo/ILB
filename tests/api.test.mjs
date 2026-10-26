@@ -41,10 +41,12 @@ function buildApi({ vars = {}, specs = null } = {}) {
 test('接口版本与说明写清楚', () => {
   const { api } = buildApi();
   assert.equal(api.version, API_VERSION);
-  assert.equal(API_VERSION, '1.1');
-  assert.deepEqual(api.describe().methods, ['snapshot', 'set', 'remove', 'call', 'subscribe']);
+  assert.equal(API_VERSION, '1.2');
+  assert.deepEqual(api.describe().methods, ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe']);
   assert.ok(api.describe().caps.includes('outcome'));
   assert.ok(API_CAPS.includes('nonce'));
+  assert.ok(API_CAPS.includes('ui'));
+  assert.ok(API_CAPS.includes('callAsync'));
 });
 
 test('快照：只给只读信息，不含宿主对象；逻辑带参数表', () => {
@@ -251,4 +253,78 @@ test('订阅：set/remove/call 都会通知，退订之后不再来；传错参�
   const noop = api.subscribe('不是函数');
   assert.equal(typeof noop, 'function');
   assert.doesNotThrow(() => noop());
+});
+
+// —— v0.14.0：调用可以带回一条界面指令（ILB-4.21）——
+
+function uiApi() {
+  return buildApi({
+    specs: [
+      {
+        book_id: 'b1',
+        name: '书',
+        enabled: true,
+        entries: [],
+        logic: [
+          {
+            name: '抽卡',
+            call: { exposed: true, params: ['次数'] },
+            flow: {
+              nodes: [
+                {
+                  kind: 'compare',
+                  left: { type: 'var', name: '次数' },
+                  op: '>',
+                  right: { type: 'number', value: 0 },
+                  then: [
+                    { kind: 'ui', page: '结果页', toast: 'SSR！', select: 'card-3' },
+                    { kind: 'calc', target: '次数', op: '-', left: { type: 'var', name: '次数' }, right: { type: 'number', value: 1 }, persist: true },
+                  ],
+                  else: [{ kind: 'fail' }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+}
+
+test('call 带回顶层 ui 与 durationMs；界面不自带状态，失败时没有 ui', () => {
+  const { api } = uiApi();
+  const out = api.call('抽卡', { 次数: 1 });
+  assert.equal(out.ok, true);
+  assert.equal(out.outcome, 'ok');
+  assert.deepEqual(out.ui, { v: 1, page: '结果页', toast: 'SSR！', select: 'card-3' });
+  assert.equal(typeof out.durationMs, 'number');
+  assert.ok(out.durationMs >= 0);
+  assert.equal(out.writes['次数'], 0);
+  // 界面指令不进变量表，下一轮读不到
+  assert.equal(Object.keys(out.vars).includes('ui'), false);
+
+  const blocked = api.call('抽卡', { 次数: 0 });
+  assert.equal(blocked.outcome, 'blocked');
+  assert.equal(blocked.ui, null);
+});
+
+test('callAsync 先让出一帧，失败也 resolve 出来，返回值与 call 同形', async () => {
+  const { api } = uiApi();
+  const out = await api.callAsync('抽卡', { 次数: 2 });
+  assert.equal(out.ok, true);
+  assert.equal(out.ui.page, '结果页');
+  assert.equal(typeof out.durationMs, 'number');
+
+  const missing = await api.callAsync('不存在的逻辑');
+  assert.equal(missing.ok, false);
+  assert.equal(missing.outcome, 'error');
+  assert.match(missing.reason, /没有叫/);
+});
+
+test('界面指令会以 ilb:change 的 ui 事件通知出去（UI 可只挂一处）', () => {
+  const { api } = uiApi();
+  const seen = [];
+  api.subscribe((payload) => seen.push(payload.reason));
+  api.call('抽卡', { 次数: 1 });
+  assert.deepEqual(seen, ['call', 'ui']);
 });

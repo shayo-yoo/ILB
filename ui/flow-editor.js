@@ -20,6 +20,7 @@ import {
   normalizeFlow,
   countFlowNodes,
   describeNode,
+  checkUiNode,
 } from '../core/flow.js';
 import { renderFlowText, parseFlowText, FLOW_TEXT_HINT, FLOW_TEXT_AI_PROMPT, FLOW_TEXT_AI_TAIL } from '../core/flow-text.js';
 
@@ -590,6 +591,39 @@ export function renderFlowEditor(options = {}) {
         );
       }
       body.appendChild(el('p', { class: 'ilb-hint', text: '把另一条独立逻辑当成这一步来跑：它写的变量、加的正文、点名的条目都会并进来；它不通过，这一步也不通过。' }));
+      return body;
+    }
+
+    if (node.kind === 'ui') {
+      // 「界面」步骤：只填这几格，别的一律不收（ILB-4.21）
+      const row = (label, key, opts = {}) => {
+        const box = el('label', { class: 'ilb-inline ilb-flow-ui-row' }, [el('span', { class: 'ilb-sub', text: label })]);
+        box.appendChild(
+          input(node[key] ?? '', (value) => {
+            node[key] = value;
+            notify();
+            redraw();
+          }, opts),
+        );
+        return box;
+      };
+      body.appendChild(row('翻到页', 'page', { placeholder: '页面 id，例如 结果页（留空就不翻页）' }));
+      body.appendChild(row('提示一句', 'toast', { placeholder: '底栏提示，例如 SSR！（留空就不提示）' }));
+      body.appendChild(row('聚焦控件', 'select', { placeholder: '控件 id，例如 card-3（留空就不聚焦）' }));
+      body.appendChild(el('p', { class: 'ilb-sub', text: '问一句（只提示，不会停下来等用户点）' }));
+      body.appendChild(row('标题', 'askTitle', { placeholder: '例如 确认抽卡？' }));
+      body.appendChild(row('正文', 'askText', { placeholder: '例如 消耗 10 金币' }));
+      body.appendChild(row('按钮', 'askOk', { placeholder: '例如 确定（可留空）' }));
+
+      const problems = checkUiNode(node);
+      const line = el('p', { class: problems.length > 0 ? 'ilb-warn' : 'ilb-hint', text: problems.length > 0 ? problems.join('；') : describeNode(node) });
+      body.appendChild(line);
+      body.appendChild(
+        el('p', {
+          class: 'ilb-hint',
+          text: '只有「用户点了按钮来调用这条逻辑」时才会执行；聊天里自动触发时这一步会被跳过（诊断页里能看见）。一次调用只发第一条。',
+        }),
+      );
       return body;
     }
 

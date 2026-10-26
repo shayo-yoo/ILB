@@ -21,6 +21,7 @@ import {
   CALC_OPS,
   makeNode,
   normalizeFlow,
+  checkUiNode,
   MAX_DEPTH,
 } from './flow.js';
 
@@ -37,6 +38,7 @@ export const FLOW_TEXT_KEYWORDS = {
   activate: '激活',
   goto: '跳转',
   call: '调用',
+  ui: '界面',
   pass: '通过',
   fail: '不通过',
 };
@@ -54,6 +56,7 @@ export const FLOW_TEXT_HINT = [
   '三种值：$名字 是变量，12 是数字，"文字" 是文本（带引号）。',
   '计算分两种：计算 $变量 = $甲 - $乙 [存]（算），计算 $变量 = 0 [存]（直接赋值）。',
   '引用别的东西：激活 #条目名、调用 >逻辑名、跳转 @2✓.1（位置）。',
+  '界面：界面 结果页 "SSR！" 聚焦 card-3（页面 id 直接写，没引号；提示要带引号；可加 问 "标题" "正文" "确定"）。',
   '判断节点写在上一行，它的两个分支各占一块，块头就是「成立」和「不成立」。',
   `开头可以写一行「${MODE_ONLY}」或「${MODE_AND}」；不写按后者算。`,
   '以 // 开头的行是注释；行尾写 // 后面的部分也会被忽略。',
@@ -90,6 +93,9 @@ export const FLOW_TEXT_AI_PROMPT = `你在帮我把「判定流程」写成一�
 激活 #条目名                     （让另一条规则也出场）
 调用 >逻辑名                     （把另一条独立逻辑当子步骤跑）
 跳转 @2✓.1                       （跳到某个位置，可加「最多20次 超了终止」或「超了跳过继续」）
+界面 结果页 "SSR！"              （让界面翻到某一页 + 提示一句；页面 id 不带引号）
+界面 - "SSR！" 聚焦 card-3       （只提示不翻页：页面位置写 -；聚焦写控件 id）
+界面 结果页 问 "确认抽卡？" "消耗 10 金币" "确定"   （问一句；**只提示，不会停下来等**）
 通过                             （到此为止，这条规则出现）
 不通过                           （到此为止，这条规则不出现）
 
@@ -337,6 +343,16 @@ function renderNode(node, label, entries, logics, labels) {
     }
     case 'call':
       return `调用 >${refOf(node.logicId, logics, 'name')}`;
+    case 'ui': {
+      const bits = ['界面', node.page || '-'];
+      if (node.toast) bits.push(textLiteral(node.toast));
+      if (node.select) bits.push('聚焦', node.select);
+      if (node.askTitle || node.askText) {
+        bits.push('问', textLiteral(node.askTitle ?? ''), textLiteral(node.askText ?? ''));
+        if (node.askOk) bits.push(textLiteral(node.askOk));
+      }
+      return bits.join(' ');
+    }
     case 'pass':
       return '通过';
     case 'fail':
@@ -541,6 +557,120 @@ function nextCondId() {
  * 读一行节点。看不懂返回 null 并记一条问题。
  * @returns {object|null}
  */
+/**
+ * 把「界面」后面那段切成词：引号里的是文本（可以含空格），其余按空格切。
+ * 只做切分，不做解释——解释在 readUiNode 里，看不懂就报错，不猜。
+ */
+function tokenizeUi(raw) {
+  const tokens = [];
+  const text = String(raw ?? '');
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1;
+      let buf = '';
+      let closed = false;
+      while (j < text.length) {
+        const c = text[j];
+        if (c === '\\' && j + 1 < text.length) {
+          buf += text[j + 1];
+          j += 2;
+          continue;
+        }
+        if (c === '"') {
+          closed = true;
+          j += 1;
+          break;
+        }
+        buf += c;
+        j += 1;
+      }
+      if (!closed) return { error: '引号没有关上' };
+      tokens.push({ quoted: true, value: buf });
+      i = j;
+      continue;
+    }
+    let j = i;
+    while (j < text.length && !/\s/.test(text[j])) j += 1;
+    tokens.push({ quoted: false, value: text.slice(i, j) });
+    i = j;
+  }
+  return { tokens };
+}
+
+const UI_WORD_FOCUS = '聚焦';
+const UI_WORD_ASK = '问';
+
+function readUiNode(line, note) {
+  const raw = line.body.slice(FLOW_TEXT_KEYWORDS.ui.length).trim();
+  const got = tokenizeUi(raw);
+  if (got.error) {
+    note(line, `界面这一行${got.error}：${raw}`);
+    return null;
+  }
+  const tokens = got.tokens;
+  if (tokens.length === 0) {
+    note(line, '界面要写成：界面 结果页 "提示一句"，或者 界面 - "只提示"');
+    return null;
+  }
+  const node = makeNode('ui');
+  const first = tokens[0];
+  // 以引号开头 = 不翻页，直接提示一句；裸词就是页面 id；写 - 表示不翻页
+  if (first.quoted) node.toast = first.value;
+  else if (first.value !== '-') node.page = first.value;
+
+  let index = 1;
+  while (index < tokens.length) {
+    const tk = tokens[index];
+    if (!tk.quoted && tk.value === UI_WORD_FOCUS) {
+      const target = tokens[index + 1];
+      if (!target) {
+        note(line, '「聚焦」后面要写控件 id');
+        return null;
+      }
+      node.select = target.value;
+      index += 2;
+      continue;
+    }
+    if (!tk.quoted && tk.value === UI_WORD_ASK) {
+      const title = tokens[index + 1];
+      const body = tokens[index + 2];
+      if (!title || !body) {
+        note(line, '「问」后面要写标题和正文：问 "标题" "正文" "确定"');
+        return null;
+      }
+      node.askTitle = title.value;
+      node.askText = body.value;
+      index += 3;
+      const ok = tokens[index];
+      if (ok && ok.quoted) {
+        node.askOk = ok.value;
+        index += 1;
+      }
+      continue;
+    }
+    if (tk.quoted && !node.toast) {
+      node.toast = tk.value;
+      index += 1;
+      continue;
+    }
+    note(line, `界面这一行看不懂「${tk.value}」；能写的是 页面id、"提示"、聚焦 控件id、问 "标题" "正文"`);
+    return null;
+  }
+
+  const problems = checkUiNode(node);
+  if (problems.length > 0) {
+    note(line, problems[0]);
+    return null;
+  }
+  return node;
+}
+
 function readNode(line, entries, logics, note) {
   const body = line.body;
 
@@ -702,6 +832,10 @@ function readNode(line, entries, logics, note) {
       return null;
     }
     return { ...makeNode('call'), logicId: got.id };
+  }
+
+  if (body === FLOW_TEXT_KEYWORDS.ui || body.startsWith(`${FLOW_TEXT_KEYWORDS.ui} `)) {
+    return readUiNode(line, note);
   }
 
   if (body.startsWith(`${FLOW_TEXT_KEYWORDS.goto} `)) {

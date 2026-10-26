@@ -15,6 +15,29 @@
 
 ---
 
+## 0.14.0 · 2026-10-27 · 新增 · ILB-4.21 / ILB-4.10.12 / ILB-4.18.4 · 流程里能写「界面」步骤，接口升到 1.2
+
+**一句话**：逻辑流程里多了一种节点「界面」——翻到某页、提示一句、聚焦某个控件、或者问一句；它只在"用户点了按钮来调用"时生效，聊天里自动触发一律不发。给界面扩展的接口因此升到 1.2（`caps` 加 `ui`/`callAsync`、`call` 返回顶层 `ui` 与 `durationMs`、新增 `callAsync`）。
+
+**依据**：D-0053（六条决定：顶层 `ui`、专用节点、默认不放行、一次只发第一条、不做等待、`callAsync` 而不是改 `call`）；方案来源 `docs/答复-逻辑与界面联动.md`。
+
+| 文件 | 改动 |
+| --- | --- |
+| `core/flow.js` | 新增节点 `ui`（`FLOW_KINDS`）；导出 `UI_VERSION=1`、`UI_LIMIT`、`UI_ID_FORBIDDEN`、`uiCommandOf`、`describeUi`、`checkUiNode`；`evaluateFlow` 的 `ctx.uiAllowed` 默认 `false`，返回 `ui` 与 `uiSkipped`；`call` 节点把子逻辑的指令往外冒 |
+| `core/flow-text.js` | 文本模式认 `界面 结果页 "SSR！" 聚焦 card-3` / `界面 - "只提示"` / `界面 结果页 问 "标题" "正文" "确定"`；`tokenizeUi` 处理引号与转义；坏行逐行报（引号没关、看不懂的词、尖括号被拦）；`FLOW_TEXT_AI_PROMPT` 写入三种写法 |
+| `runtime/api.js` | `API_VERSION='1.2'`；`caps` 加 `callAsync`/`ui`；`call` 返回顶层 `ui` 与 `durationMs`（`performance.now()`）；带指令时多发一条 `ui` 事件；新增 `callAsync`（让出一帧、永不 reject）；嵌套调用保持 `uiAllowed` |
+| `ui/flow-editor.js` | 「界面」节点七格输入（翻页 / 提示 / 聚焦 / 问标题 / 问正文 / 按钮 / 序号）+ `checkUiNode` 当场提示 |
+| `tests/flow-ui.test.mjs` | 新增 12 条：只带写过的键、空步为空、聊天内触发只记 `uiSkipped`、一次只发第一条、子逻辑越权被挡、超长截断、`seq` 过滤、`ask` 打包、`checkUiNode` 四种情况、不通过时不产出 |
+| `tests/flow-text.test.mjs` | 17 → 20 条（`界面` 三种写法、三种坏行、尖括号） |
+| `tests/api.test.mjs` | 12 → 15 条（顶层 `ui` + `durationMs`、失败无 `ui`、`callAsync` 成功与不存在、`ui` 事件在 `call` 之后） |
+| `tests/smoke-dom.mjs` | 加一步「流程里能加「界面」步骤，空着会当场提示」→ 24 步 |
+
+**修订**：`参考文档.md` 升到 3.9.0（§4.21 新增 ILB-4.21.1–4.21.9；§4.10 增 ILB-4.10.12 "节点数量以 `FLOW_KINDS` 为准"；ILB-4.18.4 的契约版本括注改 1.2）；`docs/UI扩展接口.md` 升到 1.2（`ui` 字段表、`callAsync`、`durationMs`、`caps` 变化）；`docs/交接-UI扩展.md` 补 1.2 用法。
+
+**验收**：单元 **199/199**；`linkcheck` **49 个模块全通过**；`smoke-dom` **24 步 0 失败、无未处理 rejection**。
+
+**未验证**：真酒馆里 ILBUI 点按钮 → 翻页/提示的实际观感（要等 ILBUI 落地后联调）；「界面」在手机外壳里的显示（本版不发任何 UI 代码，只交数据）。
+
 ## 0.13.2 · 2026-10-27 · 修正 · ILB-4.20.14 · 「复制给 AI 的说明」不再在控制台报 `ctx is not defined`
 
 **一句话**：真机上点「复制给 AI 的说明」，复制本身是成功的，但控制台会抛 `ReferenceError: ctx is not defined`（`ui/flow-editor.js` 里用了 `ctx`，参数却叫 `options`）；现在复制成功会正常弹提示，失败也有兜底提示，不再有红字。

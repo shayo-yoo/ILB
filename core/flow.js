@@ -10,7 +10,7 @@
 import { containsNeedle, compileRegex, safeRegexTest } from './text-match.js';
 import { GOTO_ON_LIMIT } from './settings-defaults.js';
 
-export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'random', 'add', 'remember', 'activate', 'goto', 'call', 'pass', 'fail'];
+export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'random', 'add', 'remember', 'activate', 'goto', 'call', 'ui', 'pass', 'fail'];
 
 export const FLOW_KIND_LABEL = {
   test: '检测',
@@ -24,6 +24,7 @@ export const FLOW_KIND_LABEL = {
   activate: '激活条目',
   goto: '跳转',
   call: '调用逻辑',
+  ui: '界面',
   pass: '通过（结束）',
   fail: '不通过（结束）',
 };
@@ -39,6 +40,7 @@ export const FLOW_KIND_HINT = {
   activate: '把另一条规则也拉进这一轮，像它自己出现一样',
   goto: '跳到这个流程里的另一个节点，从那里继续往下（可以往回跳，次数有上限）',
   call: '调用另一条独立逻辑，把它的结果并进来',
+  ui: '让界面翻页、提示、聚焦或问一句（只有「用户点了按钮去调用」时才生效；聊天里自动触发时不执行）',
   pass: '到此为止，这条规则出现',
   fail: '到此为止，这条规则不出现',
 };
@@ -63,11 +65,83 @@ export const MAX_NODES = 80;
 export const MAX_DEPTH = 8;
 export const MAX_STEPS = 200;
 
+/**
+ * 「界面」步骤（ILB-4.21 / 接口 v1.2）。
+ * 它只产出一条**一次性**的界面指令，交给 UI 扩展执行；不写聊天状态、不进提示词。
+ * 字段就这几个，多一个都不收：这是数据，不是表达式（D-0006 红线）。
+ */
+export const UI_VERSION = 1;
+export const UI_LIMIT = { page: 64, toast: 80, select: 64, askTitle: 40, askText: 120, askOk: 12 };
+/** 页面 id / 控件 id 里不许出现的字符（它们是标识符，不是给人看的文本）。 */
+const UI_ID_FORBIDDEN = /[<>"'`\\{}]/;
+
 let idCounter = 0;
 
 function newNodeId() {
   idCounter += 1;
   return `n-${Date.now().toString(36)}-${idCounter.toString(36)}`;
+}
+
+/** 把一段文字裁成一个界面字段：去空白、超长直接截断（不报错，界面上标出来就行）。 */
+function uiText(raw, max) {
+  return String(raw ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+/**
+ * 从一个「界面」节点拼出一条指令；全是空字段就返回 null。
+ * 空字段不占位——UI 侧只认出现过的键，少一个键就少做一件事。
+ */
+export function uiCommandOf(node) {
+  if (!node || node.kind !== 'ui') return null;
+  const cmd = { v: UI_VERSION };
+  const page = uiText(node.page, UI_LIMIT.page);
+  const toast = uiText(node.toast, UI_LIMIT.toast);
+  const select = uiText(node.select, UI_LIMIT.select);
+  if (page) cmd.page = page;
+  if (toast) cmd.toast = toast;
+  if (select) cmd.select = select;
+  const seq = Number(node.seq);
+  if (Number.isFinite(seq) && seq > 0) cmd.seq = Math.trunc(seq);
+  const askTitle = uiText(node.askTitle, UI_LIMIT.askTitle);
+  const askText = uiText(node.askText, UI_LIMIT.askText);
+  const askOk = uiText(node.askOk, UI_LIMIT.askOk);
+  if (askTitle || askText) {
+    cmd.ask = {};
+    if (askTitle) cmd.ask.title = askTitle;
+    if (askText) cmd.ask.text = askText;
+    if (askOk) cmd.ask.ok = askOk;
+  }
+  return Object.keys(cmd).length > 1 ? cmd : null;
+}
+
+/** 一条指令的人话摘要（诊断、步骤日志用）。 */
+export function describeUi(cmd) {
+  if (!cmd) return '（空）';
+  const bits = [];
+  if (cmd.page) bits.push(`翻到「${cmd.page}」`);
+  if (cmd.toast) bits.push(`提示「${cmd.toast}」`);
+  if (cmd.select) bits.push(`聚焦 ${cmd.select}`);
+  if (cmd.ask) bits.push(`问「${cmd.ask.title ?? cmd.ask.text ?? ''}」`);
+  return bits.length > 0 ? bits.join('，') : '（空）';
+}
+
+/**
+ * 保存前的检查（编辑器与文本模式共用）。返回人话问题列表；空表示可以存。
+ * 注意：这里**不**检查长度（长度是自动截断的），只拦"存了也不会有任何效果/明显写错"的情况。
+ */
+export function checkUiNode(node) {
+  const problems = [];
+  if (!node || node.kind !== 'ui') return ['不是「界面」节点'];
+  const page = uiText(node.page, UI_LIMIT.page);
+  const select = uiText(node.select, UI_LIMIT.select);
+  if (page && UI_ID_FORBIDDEN.test(page)) problems.push(`页面 id 里不能有这些字符：< > " ' \` \\ { }（现在是「${page}」）`);
+  if (select && UI_ID_FORBIDDEN.test(select)) problems.push(`控件 id 里不能有这些字符：< > " ' \` \\ { }（现在是「${select}」）`);
+  if (!uiCommandOf(node)) problems.push('这一步是空的：至少要写一项（翻到哪页、提示什么、聚焦谁、问一句）');
+  const askTitle = uiText(node.askTitle, UI_LIMIT.askTitle);
+  const askText = uiText(node.askText, UI_LIMIT.askText);
+  if (askText && !askTitle) problems.push('「问一句」写了正文但没写标题：界面上会没有抬头，建议补一个');
+  if (askTitle && !askText) problems.push('「问一句」写了标题但没写正文');
+  return problems;
 }
 
 function operand(type = 'text', value = '') {
@@ -104,6 +178,7 @@ export function makeNode(kind = 'test', overrides = {}) {
   if (kind === 'activate') return { ...base, entryId: '', ...overrides };
   if (kind === 'goto') return { ...base, target: '', max: 20, onLimit: 'stop', ...overrides };
   if (kind === 'call') return { ...base, logicId: '', ...overrides };
+  if (kind === 'ui') return { ...base, page: '', toast: '', select: '', askTitle: '', askText: '', askOk: '', ...overrides };
   return { ...base, ...overrides };
 }
 
@@ -184,6 +259,16 @@ function normalizeNode(raw, depth) {
   } else if (kind === 'call') {
     // 调用逻辑（ILB-4.18）：把另一条独立逻辑当成一个子步骤跑
     node.logicId = String(raw.logicId ?? '');
+  } else if (kind === 'ui') {
+    // 界面（ILB-4.21）：只收这五个字段，长度超了当场截断，不认识的键丢掉
+    node.page = uiText(raw.page, UI_LIMIT.page);
+    node.toast = uiText(raw.toast, UI_LIMIT.toast);
+    node.select = uiText(raw.select, UI_LIMIT.select);
+    node.askTitle = uiText(raw.askTitle, UI_LIMIT.askTitle);
+    node.askText = uiText(raw.askText, UI_LIMIT.askText);
+    node.askOk = uiText(raw.askOk, UI_LIMIT.askOk);
+    const seq = Number(raw.seq);
+    if (Number.isFinite(seq) && seq > 0) node.seq = Math.trunc(seq);
   }
 
   if (kind === 'test' || kind === 'judge' || kind === 'compare') {
@@ -362,6 +447,7 @@ export function describeNode(node) {
     return `跳转：→ ${node.target || '（未选）'}（最多 ${node.max} 次，超了${node.onLimit === 'continue' ? '跳过继续' : '终止'}）`;
   }
   if (node.kind === 'call') return `调用逻辑：${node.logicId || '（未选）'}`;
+  if (node.kind === 'ui') return `界面：${describeUi(uiCommandOf(node))}`;
   if (node.kind === 'pass') return '到此为止：这条规则出现';
   if (node.kind === 'fail') return '到此为止：这条规则不出现';
   return '未知节点';
@@ -398,7 +484,7 @@ export function describeFlow(flow) {
  *          vars?: object, activated?: Set<string>}} ctx
  * @returns {{active: boolean, passed: boolean, reason: string,
  *            steps: Array<{stage: string, passed: boolean, reason: string}>,
- *            vars: object, extra: string[]}}
+ *            vars: object, extra: string[], ui: object|null, uiSkipped: object[]}}
  */
 export function evaluateFlow(flow, ctx = {}) {
   const nodes = Array.isArray(flow?.nodes) ? flow.nodes : [];
@@ -426,6 +512,11 @@ export function evaluateFlow(flow, ctx = {}) {
     index: buildNodeIndex(nodes),
     gotoCounts: new Map(),
     callLogic: typeof ctx.callLogic === 'function' ? ctx.callLogic : null,
+    // 「界面」步骤：只有调用方明确允许（用户点了按钮去调用逻辑）才会产出指令。
+    // 聊天里自动触发的激活一律不允许——否则别人导入的一本书就能翻页、弹框。
+    uiAllowed: ctx.uiAllowed === true,
+    ui: null,
+    uiSkipped: [],
   };
 
   let list = nodes;
@@ -480,6 +571,8 @@ export function evaluateFlow(flow, ctx = {}) {
     extra,
     writes: state.writes,
     activations: state.activations,
+    ui: state.ui ?? null,
+    uiSkipped: state.uiSkipped ?? [],
   };
 }
 
@@ -599,6 +692,27 @@ function runNode(node, ctx, steps, depth) {
     return null;
   }
 
+  if (node.kind === 'ui') {
+    const cmd = uiCommandOf(node);
+    if (!cmd) {
+      steps.push({ stage: 'logic', passed: true, reason: '「界面」是空的，跳过' });
+      return null;
+    }
+    if (!ctx.uiAllowed) {
+      // 这条路是"聊天里自动触发"：记一笔，不执行，让用户在诊断里看得见
+      ctx.uiSkipped.push(cmd);
+      steps.push({ stage: 'logic', passed: true, reason: `「界面」被忽略（${describeUi(cmd)}）：只有用户点按钮调用时才执行` });
+      return null;
+    }
+    if (ctx.ui) {
+      steps.push({ stage: 'logic', passed: true, reason: `已经发过一条界面指令，这条不再发（${describeUi(cmd)}）` });
+      return null;
+    }
+    ctx.ui = cmd;
+    steps.push({ stage: 'logic', passed: true, reason: `界面：${describeUi(cmd)}` });
+    return null;
+  }
+
   if (node.kind === 'goto') {
     const target = String(node.target ?? '').trim();
     if (!target) {
@@ -629,6 +743,8 @@ function runNode(node, ctx, steps, depth) {
       ctx.writes[key] = value;
     }
     for (const text of res.extra ?? []) ctx.extra.push(text);
+    // 被调用的逻辑里也有「界面」步骤时，指令往外层冒（还是只留第一条）
+    if (res.ui && ctx.uiAllowed && !ctx.ui) ctx.ui = res.ui;
     for (const entryId of res.activations ?? []) {
       if (!ctx.activations.includes(entryId)) ctx.activations.push(entryId);
     }

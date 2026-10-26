@@ -2,7 +2,7 @@
 
 > 这份文档只讲**怎么做一个绑定 ILB 的 UI 扩展**，不讲 ILB 本身怎么实现。
 > 交接对象：下一个负责写 UI 扩展的 AI（或人）。
-> 写于 2026-10-25，ILB 版本 v0.12.0（接口 v1.1）。
+> 写于 2026-10-25，更新于 2026-10-27：ILB 版本 v0.14.0（接口 v1.2）。
 
 ---
 
@@ -56,7 +56,7 @@ window.addEventListener('ilb:ready', () => {
   const api = window.ILB.api;
   // 用 caps 判断能力，比版本字符串稳（加字段不换大版本）
   if (!api || !api.caps?.includes('outcome')) {
-    console.warn('[my-ui] 需要 ILB 接口 v1.1（扩展 v0.12.0 以上）');
+    console.warn('[my-ui] 需要 ILB 接口 v1.2（扩展 v0.14.0 以上）');
     return;
   }
   start(api);
@@ -72,7 +72,8 @@ window.addEventListener('ilb:ready', () => {
 | `snapshot()` | → `{version, caps, chatId, tick, vars, books}` | 只读快照。`vars` 是扁平标量表：`{生命:90, 背包:'铁钥匙', 安静:true}`；`books[].logics[].params` 是参数名数组 |
 | `set(name, value)` | → `{ok, outcome, reason?}` | 写/增变量。名字非空、≤40 字；值只收 number / string / boolean；`NaN/Infinity` 会被拒绝 |
 | `remove(name)` | → `{ok, outcome, reason?}` | 删变量 |
-| `call(nameOrId, args?, opts?)` | → `{ok, outcome, ran, passed, reason, writes, extra, steps, vars, unusedArgs, missingParams}` | 调用**已启用**的独立逻辑。`args` 是**对象**，键是 `call.params` 里的参数名（**按名绑定，不是按顺序**）；跨书同名时传 id（`B1::L::1`） |
+| `call(nameOrId, args?, opts?)` | → `{ok, outcome, ran, passed, reason, writes, extra, steps, vars, unusedArgs, missingParams, ui, durationMs}` | 调用**已启用**的独立逻辑。`args` 是**对象**，键是 `call.params` 里的参数名（**按名绑定，不是按顺序**）；跨书同名时传 id（`B1::L::1`） |
+| `callAsync(nameOrId, args?, opts?)` | 同 `call` | 先让出一帧再跑，返回值同形，**永不 reject**（1.2 新增） |
 | `subscribe(fn)` | → `unsubscribe()` | 任何变化后回调（**不防抖**，UI 自己节流）；同时 `document` 上会发 `ilb:change`；`fn` 不是函数时返回空函数，不抛异常 |
 | `ui.openPanel(tab?)` / `ui.close()` | — | 打开 ILB 面板（`shelf/rules/logic/snapshots/state/diagnostics/settings`）或收起 |
 
@@ -80,12 +81,14 @@ window.addEventListener('ilb:ready', () => {
 
 `outcome` 三态：`'ok'` / `'blocked'`（业务拒绝，画黄字）/ `'error'`（调用或流程出错，画红字）。`ok` 仍等于 `passed`，旧写法不变。
 
+`ui`（1.2 新增）：逻辑里写了「界面」步骤时，`call` 会带回一条指令 `{ v, page?, toast?, select?, ask?, seq? }`，没写就是 `null`。它**只在用户调 `call` 时**产生（聊天里自动触发不发），**一次只有一条**，不落盘、不进提示词、也不会等你点。详细字段与四条规矩见 `docs/UI扩展接口.md` §4「带回来的界面指令」。
+
 `snapshot()` 的形状：
 
 ```js
 {
-  version: '1.1',
-  caps: ['snapshot', 'set', 'remove', 'call', 'subscribe', 'outcome', 'byId', 'nonce', 'context', 'strict', 'vars', 'caps'],
+  version: '1.2',
+  caps: ['snapshot', 'set', 'remove', 'call', 'callAsync', 'ui', 'subscribe', 'outcome', 'byId', 'nonce', 'context', 'strict', 'vars', 'caps'],
   chatId: 'abc123',
   tick: 12,                     // 当前楼层
   vars: { 生命: 90, 药水冷却: 0, 委托: '未接' },
@@ -201,12 +204,13 @@ my-ilb-ui/
 
 ```js
 const fake = {
-  version: '1.1',
+  version: '1.2',
   vars: { 生命: 90 },
   calls: [],
   snapshot() { return { vars: this.vars }; },
   set(k, v) { this.vars[k] = v; return { ok: true, outcome: 'ok' }; },
-  call(n, a) { this.calls.push([n, a]); return { ok: true, outcome: 'ok', writes: {} }; }
+  call(n, a) { this.calls.push([n, a]); return { ok: true, outcome: 'ok', writes: {}, ui: null, durationMs: 1 }; },
+  async callAsync(n, a) { return this.call(n, a); }
 };
 ```
 

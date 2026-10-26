@@ -21,7 +21,7 @@ import { evaluateFlow } from '../core/flow.js';
 import { coerceValue, normalizeVars } from '../core/vars.js';
 
 /** 接口契约版本。加字段不算破坏性变更，改字段语义才算。 */
-export const API_VERSION = '1.1';
+export const API_VERSION = '1.2';
 
 /** 供 UI 扩展判断"这版有哪些能力"，比 version 字符串更好用。 */
 export const API_CAPS = [
@@ -29,6 +29,8 @@ export const API_CAPS = [
   'set',
   'remove',
   'call',
+  'callAsync',
+  'ui',
   'subscribe',
   'outcome',
   'byId',
@@ -50,6 +52,15 @@ function scalarError(raw) {
 
 function fail(reason, extra = {}) {
   return { ok: false, outcome: 'error', ran: false, passed: false, reason, ...extra };
+}
+
+/** 计时用。优先高精度时钟，没有就退回 Date.now()。 */
+function now() {
+  try {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+  } catch {
+    return Date.now();
+  }
 }
 
 export function createApi({ repository, getContext, getChatId, notify = () => {}, openPanel = null, closeUi = null } = {}) {
@@ -173,7 +184,7 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
   }
 
   function callLogicResolver(seed, depth = 0) {
-    return (id) => {
+    return (id, parentCtx) => {
       if (depth >= CALL_DEPTH_MAX) return null;
       const found = findLogic(String(id ?? '').trim());
       if (!found.logic) return null;
@@ -186,6 +197,8 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
           seed: `${seed}:${found.logic.id}`,
           vars: {},
           activated: new Set(),
+          // 「界面」指令要从被调用的逻辑里冒出来，所以这里跟着外层走
+          uiAllowed: parentCtx?.uiAllowed === true,
           callLogic: callLogicResolver(`${seed}:${found.logic.id}`, depth + 1),
         });
       } catch {
@@ -202,6 +215,7 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
    */
   function call(name, args = {}, opts = {}) {
     const target = String(name ?? '').trim();
+    const startedAt = now();
     if (!target) return fail('逻辑名不能为空');
     const found = findLogic(target);
     if (found.ambiguous) {
@@ -250,8 +264,11 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
         seed,
         vars,
         activated: new Set(),
+        // 用户点了按钮来调用 → 这次允许「界面」步骤产出指令（ILB-4.21）
+        uiAllowed: true,
         callLogic: callLogicResolver(seed),
       });
+      const durationMs = Math.max(0, Math.round(now() - startedAt));
       const writes = result.writes ?? {};
       if (Object.keys(writes).length > 0) {
         repository.mergeVars(chatId(), normalizeVars(writes));
@@ -266,13 +283,36 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
         reason: result.reason ?? '',
         writes,
         extra: result.extra ?? [],
+        // 一次性界面指令：没有就是 null。不写聊天状态，不会在下一轮被读到。
+        ui: result.ui ?? null,
+        durationMs,
         steps: result.steps ?? [],
         vars: repository.getVars(chatId()),
         unusedArgs,
         missingParams,
       };
       emit('call', { name: target, id: logic.id, ok: passed, outcome, writes });
+      if (out.ui) emit('ui', { name: target, id: logic.id, ui: out.ui });
       return out;
+    } catch (err) {
+      return fail(String(err?.message ?? err));
+    }
+  }
+
+  /**
+   * 和 call 一样，但**先让出一帧再跑**，并把失败也 resolve 出来。
+   * 给界面用：调用前先把按钮置灰、底栏写「执行中…」，跑完再恢复。
+   * 返回值与 call 完全相同（多一个 durationMs，call 里也有）。
+   * @returns {Promise<object>} 永不 reject
+   */
+  async function callAsync(name, args = {}, opts = {}) {
+    await new Promise((resolve) => {
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null;
+      if (raf) raf(() => resolve());
+      else setTimeout(resolve, 0);
+    });
+    try {
+      return call(name, args, opts);
     } catch (err) {
       return fail(String(err?.message ?? err));
     }
@@ -294,15 +334,16 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     set,
     remove,
     call,
+    callAsync,
     subscribe,
     notify: (reason = 'manual') => emit(String(reason)),
     describe: () => ({
       version: API_VERSION,
       caps: [...API_CAPS],
-      methods: ['snapshot', 'set', 'remove', 'call', 'subscribe'],
+      methods: ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe'],
       ui: ['openPanel', 'close'],
       events: ['ilb:ready', 'ilb:change'],
-      callReturns: ['ok', 'outcome', 'ran', 'passed', 'reason', 'writes', 'extra', 'steps', 'vars', 'unusedArgs', 'missingParams'],
+      callReturns: ['ok', 'outcome', 'ran', 'passed', 'reason', 'writes', 'extra', 'ui', 'durationMs', 'steps', 'vars', 'unusedArgs', 'missingParams'],
       notes: '只写聊天变量；不改设置与书。失败返回 { ok:false, outcome:"error", reason }。',
     }),
     ui: {
