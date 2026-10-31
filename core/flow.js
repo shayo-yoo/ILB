@@ -9,43 +9,81 @@
 
 import { containsNeedle, compileRegex, safeRegexTest } from './text-match.js';
 import { GOTO_ON_LIMIT } from './settings-defaults.js';
+import { evalExpression, interpolate, formatNumber } from './expr.js';
 
-export const FLOW_KINDS = ['test', 'judge', 'compare', 'define', 'calc', 'random', 'add', 'remember', 'activate', 'goto', 'call', 'ui', 'pass', 'fail'];
+export const FLOW_KINDS = [
+  'test',
+  'judge',
+  'compare',
+  'if',
+  'chance',
+  'set',
+  'calc',
+  'define',
+  'remember',
+  'random',
+  'choose',
+  'add',
+  'activate',
+  'repeat',
+  'goto',
+  'call',
+  'ui',
+  'stop',
+  'pass',
+  'fail',
+];
 
 export const FLOW_KIND_LABEL = {
   test: '检测',
   judge: '判定',
   compare: '比较',
-  define: '定义',
+  if: '条件组',
+  chance: '按概率分支',
+  set: '变量操作',
   calc: '计算',
-  random: '随机数',
-  add: '添加',
+  define: '定义',
   remember: '记住',
+  random: '随机数',
+  choose: '随机选择',
+  add: '添加',
   activate: '激活条目',
+  repeat: '重复',
   goto: '跳转',
   call: '调用逻辑',
   ui: '界面',
+  stop: '结束流程',
   pass: '通过（结束）',
   fail: '不通过（结束）',
 };
 
 export const FLOW_KIND_HINT = {
   test: '看一句话里有没有东西，或者看某条规则这轮在不在',
-  judge: '把几个条件放在一起，全部满足或任一满足',
+  judge: '把几个条件放在一起，全部满足或任一满足（条件里还能再套条件组）',
   compare: '比两个值的大小（变量、数字、文本都行）',
-  define: '给一个变量起个值，后面可以拿来比较或计算',
+  if: '当一组条件（可以嵌套「并且 / 或者 / 不满足」）成立或不成立时分别做什么',
+  chance: '掷一次骰子：按百分比走「命中」或「没中」两条路（同一楼层结果固定）',
+  set: '给变量设值 / 加 / 减 / 追加文字 / 清空 / 删除 / 限制范围 / 四舍五入',
   calc: '用两个值算出第三个值存进变量；选「=」就是直接把右边的值存进去',
-  add: '往这条规则的正文后面追加一段话',
+  define: '给一个变量起个值，后面可以拿来比较或计算',
   remember: '把这个值记进这张聊天的状态，下一轮还在（写 {{ILB:chat.名字}} 就能读）',
+  random: '在最小值和最大值之间取一个数存进变量（同一楼层结果固定）',
+  choose: '从几条候选里随机挑一条（可以存进变量，也可以直接追加到正文）',
+  add: '往这条规则的正文后面追加一段话（可以用 {{变量名}} 插入值）',
   activate: '把另一条规则也拉进这一轮，像它自己出现一样',
+  repeat: '把里面这几步重复做 N 次（有上限，永远是有限次）',
   goto: '跳到这个流程里的另一个节点，从那里继续往下（可以往回跳，次数有上限）',
   call: '调用另一条独立逻辑，把它的结果并进来',
   ui: '让界面翻页、提示、聚焦或问一句（只有「用户点了按钮去调用」时才生效；聊天里自动触发时不执行）',
+  stop: '立刻结束这条流程：成功结束，或者当作不通过',
   pass: '到此为止，这条规则出现',
   fail: '到此为止，这条规则不出现',
 };
 
-export const CONDITION_KINDS = ['contains', 'regex', 'active', 'messages', 'var'];
+/** 带「成立时 / 不成立时」两条分支的节点。其余节点都是直的。 */
+export const BRANCHING_KINDS = ['test', 'judge', 'compare', 'if', 'chance'];
+
+export const CONDITION_KINDS = ['contains', 'regex', 'active', 'messages', 'var', 'group'];
 
 export const CONDITION_KIND_LABEL = {
   contains: '最近几条消息里有某个词',
@@ -53,17 +91,50 @@ export const CONDITION_KIND_LABEL = {
   active: '另一条规则这轮已经出现',
   messages: '已经聊了至少几条消息',
   var: '变量有值',
+  group: '条件组（并且 / 或者，里面还能再放条件）',
 };
 
 export const COMPARE_OPS = ['>', '>=', '<', '<=', '==', '!='];
 /** 计算能用的运算符。'=' 是「直接赋值」：不再拿左右两个值算，而是把右边的值原样存进去。 */
 export const CALC_OPS = ['+', '-', '*', '/', 'min', 'max', '='];
-export const OPERAND_TYPES = ['var', 'number', 'text'];
-export const OPERAND_TYPE_LABEL = { var: '变量', number: '数字', text: '文本' };
+export const OPERAND_TYPES = ['var', 'number', 'text', 'template', 'expr'];
+export const OPERAND_TYPE_LABEL = { var: '变量', number: '数字', text: '文本', template: '文本模板', expr: '数值表达式' };
+
+/** 变量节点能做哪些动作（ILB-4.12）。一个动作一个选项，不再要求用户拆三步。 */
+export const SET_OPS = ['set', 'add', 'sub', 'mul', 'append', 'clear', 'delete', 'clamp', 'round'];
+export const SET_OP_LABEL = {
+  set: '设为',
+  add: '增加',
+  sub: '减少',
+  mul: '乘以',
+  append: '追加文字',
+  clear: '清空',
+  delete: '删除这个变量',
+  clamp: '限制在范围内',
+  round: '取整 / 四舍五入',
+};
+/** 每种动作要用到哪些字段，编辑器据此只显示必要输入框。 */
+export const SET_OP_FIELDS = {
+  set: ['value'],
+  add: ['value'],
+  sub: ['value'],
+  mul: ['value'],
+  append: ['value'],
+  clear: [],
+  delete: [],
+  clamp: ['min', 'max'],
+  round: ['digits'],
+};
 
 export const MAX_NODES = 80;
 export const MAX_DEPTH = 8;
 export const MAX_STEPS = 200;
+/** 重复次数上限（ILB-4.15：永远有限、可预测，没有 while）。 */
+export const MAX_REPEAT = 50;
+/** 「随机选择」最多几条候选。 */
+export const MAX_CANDIDATES = 20;
+/** 单条候选 / 追加文本的长度上限（导入的数据一律当不可信）。 */
+export const MAX_TEXT = 2000;
 
 /**
  * 「界面」步骤（ILB-4.21 / 接口 v1.2）。
@@ -147,6 +218,8 @@ export function checkUiNode(node) {
 function operand(type = 'text', value = '') {
   if (type === 'var') return { type: 'var', name: String(value ?? '') };
   if (type === 'number') return { type: 'number', value: Number(value) || 0 };
+  if (type === 'template') return { type: 'template', value: String(value ?? '') };
+  if (type === 'expr') return { type: 'expr', value: String(value ?? '') };
   return { type: 'text', value: String(value ?? '') };
 }
 
@@ -156,6 +229,8 @@ export function makeCondition(what = 'contains') {
   if (what === 'regex') return { ...base, pattern: '', flags: 'i', negate: false };
   if (what === 'active') return { ...base, entryId: '', negate: false };
   if (what === 'messages') return { ...base, count: 1 };
+  // 条件组（ILB-4.8）：一组条件 + 一个「全部满足 / 任一满足」，里面可以再放条件组
+  if (what === 'group') return { ...base, op: 'and', children: [makeCondition('contains')], negate: false };
   return { ...base, name: '', negate: false };
 }
 
@@ -166,12 +241,27 @@ export function makeNode(kind = 'test', overrides = {}) {
   if (kind === 'compare') {
     return { ...base, left: operand('var', ''), op: '>', right: operand('number', 0), then: [], else: [], ...overrides };
   }
+  if (kind === 'if') {
+    // 条件组节点（ILB-4.8）：一个根组，里面按需嵌套「并且 / 或者 / 不满足」
+    return { ...base, when: makeCondition('group'), then: [], else: [], ...overrides };
+  }
+  if (kind === 'chance') {
+    return { ...base, percent: 50, then: [], else: [], ...overrides };
+  }
+  if (kind === 'set') {
+    return { ...base, name: '', op: 'add', value: operand('number', 1), min: 0, max: 999, digits: 0, persist: true, ...overrides };
+  }
   if (kind === 'calc') {
     return { ...base, target: '', op: '+', left: operand('var', ''), right: operand('number', 1), ...overrides };
   }
   if (kind === 'random') {
     return { ...base, target: '', min: 1, max: 6, integer: true, persist: true, ...overrides };
   }
+  if (kind === 'choose') {
+    return { ...base, candidates: ['', ''], target: '', persist: true, ...overrides };
+  }
+  if (kind === 'repeat') return { ...base, times: 3, body: [], ...overrides };
+  if (kind === 'stop') return { ...base, result: 'pass', reason: '', ...overrides };
   if (kind === 'define') return { ...base, name: '', value: operand('text', ''), ...overrides };
   if (kind === 'add') return { ...base, text: '', ...overrides };
   if (kind === 'remember') return { ...base, name: '', value: operand('text', ''), ...overrides };
@@ -186,10 +276,12 @@ function normalizeOperand(raw, fallback) {
   if (!raw || typeof raw !== 'object') return fallback;
   if (raw.type === 'var') return { type: 'var', name: String(raw.name ?? '') };
   if (raw.type === 'number') return { type: 'number', value: Number(raw.value) || 0 };
-  return { type: 'text', value: String(raw.value ?? '') };
+  if (raw.type === 'template') return { type: 'template', value: String(raw.value ?? '').slice(0, MAX_TEXT) };
+  if (raw.type === 'expr') return { type: 'expr', value: String(raw.value ?? '').slice(0, 240) };
+  return { type: 'text', value: String(raw.value ?? '').slice(0, MAX_TEXT) };
 }
 
-function normalizeCondition(raw) {
+function normalizeCondition(raw, depth = 0) {
   const what = CONDITION_KINDS.includes(raw?.what) ? raw.what : 'contains';
   const cond = { id: String(raw?.id ?? newNodeId()), what };
   if (what === 'contains') {
@@ -205,6 +297,12 @@ function normalizeCondition(raw) {
     cond.negate = raw?.negate === true;
   } else if (what === 'messages') {
     cond.count = clampInt(raw?.count, 0, 10000, 1);
+  } else if (what === 'group') {
+    // 嵌套条件组：深度用 MAX_DEPTH 兜住，超过就不再往下收（保留数据但不无限套）
+    cond.op = raw?.op === 'or' ? 'or' : 'and';
+    cond.negate = raw?.negate === true;
+    const children = Array.isArray(raw?.children) ? raw.children.slice(0, 8) : [];
+    cond.children = depth >= MAX_DEPTH ? [] : children.map((c) => normalizeCondition(c, depth + 1));
   } else {
     cond.name = String(raw?.name ?? '');
     cond.negate = raw?.negate === true;
@@ -212,10 +310,26 @@ function normalizeCondition(raw) {
   return cond;
 }
 
-function normalizeNode(raw, depth) {
+export function normalizeNode(raw, depth) {
   if (!raw || typeof raw !== 'object') return null;
   if (depth > MAX_DEPTH) return null;
-  const kind = FLOW_KINDS.includes(raw.kind) ? raw.kind : 'test';
+
+  // 未知节点（ILB-7.16 红线）：原样保留、标出来、不许静默改成别的类型。
+  // 唯一的例外是"老数据里 kind 丢了但带着 condition"——那种按检测节点读才合理。
+  const rawKind = raw.kind == null ? '' : String(raw.kind);
+  const known = FLOW_KINDS.includes(rawKind);
+  if (!known && !(rawKind === '' && (raw.condition || raw.conditions))) {
+    const kept = { ...raw };
+    kept.id = String(raw.id ?? newNodeId());
+    kept.kind = rawKind || 'unknown-kinded';
+    kept.unknown = true;
+    kept.then = normalizeNodes(raw.then, depth + 1);
+    kept.else = normalizeNodes(raw.else, depth + 1);
+    if (Array.isArray(raw.body)) kept.body = normalizeNodes(raw.body, depth + 1);
+    return kept;
+  }
+
+  const kind = known ? rawKind : 'test';
   const node = { id: String(raw.id ?? newNodeId()), kind };
   if (kind === 'test') node.condition = normalizeCondition(raw.condition ?? {});
   else if (kind === 'judge') {
@@ -227,6 +341,20 @@ function normalizeNode(raw, depth) {
     node.left = normalizeOperand(raw.left, operand('var', ''));
     node.op = COMPARE_OPS.includes(raw.op) ? raw.op : '>';
     node.right = normalizeOperand(raw.right, operand('number', 0));
+  } else if (kind === 'if') {
+    node.when = normalizeCondition(raw.when ?? { what: 'group' });
+    if (node.when.what !== 'group') node.when = { ...makeCondition('group'), ...node.when };
+  } else if (kind === 'chance') {
+    node.percent = clampInt(raw.percent, 0, 100, 50);
+  } else if (kind === 'set') {
+    node.name = String(raw.name ?? '');
+    node.op = SET_OPS.includes(raw.op) ? raw.op : 'set';
+    node.value = normalizeOperand(raw.value, operand('number', 1));
+    node.min = clampInt(raw.min, -999999, 999999, 0);
+    node.max = clampInt(raw.max, -999999, 999999, 999);
+    if (node.max < node.min) node.max = node.min;
+    node.digits = clampInt(raw.digits, 0, 8, 0);
+    node.persist = raw.persist !== false;
   } else if (kind === 'calc') {
     node.target = String(raw.target ?? '');
     node.op = CALC_OPS.includes(raw.op) ? raw.op : '+';
@@ -241,11 +369,23 @@ function normalizeNode(raw, depth) {
     if (node.max < node.min) node.max = node.min;
     node.integer = raw.integer !== false;
     node.persist = raw.persist !== false;
+  } else if (kind === 'choose') {
+    // 随机选择（ILB-4.19）：候选是文本，可以带 {{变量}}；空候选直接丢掉
+    const list = Array.isArray(raw.candidates) ? raw.candidates.slice(0, MAX_CANDIDATES) : [];
+    node.candidates = list.map((c) => String(c ?? '').slice(0, MAX_TEXT));
+    if (node.candidates.length === 0) node.candidates = ['', ''];
+    node.target = String(raw.target ?? '');
+    node.persist = raw.persist !== false;
+  } else if (kind === 'repeat') {
+    node.times = clampInt(raw.times, 1, MAX_REPEAT, 3);
+  } else if (kind === 'stop') {
+    node.result = raw.result === 'fail' ? 'fail' : 'pass';
+    node.reason = String(raw.reason ?? '').slice(0, 200);
   } else if (kind === 'define') {
     node.name = String(raw.name ?? '');
     node.value = normalizeOperand(raw.value, operand('text', ''));
   } else if (kind === 'add') {
-    node.text = String(raw.text ?? '');
+    node.text = String(raw.text ?? '').slice(0, MAX_TEXT);
   } else if (kind === 'remember') {
     node.name = String(raw.name ?? '');
     node.value = normalizeOperand(raw.value, operand('text', ''));
@@ -271,10 +411,11 @@ function normalizeNode(raw, depth) {
     if (Number.isFinite(seq) && seq > 0) node.seq = Math.trunc(seq);
   }
 
-  if (kind === 'test' || kind === 'judge' || kind === 'compare') {
+  if (BRANCHING_KINDS.includes(kind)) {
     node.then = normalizeNodes(raw.then, depth + 1);
     node.else = normalizeNodes(raw.else, depth + 1);
   }
+  if (kind === 'repeat') node.body = normalizeNodes(raw.body, depth + 1);
   return node;
 }
 
@@ -306,6 +447,7 @@ export function countFlowNodes(nodes) {
     n += 1;
     if (Array.isArray(node?.then)) n += countFlowNodes(node.then);
     if (Array.isArray(node?.else)) n += countFlowNodes(node.else);
+    if (Array.isArray(node?.body)) n += countFlowNodes(node.body);
   }
   return n;
 }
@@ -324,19 +466,60 @@ function numOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function operandValue(op, vars) {
-  if (!op || typeof op !== 'object') return '';
+/**
+ * 求一个操作数的值，并把"为什么算不出来"带回来。
+ * 表达式与模板**不会静默变成 0 或空串**：出错就 `ok:false`，由调用方写进诊断。
+ * @returns {{ok: boolean, value: any, error?: string, missing?: string[]}}
+ */
+export function evalOperand(op, vars = {}) {
+  const pool = vars && typeof vars === 'object' ? vars : {};
+  if (!op || typeof op !== 'object') return { ok: true, value: '' };
   if (op.type === 'var') {
     const key = String(op.name ?? '');
-    return vars[key] ?? '';
+    if (!key) return { ok: false, value: '', error: '没有填变量名' };
+    return { ok: true, value: pool[key] ?? '' };
   }
-  if (op.type === 'number') return Number(op.value) || 0;
-  return String(op.value ?? '');
+  if (op.type === 'number') return { ok: true, value: Number(op.value) || 0 };
+  if (op.type === 'expr') {
+    const src = String(op.value ?? '').trim();
+    if (!src) return { ok: false, value: 0, error: '表达式是空的' };
+    const result = evalExpression(src, pool);
+    if (!result.ok) return { ok: false, value: 0, error: result.error, missing: result.missing };
+    return { ok: true, value: result.value };
+  }
+  if (op.type === 'template') {
+    const result = interpolate(String(op.value ?? ''), pool);
+    return { ok: result.errors.length === 0 && result.missing.length === 0, value: result.text, missing: result.missing, error: result.errors[0]?.error };
+  }
+  return { ok: true, value: String(op.value ?? '') };
+}
+
+function operandValue(op, vars) {
+  const result = evalOperand(op, vars);
+  return result.ok ? result.value : '';
 }
 
 /** 条件求值。返回 `{passed, reason}`，reason 是给人看的一句话。 */
-export function evalCondition(cond, ctx) {
+export function evalCondition(cond, ctx, depth = 0) {
   const what = cond?.what ?? 'contains';
+  if (what === 'group') {
+    // 条件组（ILB-4.8）：全部满足 / 任一满足，可以往里再套；空组视为通过（并明说）
+    const op = cond.op === 'or' ? 'or' : 'and';
+    const children = Array.isArray(cond.children) ? cond.children : [];
+    if (depth > MAX_DEPTH) return { passed: false, reason: '条件组套得太深了（超过上限）' };
+    if (children.length === 0) return { passed: true, reason: '这个条件组是空的，视为不限制' };
+    const results = children.map((child) => evalCondition(child, ctx, depth + 1));
+    const ok = op === 'and' ? results.every((r) => r.passed) : results.some((r) => r.passed);
+    const passed = cond.negate === true ? !ok : ok;
+    const label = op === 'and' ? '全部满足' : '任一项满足';
+    const detail = results
+      .map((r, i) => `${op === 'and' ? (r.passed ? '✓' : '✗') : r.passed ? '✓' : '·'}${i + 1}`)
+      .join('');
+    return {
+      passed,
+      reason: `条件组（${label}）${cond.negate === true ? '取反后' : ''}${passed ? '成立' : '不成立'}：${detail}`,
+    };
+  }
   if (what === 'contains') {
     const text = String(cond.text ?? '');
     if (!text) return { passed: true, reason: '没有填写要检测的词，视为通过' };
@@ -422,12 +605,24 @@ function calcValue(a, b, op) {
 /** 一个节点对人说的话（规则列表与诊断都用它）。 */
 export function describeNode(node) {
   if (!node || typeof node !== 'object') return '（空节点）';
+  if (node.unknown === true) return `不支持编辑的节点类型「${node.kind}」（数据已原样保留）`;
   if (node.kind === 'test') return `检测：${describeCondition(node.condition)}`;
   if (node.kind === 'judge') {
     const n = Array.isArray(node.conditions) ? node.conditions.length : 0;
     return `判定：${n} 个条件${node.mode === 'any' ? '任一满足' : '全部满足'}`;
   }
   if (node.kind === 'compare') return `比较：${describeOperand(node.left)} ${node.op} ${describeOperand(node.right)}`;
+  if (node.kind === 'if') return `条件组：当 ${describeCondition(node.when)}`;
+  if (node.kind === 'chance') return `按概率：${node.percent}% 命中（同一楼层结果固定）`;
+  if (node.kind === 'set') {
+    const op = SET_OP_LABEL[node.op] ?? node.op;
+    const name = node.name || '（未命名）';
+    if (node.op === 'clear') return `变量：把 ${name} 清空`;
+    if (node.op === 'delete') return `变量：删除 ${name}`;
+    if (node.op === 'clamp') return `变量：把 ${name} 限制在 ${node.min}–${node.max}`;
+    if (node.op === 'round') return `变量：把 ${name} 四舍五入到 ${node.digits} 位`;
+    return `变量：${name} ${op} ${describeOperand(node.value)}`;
+  }
   if (node.kind === 'define') return `定义：${node.name || '（未命名）'} = ${describeOperand(node.value)}`;
   if (node.kind === 'calc') {
     return node.op === '='
@@ -437,6 +632,16 @@ export function describeNode(node) {
   if (node.kind === 'random') {
     return `随机数：${node.target || '（未命名）'} = ${node.min}–${node.max}${node.integer ? ' 的整数' : ''}（同一楼层结果固定）`;
   }
+  if (node.kind === 'choose') {
+    const list = Array.isArray(node.candidates) ? node.candidates.filter((c) => String(c).trim()) : [];
+    const where = node.target ? `存进 ${node.target}` : '追加到正文';
+    return `随机选择：从 ${list.length} 条里挑 1 条${where}`;
+  }
+  if (node.kind === 'repeat') {
+    const n = Array.isArray(node.body) ? node.body.length : 0;
+    return `重复：把里面 ${n} 步做 ${node.times} 次`;
+  }
+  if (node.kind === 'stop') return `结束流程：${node.result === 'fail' ? '当作不通过' : '当作通过'}${node.reason ? `（${node.reason}）` : ''}`;
   if (node.kind === 'add') {
     const text = String(node.text ?? '');
     return `添加：${text ? `「${text.slice(0, 16)}${text.length > 16 ? '…' : ''}」` : '（空）'}`;
@@ -453,19 +658,30 @@ export function describeNode(node) {
   return '未知节点';
 }
 
-export function describeCondition(cond) {
+export function describeCondition(cond, depth = 0) {
   if (!cond) return '（未设置）';
   if (cond.what === 'contains') return `最近 ${cond.within ?? 5} 条里${cond.negate ? '没有' : '有'}「${cond.text || '（空）'}」`;
   if (cond.what === 'regex') return `匹配正则 /${cond.pattern || '（空）'}/`;
   if (cond.what === 'active') return `${cond.negate ? '没有' : '有'}另一条规则出现`;
   if (cond.what === 'messages') return `已经聊了至少 ${cond.count ?? 1} 条`;
+  if (cond.what === 'group') {
+    const children = Array.isArray(cond.children) ? cond.children : [];
+    if (depth > MAX_DEPTH) return '（条件组太深）';
+    const inner = children.map((c) => describeCondition(c, depth + 1)).join(cond.op === 'or' ? ' 或 ' : ' 且 ');
+    return `${cond.negate ? '不满足（' : '（'}${inner || '空'}${cond.negate ? '）' : '）'}`;
+  }
   return `变量 ${cond.name || '（未命名）'} ${cond.negate ? '没有值' : '有值'}`;
 }
 
-function describeOperand(op) {
+export function describeOperand(op) {
   if (!op) return '（空）';
   if (op.type === 'var') return op.name || '（未选变量）';
-  if (op.type === 'number') return String(op.value ?? 0);
+  if (op.type === 'number') return formatNumber(op.value ?? 0);
+  if (op.type === 'expr') return `表达式 ${String(op.value ?? '').slice(0, 20) || '（空）'}`;
+  if (op.type === 'template') {
+    const text = String(op.value ?? '');
+    return `模板「${text.slice(0, 16)}${text.length > 16 ? '…' : ''}」`;
+  }
   return `「${String(op.value ?? '').slice(0, 12)}」`;
 }
 
@@ -620,6 +836,13 @@ function seededUnit(text) {
 function runNode(node, ctx, steps, depth) {
   if (!node || typeof node !== 'object') return null;
 
+  // 未知节点（ILB-7.16）：数据留着，但**不假装执行成功**——整条流程按出错处理。
+  if (node.unknown === true) {
+    const reason = `这一步的节点类型「${node.kind}」当前版本不认识，已保留数据但没有执行`;
+    steps.push({ stage: 'logic', passed: false, reason });
+    return { status: 'fail', blocked: false, reason };
+  }
+
   if (node.kind === 'pass') {
     steps.push({ stage: 'logic', passed: true, reason: '走到「通过」节点，这条规则出现' });
     return { status: 'pass', reason: '走到「通过」节点' };
@@ -630,11 +853,65 @@ function runNode(node, ctx, steps, depth) {
     // 给 runtime/api.js 区分 blocked 与 error 用；字符串状态仍是 'fail'，旧代码不受影响。
     return { status: 'fail', blocked: true, reason: '走到「不通过」节点' };
   }
+  if (node.kind === 'stop') {
+    const fail = node.result === 'fail';
+    const reason = node.reason ? `提前结束：${node.reason}` : fail ? '提前结束：当作不通过' : '提前结束：当作通过';
+    steps.push({ stage: 'logic', passed: !fail, reason });
+    return { status: fail ? 'fail' : 'pass', blocked: fail, reason };
+  }
 
   if (node.kind === 'define') {
     const value = operandValue(node.value, ctx.vars);
     if (node.name) ctx.vars[node.name] = value;
     steps.push({ stage: 'logic', passed: true, reason: `定义 ${node.name || '（未命名）'} = ${JSON.stringify(value)}` });
+    return null;
+  }
+
+  if (node.kind === 'set') {
+    // 变量动作（ILB-4.12）：一个节点干一件事，不再要求"先算再写回"。
+    const name = String(node.name ?? '');
+    if (!name) {
+      steps.push({ stage: 'logic', passed: false, reason: '「变量操作」没有写变量名，这一步没执行' });
+      return null;
+    }
+    const current = ctx.vars[name];
+    const evaluated = evalOperand(node.value, ctx.vars);
+    const value = evaluated.ok ? evaluated.value : undefined;
+    if (!evaluated.ok && ['set', 'add', 'sub', 'mul', 'append'].includes(node.op)) {
+      // 算不出来就明说，绝不把空值悄悄写进去
+      steps.push({ stage: 'logic', passed: false, reason: `变量 ${name}：${evaluated.error ?? '取值失败'}，这一步没执行` });
+      return null;
+    }
+    let next = current;
+    if (node.op === 'set') next = value;
+    else if (node.op === 'add') next = (numOrNull(current) ?? 0) + (numOrNull(value) ?? 0);
+    else if (node.op === 'sub') next = (numOrNull(current) ?? 0) - (numOrNull(value) ?? 0);
+    else if (node.op === 'mul') next = (numOrNull(current) ?? 0) * (numOrNull(value) ?? 0);
+    else if (node.op === 'append') next = `${current ?? ''}${value ?? ''}`;
+    else if (node.op === 'clear') next = '';
+    else if (node.op === 'delete') next = undefined;
+    else if (node.op === 'clamp') {
+      const n = numOrNull(current);
+      next = n === null ? current : Math.min(node.max, Math.max(node.min, n));
+    } else if (node.op === 'round') {
+      const n = numOrNull(current);
+      const digits = Math.min(8, Math.max(0, Math.trunc(Number(node.digits) || 0)));
+      const factor = 10 ** digits;
+      next = n === null ? current : Math.round(n * factor) / factor;
+    }
+    if (node.op === 'delete' || next === undefined) {
+      delete ctx.vars[name];
+      if (node.persist) ctx.writes[name] = null; // null = 删除；落盘层看到 null 就删
+      steps.push({ stage: 'logic', passed: true, reason: `删除变量 ${name}` });
+      return null;
+    }
+    ctx.vars[name] = next;
+    if (node.persist) ctx.writes[name] = next;
+    steps.push({
+      stage: 'logic',
+      passed: true,
+      reason: `变量 ${name} ${SET_OP_LABEL[node.op] ?? node.op}：${JSON.stringify(current ?? null)} → ${JSON.stringify(next)}`,
+    });
     return null;
   }
 
@@ -666,10 +943,58 @@ function runNode(node, ctx, steps, depth) {
     return null;
   }
 
+  if (node.kind === 'choose') {
+    // 随机选择（ILB-4.19）：候选是文本，可以带 {{变量}}；同样是同一楼层结果固定
+    const list = (Array.isArray(node.candidates) ? node.candidates : []).map((c) => String(c ?? '')).filter((c) => c.trim());
+    if (list.length === 0) {
+      steps.push({ stage: 'logic', passed: false, reason: '「随机选择」一条候选都没写，这一步没执行' });
+      return null;
+    }
+    const unit = seededUnit(`${ctx.seed ?? ''}:${node.id}`);
+    const index = Math.min(list.length - 1, Math.floor(unit * list.length));
+    const expanded = interpolate(list[index], ctx.vars);
+    const picked = expanded.text;
+    if (node.target) {
+      ctx.vars[node.target] = picked;
+      if (node.persist) ctx.writes[node.target] = picked;
+      steps.push({ stage: 'logic', passed: true, reason: `随机选择：第 ${index + 1} 条（共 ${list.length} 条）→ ${node.target}` });
+    } else {
+      ctx.extra.push(picked);
+      steps.push({ stage: 'logic', passed: true, reason: `随机选择：第 ${index + 1} 条（共 ${list.length} 条），已追加到正文` });
+    }
+    for (const name of expanded.missing) {
+      steps.push({ stage: 'logic', passed: false, reason: `挑中的那条里，变量 ${name} 还没有值` });
+    }
+    return null;
+  }
+
+  if (node.kind === 'repeat') {
+    // 重复（ILB-4.15）：次数有上限，里面只能放普通步骤，没有 while
+    const times = clampInt(node.times, 1, MAX_REPEAT, 1);
+    const body = Array.isArray(node.body) ? node.body : [];
+    if (body.length === 0) {
+      steps.push({ stage: 'logic', passed: true, reason: '「重复」里面没有步骤，跳过' });
+      return null;
+    }
+    for (let round = 1; round <= times; round += 1) {
+      if (steps.length > MAX_STEPS) return { status: 'fail', blocked: false, reason: '流程太长，停止执行' };
+      steps.push({ stage: 'logic', passed: true, reason: `重复 第 ${round}/${times} 次` });
+      const stop = runList(body, ctx, steps, depth + 1);
+      if (stop) return stop;
+    }
+    return null;
+  }
+
   if (node.kind === 'add') {
-    const text = String(node.text ?? '');
+    // 文本插值（ILB-4.9）：{{金币}} 在这里就换成值，缺失时留 ⟨未定义:金币⟩ 并记一笔
+    const raw = String(node.text ?? '');
+    const expanded = interpolate(raw, ctx.vars);
+    const text = expanded.text;
     if (text) ctx.extra.push(text);
     steps.push({ stage: 'logic', passed: true, reason: text ? '添加了一段正文' : '「添加」是空的，跳过' });
+    for (const name of expanded.missing) {
+      steps.push({ stage: 'logic', passed: false, reason: `「添加」里的变量 ${name} 还没有值，已留下醒目标记` });
+    }
     return null;
   }
 
@@ -769,6 +1094,17 @@ function runNode(node, ctx, steps, depth) {
 
 function judgeNode(node, ctx) {
   if (node.kind === 'test') return evalCondition(node.condition, ctx);
+  if (node.kind === 'if') {
+    const result = evalCondition(node.when, ctx);
+    return { passed: result.passed, reason: result.reason };
+  }
+  if (node.kind === 'chance') {
+    // 概率分支（ILB-4.19）：种子同随机数，同一楼层重画不会变
+    const percent = clampInt(node.percent, 0, 100, 50);
+    const unit = seededUnit(`${ctx.seed ?? ''}:${node.id}`);
+    const passed = percent >= 100 ? true : percent <= 0 ? false : unit * 100 < percent;
+    return { passed, reason: `按概率 ${percent}% 掷一次：${passed ? '命中' : '没中'}` };
+  }
   if (node.kind === 'judge') {
     const list = Array.isArray(node.conditions) ? node.conditions : [];
     if (list.length === 0) return { passed: true, reason: '没有条件，视为成立' };
@@ -776,8 +1112,13 @@ function judgeNode(node, ctx) {
     const passed = node.mode === 'any' ? results.some((r) => r.passed) : results.every((r) => r.passed);
     return { passed, reason: results.map((r) => `${r.passed ? '✓' : '✗'} ${r.reason}`).join('；') };
   }
-  const left = operandValue(node.left, ctx.vars);
-  const right = operandValue(node.right, ctx.vars);
-  const passed = compareValues(left, right, node.op);
-  return { passed, reason: `${JSON.stringify(left)} ${node.op} ${JSON.stringify(right)}` };
+  // 比较：两边都可能算不出来（变量没了、表达式写错）。算不出来就不算通过，并把原因说出来。
+  const left = evalOperand(node.left, ctx.vars);
+  const right = evalOperand(node.right, ctx.vars);
+  if (!left.ok || !right.ok) {
+    const why = !left.ok ? left.error : right.error;
+    return { passed: false, reason: `算不出要比的值：${why ?? '未知原因'}` };
+  }
+  const passed = compareValues(left.value, right.value, node.op);
+  return { passed, reason: `${JSON.stringify(left.value)} ${node.op} ${JSON.stringify(right.value)}` };
 }

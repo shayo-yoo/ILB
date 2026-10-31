@@ -4,6 +4,7 @@
 
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
+import { summarizeHostContext } from '../core/host-context.js';
 import { expandMacros, normalizeVars, resolveChatId } from '../core/vars.js';
 import { notifyObservers } from './registry.js';
 
@@ -86,6 +87,8 @@ export function createPipeline(deps) {
   let lastResult = null;
   let lastError = null;
   let lastRunAt = 0;
+  /** 最近一次读到的宿主上下文（诊断页要显示它，出问题时才知道"当时看到的是哪个角色"） */
+  let lastHostContext = null;
   /** 这一轮"没做"的原因（例如总开关被关掉）。和"出错"分开记，避免误报红旗。 */
   let lastSkip = null;
 
@@ -144,6 +147,15 @@ export function createPipeline(deps) {
       log.error('读取书架失败，这一轮不注入', err);
       return false;
     }
+    // 宿主联动（ILB-4.x）：适配层已经把 getContext() 洗成统一形状，这里只读一次。
+    // 读失败不影响判定——只是这一轮退回到"只按手动开关"的老行为，并把原因写进诊断。
+    try {
+      lastHostContext = typeof deps.readHostContext === 'function' ? deps.readHostContext() : null;
+    } catch (err) {
+      lastHostContext = null;
+      log.warn(`读取宿主联动信息失败（这一轮按手动开关处理）: ${err?.message ?? err}`);
+    }
+
     let request;
     let resolved;
     try {
@@ -154,6 +166,8 @@ export function createPipeline(deps) {
         characterName: ctx.name2,
         boundBooks: request.boundBooks ?? null,
         manualState: repository.getManualState(),
+        hostContext: lastHostContext,
+        hostLink: { enabled: settings.hostLinkEnabled !== false },
       }, registry.activationProviders.list().map(({ id, impl }) => ({ id, label: impl?.label, test: impl?.test })));
     } catch (err) {
       lastError = err;
@@ -245,10 +259,13 @@ export function createPipeline(deps) {
     getLastResult: () => lastResult,
     getLastError: () => lastError,
     getLastRunAt: () => lastRunAt,
+    /** 界面要显示"当时看到的是哪个角色/哪几本书"时读它 */
+    getHostContext: () => lastHostContext,
     /** 设置改动后清掉上一轮结果，避免界面显示过期的诊断 */
     reset() {
       lastResult = null;
       lastError = null;
+      lastHostContext = null;
       lastSkip = null;
     },
     /** 供诊断面板用：这一轮为什么没出现/为什么出现 */
@@ -259,6 +276,7 @@ export function createPipeline(deps) {
           at: lastRunAt,
           error: lastError ? String(lastError.message ?? lastError) : null,
           skipped: lastSkip,
+          host: summarizeHostContext(lastHostContext),
         };
       }
       return {
@@ -270,6 +288,7 @@ export function createPipeline(deps) {
         diagnostics: lastResult.diagnostics,
         error: lastError ? String(lastError.message ?? lastError) : null,
         skipped: null,
+        host: summarizeHostContext(lastHostContext),
       };
     },
   };

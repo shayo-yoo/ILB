@@ -1,3 +1,47 @@
+## 0.15.0 · 2026-10-31 · 新增 · ILB-4.22 / 4.23 / 6.25 / 6.26 / 7.15–7.17 · 像原生世界书一样跟随，并让常见写法不用再绕底层积木
+
+**一句话**：这一版做两件用户能立刻感觉到的事——① ILB 的书可以按「自动跟随酒馆 / 始终启用 / 手动控制」三选一自动启停，并且每本书都能说出"为什么现在是这个状态"；② 流程里能直接写条件组（并且/或者/取反，可嵌套）、模板与表达式、一个变量操作节点、随机三兄弟、重复/提前结束，不用再拼临时变量。顺带把 PC 浮窗补上最小化/最大化，并按**浮窗内部宽度**分三档密度。
+
+**依据**：D-0055（宿主联动只读、策略+三态覆盖、显示原因）、D-0056（条件组/值输入/变量动作/随机/流程控制的可执行边界）、D-0057（文本模式只读保护与未知节点保真）。
+
+| 文件 | 改动 |
+| --- | --- |
+| `core/expr.js` | 新增：表达式词法 + 递归下降求值、`interpolate` 文本模板、七个白名单函数、`formatNumber`。**没有 `eval` / `new Function`** |
+| `core/host-context.js` | 新增：`HostContext` 归一化、策略/覆盖枚举、来源描述与摘要、`nativeKeysOf`、`matchBookToHost`（同名只算候选） |
+| `core/validate.js` | 新增：静态验证器 `validateFlow`（30 种问题码、人话路径、`error/warn` 分级、不拦保存） |
+| `core/migrate.js` | 新增：存档 `DATA_VERSION=2` 幂等迁移（保留未知字段、失败不覆盖） |
+| `adapters/sillytavern-context.js` | 新增：唯一读原生世界书关联的地方（全局/角色主书/角色额外书/Persona/Chat/群聊成员），读不到的标 `unsupported` |
+| `adapters/sillytavern-events.js` | 新增：角色/聊天/群聊/Persona/世界书变化集中订阅，150ms 合并，可 `dispose` |
+| `core/flow.js` | 20 种节点（新增 `if/chance/set/choose/repeat/stop`）、条件组（递归 and/or/not）、五种值输入、`evalOperand`（算不出来报错不变 0）、未知节点保留 `unknown:true` 不再降级成 `test`、`normalizeNode` 改为导出 |
+| `core/model.js` | `activation` 加 `strategy`/`override`，`book.host {nativeNames,aliases,lastMatchedAt}`；`strategyOf`/`legacyStrategyOf` |
+| `core/resolve-books.js` | 重写判定：providers → ForceOff → ForceOn → Always → Auto → Manual；返回 `details`（rule/reason/sources）；无宿主上下文时逐字退回 v0.14 的 character 行为 |
+| `core/evaluate.js` | `books` 返回体加 `details` 与 `hostContext` |
+| `core/settings-defaults.js` | 加 `hostLinkEnabled: true`、`doubleInjectPolicy: 'warn'` |
+| `adapters/repository.js` | 迁移入口（先快照、失败不覆盖）、`getDataVersion/getMigrationInfo/migrateNow`、导入旧 JSON 走同一入口 |
+| `runtime/pipeline.js` | `readHostContext` 依赖、传给 `resolveBooks`、`describeLastRun().host` |
+| `index.js` | 装配 context 适配器与事件订阅；`panel` 依赖加 `getHostContext/describeHost`；`pagehide` 时 dispose |
+| `ui/panel.js` | 把 `getHostContext/describeHost` 透传给页面（页面不自己摸宿主） |
+| `ui/view-shelf.js` | 启用策略 select（写 `strategy` 并同步老 `mode`）、强制覆盖 select、一行"现在：…"原因、酒馆关联行、手动关联/解除映射 |
+| `ui/view-diagnostics.js` | 新增「酒馆联动」卡片（来源、不支持项、每本书的 rule 与 reason、同源双重注入提醒） |
+| `ui/view-settings.js` | 新增「酒馆联动」卡片（总开关、双重注入策略、存档格式与迁移结果） |
+| `ui/flow-editor.js` | 添加器改成 7 类 + 搜索 + 「更多（高级）」；节点折叠与「⋯ 更多」菜单；条件组编辑器；`set/choose/repeat/stop/if/chance` 表单；未知节点只读展示原始 JSON；顶部静态验证摘要；文本模式在装不下时整体只读 |
+| `ui/layout.js` | 新增 `pickDensity`（560/780 两档阈值，只看窗子内部宽度）、`describeDensity`、`maximizeGeometry` |
+| `ui/floating.js` | 最小化（收到悬浮球不丢草稿）、最大化/还原、`data-density` 三档、`describe()` 带密度与状态 |
+| `style.css` | 只追加新类（条件组缩进、更多菜单、原因行、密度三档、窗口按钮），不改既有规则 |
+| `tests/expr.test.mjs` | 新增 16 条（含"源码里没有 eval"） |
+| `tests/host-link.test.mjs` | 新增 26 条（策略/覆盖/匹配/迁移/多来源） |
+| `tests/phase2-flow.test.mjs` | 新增 27 条（条件组、九种变量动作、模板/表达式、随机稳定、repeat/stop、未知节点、验证器） |
+| `tests/ui-layout.test.mjs` | 11 → 16 条（密度阈值、最大化几何） |
+| `tests/smoke-dom.mjs` | 24 → 26 步（条件组与文本只读保护、浮窗最小化/最大化/密度） |
+
+**验收**：单元 **273/273**、`linkcheck` **55 个模块全通过**、假 DOM 冒烟 **26 步 0 失败**。
+
+**未验证（必须真机手测）**：真 SillyTavern 1.19.0 里"换角色 → 书自动启停"的实际表现；全局/Persona/Chat 三处来源在真实酒馆里的读取；手机外壳里的新节点表单与底部安全区；窄浮窗拖到 480 宽度时密度切换的观感。`tests/live/` 里的脚本本版**没有跑**（需要先起无头 Chrome 与酒馆）。
+
+**明确未做**：加权随机；`call` 的参数/返回值/局部变量；列表循环与 switch；角色变量作用域；文本语法覆盖新节点；宽屏左导航双栏与停靠模式；`doubleInjectPolicy='skip'` 在注入层落地；写回角色卡 `extensions.independent_lorebook`。
+
+---
+
 ## 0.14.1 · 2026-10-27 · 新增 · ILB-4.18.13 / 4.21.10–4.21.13 · 把与界面侧的约定写死
 
 **一句话**：ILBUI 已经按 v1.2 落地并回执，问了三件小事（`select` 自动翻页算不算越界、`toast` 有没有长度上限、`v` 升到 2 时能不能带个"这条 v1 还能用"的标记）。这一版只回答、只补契约，代码上只多返回两个字段。

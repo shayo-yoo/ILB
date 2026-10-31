@@ -19,6 +19,35 @@ export const FAB_BOTTOM_OFFSET_MOBILE = 84;
 export const MAX_WINDOW_WIDTH = 820;
 export const MAX_WINDOW_HEIGHT = 720;
 
+// ---- 密度（ILB-6.26）：看的是**窗子内部**有多宽，不是屏幕有多宽 ----
+// 为什么单独一套：屏幕 1920，用户把浮窗拖到 480 宽，这时"桌面多列"就是错的。
+// 门槛比 pickLayout 小：浮窗本身最大 820，用 768 的屏幕断点会让宽屏永远出不来。
+export const COMPACT_DENSITY_WIDTH = 560;
+export const WIDE_DENSITY_WIDTH = 780;
+export const DENSITIES = ['compact', 'standard', 'wide'];
+export const DENSITY_LABEL = {
+  compact: '紧凑（单列、导航收窄）',
+  standard: '标准（顶部导航）',
+  wide: '宽屏（能并排看两栏）',
+};
+
+/**
+ * 按浮窗内部宽度挑密度。
+ * @param {number} width 浮窗内容区的宽度（CSS 像素）
+ * @returns {'compact'|'standard'|'wide'}
+ */
+export function pickDensity(width) {
+  const w = num(width, 0);
+  if (w > 0 && w < COMPACT_DENSITY_WIDTH) return 'compact';
+  if (w >= WIDE_DENSITY_WIDTH) return 'wide';
+  return 'standard';
+}
+
+/** 给日志/诊断看的人话。 */
+export function describeDensity(density) {
+  return DENSITY_LABEL[density] ?? DENSITY_LABEL.standard;
+}
+
 function num(value, fallback) {
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -92,6 +121,22 @@ export function clampGeometry(geometry, layout, viewport = {}) {
   const x = clamp(geo.x, 0, Math.max(0, width - w));
   const y = clamp(geo.y, 0, Math.max(0, height - h));
   return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+}
+
+/**
+ * 「最大化」用多大的窗子：铺满屏幕，只留一点边距。
+ * 注意这里**不**受 MAX_WINDOW_WIDTH 限制——最大化就是用户明确要求"占满"，
+ * 而拖动改大小时仍然收在 MAX 里，两种意图不一样。
+ */
+export function maximizeGeometry(viewport = {}) {
+  const width = num(viewport.width, 1024);
+  const height = num(viewport.height, 768);
+  return {
+    x: FAB_MARGIN,
+    y: FAB_MARGIN,
+    w: Math.max(MIN_WINDOW_WIDTH, Math.round(width - FAB_MARGIN * 2)),
+    h: Math.max(MIN_WINDOW_HEIGHT, Math.round(height - FAB_MARGIN * 2)),
+  };
 }
 
 /** 悬浮球第一次出现时放在右下角、输入框上方。返回左上角坐标。 */

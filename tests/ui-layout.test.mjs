@@ -9,6 +9,11 @@ import {
   pickLayout,
   defaultWindowGeometry,
   clampGeometry,
+  pickDensity,
+  describeDensity,
+  maximizeGeometry,
+  COMPACT_DENSITY_WIDTH,
+  WIDE_DENSITY_WIDTH,
   defaultFabPosition,
   clampFabPosition,
   describeLayout,
@@ -90,4 +95,45 @@ test('布局描述是人话，不是内部代号', () => {
   assert.match(describeLayout('desktop'), /电脑/);
   assert.equal(isMobileLayout('mobile'), true);
   assert.equal(isMobileLayout('desktop'), false);
+});
+
+test('密度看的是窗子内部宽度，不是屏幕宽度', () => {
+  assert.equal(pickDensity(480), 'compact');
+  assert.equal(pickDensity(COMPACT_DENSITY_WIDTH - 1), 'compact');
+  assert.equal(pickDensity(COMPACT_DENSITY_WIDTH), 'standard');
+  assert.equal(pickDensity(WIDE_DENSITY_WIDTH - 1), 'standard');
+  assert.equal(pickDensity(WIDE_DENSITY_WIDTH), 'wide');
+  assert.equal(pickDensity(1600), 'wide');
+});
+
+test('还没量出宽度时按标准处理，不瞎猜紧凑', () => {
+  assert.equal(pickDensity(0), 'standard');
+  assert.equal(pickDensity(undefined), 'standard');
+  assert.equal(pickDensity('abc'), 'standard');
+});
+
+test('密度描述是人话，不是内部代号', () => {
+  assert.match(describeDensity('compact'), /紧凑/);
+  assert.match(describeDensity('wide'), /宽屏/);
+  assert.equal(describeDensity('不知道'), describeDensity('standard'));
+});
+
+test('最大化铺满屏幕但留着边距，且不小于最小尺寸', () => {
+  const big = maximizeGeometry({ width: 1600, height: 900 });
+  assert.equal(big.w, 1600 - 24);
+  assert.equal(big.h, 900 - 24);
+  assert.equal(big.x, 12);
+  assert.ok(big.y >= 0);
+
+  const tiny = maximizeGeometry({ width: 300, height: 200 });
+  assert.ok(tiny.w >= MIN_WINDOW_WIDTH);
+  assert.ok(tiny.h >= MIN_WINDOW_HEIGHT);
+});
+
+test('最大化之后仍然能被子窗口的普通夹取接受', () => {
+  const viewport = { width: 1600, height: 900 };
+  const geo = maximizeGeometry(viewport);
+  const clamped = clampGeometry(geo, 'desktop', viewport);
+  assert.ok(clamped.w <= viewport.width && clamped.h <= viewport.height);
+  assert.ok(clamped.x >= 0 && clamped.y >= 0);
 });

@@ -795,6 +795,10 @@ export function evaluate(request = {}, options = {}) {
       inactive: resolved.inactiveBooks,
       reasons: resolved.reasons,
       warnings: resolved.warnings,
+      /** 每本书的判定明细（ILB-4.6）：为什么启用/停用、走的是哪条规则 */
+      details: resolved.details ?? {},
+      /** 这一轮看到的宿主上下文（ILB-4.9）；没有联动能力时是 null */
+      hostContext: resolved.hostContext ?? null,
     },
     poolSize: pool.length,
   };

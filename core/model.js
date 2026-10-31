@@ -5,6 +5,7 @@
 import { POSITIONS, ROLES, SECONDARY_LOGIC, ACTIVATION_MODES, TRIGGER_SOURCES } from './settings-defaults.js';
 import { normalizeFlow } from './flow.js';
 import { normalizeFields } from './fields.js';
+import { BOOK_STRATEGIES, BOOK_OVERRIDES } from './host-context.js';
 
 export function deepClone(value) {
   if (typeof structuredClone === 'function') {
@@ -116,7 +117,11 @@ export function defaultBook(overrides = {}) {
     name: '未命名',
     created_at: now,
     updated_at: now,
-    activation: { mode: 'manual', characters: [], manual: true },
+    // 启用策略（ILB-4.6）：auto=自动跟随酒馆 / always=始终启用 / manual=手动控制。
+    // mode/characters 是 v0.14 及以前的老字段，留着读旧数据，判定时以 strategy 为准。
+    activation: { mode: 'manual', strategy: 'manual', override: 'auto', characters: [], manual: true },
+    // 与原生世界书的稳定映射（ILB-4.5）：不靠显示名称。nativeNames 是用户确认过的原生书标识。
+    host: { nativeNames: [], aliases: [], lastMatchedAt: 0 },
     pool: { share: false },
     entries: [],
     // 独立逻辑（ILB-4.14）：不依附条目的判断流程，可以有触发词、写变量、激活条目
@@ -125,6 +130,18 @@ export function defaultBook(overrides = {}) {
     _source: { book_file: null, source_hash: null, imported_at: null, import_count: 0 },
     ...overrides,
   };
+}
+
+/** 老的启用模式 → 新的启用策略。老数据不丢语义：character 就是"自动跟随角色卡"。 */
+export function legacyStrategyOf(mode) {
+  if (mode === 'always') return 'always';
+  if (mode === 'character') return 'auto';
+  return 'manual';
+}
+
+export function strategyOf(activation) {
+  if (BOOK_STRATEGIES.includes(activation?.strategy)) return activation.strategy;
+  return legacyStrategyOf(activation?.mode);
 }
 
 export function normalizeEntry(raw, bookId) {
@@ -238,10 +255,18 @@ export function normalizeBook(raw) {
   out.name = str(src.name, '未命名') || '未命名';
   out.created_at = num(src.created_at, Date.now());
   out.updated_at = num(src.updated_at, out.created_at);
+  const legacyMode = pickOne(src.activation?.mode, ACTIVATION_MODES, 'manual');
   out.activation = {
-    mode: pickOne(src.activation?.mode, ACTIVATION_MODES, 'manual'),
+    mode: legacyMode,
+    strategy: BOOK_STRATEGIES.includes(src.activation?.strategy) ? src.activation.strategy : legacyStrategyOf(legacyMode),
+    override: BOOK_OVERRIDES.includes(src.activation?.override) ? src.activation.override : 'auto',
     characters: asArray(src.activation?.characters).map((x) => str(x)).filter(Boolean),
     manual: src.activation?.manual !== false,
+  };
+  out.host = {
+    nativeNames: asArray(src.host?.nativeNames).map((x) => str(x)).filter(Boolean),
+    aliases: asArray(src.host?.aliases).map((x) => str(x)).filter(Boolean),
+    lastMatchedAt: Math.max(0, Math.trunc(num(src.host?.lastMatchedAt, 0))),
   };
   out.pool = { share: src.pool?.share === true };
   out._source = {

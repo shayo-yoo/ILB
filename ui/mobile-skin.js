@@ -9,7 +9,7 @@
 // 好处是手机界面只依赖自己：style.css 丢了、旧了、被主题覆盖，手机照样是对的。
 // 注意：这不是"兜底"，是唯一的一份手机样式——下面这些选择器只属于手机界面（都以 .ilb-m 开头）。
 
-export const MOBILE_SKIN_VERSION = '0.6.1';
+export const MOBILE_SKIN_VERSION = '0.6.2';
 export const MOBILE_SKIN_ID = 'ilb-mobile-skin';
 
 // 皮肤只做"手机界面需要的那些事"：

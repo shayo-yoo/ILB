@@ -5,7 +5,8 @@
 
 import { DEFAULT_SETTINGS } from '../core/settings-defaults.js';
 import { normalizeBook } from '../core/model.js';
-import { evictSnapshots } from '../core/snapshot.js';
+import { DATA_VERSION, migrateBucket } from '../core/migrate.js';
+import { createSnapshot, evictSnapshots } from '../core/snapshot.js';
 
 function safeClone(v, fallback) {
   try {
@@ -28,6 +29,8 @@ function emptyState() {
  */
 export function createRepository({ getContext, namespace = 'independent_lorebook', persist = null }) {
   let cache = null;
+  /** 最近一次迁移的结果，给诊断页显示（成功也要说，用户才知道数据被动过） */
+  let lastMigration = null;
 
   /** 每次写完都叫一声宿主。写盘失败不算错误：内存里已经有了，下次写成功时会一起落盘。 */
   function commit() {
@@ -57,8 +60,39 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     b.importLog = Array.isArray(b.importLog) ? b.importLog : [];
     b.ui = b.ui && typeof b.ui === 'object' ? b.ui : {};
     b.snapshots = Array.isArray(b.snapshots) ? b.snapshots : [];
+    migrateIfNeeded(b);
     cache = b;
     return b;
+  }
+
+  /**
+   * 存档迁移（ILB-7.15）：老存档第一次被读到时就地升级。
+   * 顺序严格是「先备份 → 再迁移 → 失败就什么都不动」。
+   * 幂等：已经迁过的版本号对得上，直接返回，不拍快照也不写盘。
+   */
+  function migrateIfNeeded(b) {
+    if (Number(b.version) >= DATA_VERSION) return;
+    const from = Number(b.version) || 1;
+    try {
+      const backup = createSnapshot(b.books, b.manualState, {
+        name: `迁移前 v${from}`,
+        note: 'ILB 存档格式迁移前的自动备份（可在这里整套恢复）',
+        auto: true,
+      });
+      b.snapshots = evictSnapshots([...(b.snapshots ?? []), backup]);
+    } catch (err) {
+      // 备份都存不下就不迁移——宁可这轮按老格式读，也不能把用户的数据改坏
+      lastMigration = { ok: false, from, to: DATA_VERSION, error: `备份失败，已放弃迁移：${err?.message ?? err}`, at: Date.now() };
+      return;
+    }
+    const result = migrateBucket(b, { now: Date.now() });
+    if (result.error) {
+      lastMigration = { ok: false, from: result.from, to: result.to, error: result.error, at: Date.now() };
+      return;
+    }
+    Object.assign(b, result.data);
+    lastMigration = { ok: true, from: result.from, to: result.to, notes: result.notes, books: result.books, at: Date.now() };
+    commit();
   }
 
   function getSettings() {
@@ -298,7 +332,9 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     const b = bucket();
     return safeClone(
       {
-        version: 1,
+        version: DATA_VERSION,
+        dataVersion: DATA_VERSION,
+        exportedAt: Date.now(),
         settings: b.settings,
         books: b.books,
         manualState: b.manualState,
@@ -313,13 +349,23 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
   function importAll(blob) {
     const data = safeClone(blob, null);
     if (!data || typeof data !== 'object') throw new Error('导入的内容不是有效的数据');
+    // 导入旧 JSON 走同一个迁移入口（ILB-7.15）：先迁移再落地，迁移失败就整份拒绝。
+    let source = data;
+    if (Number(data.version) < DATA_VERSION) {
+      const migrated = migrateBucket(data, { now: Date.now() });
+      if (migrated.error) throw new Error(`这份数据的格式迁移失败，已拒绝导入：${migrated.error}`);
+      source = migrated.data;
+      lastMigration = { ok: true, from: migrated.from, to: migrated.to, notes: migrated.notes, books: migrated.books, at: Date.now() };
+    }
     const b = bucket();
-    if (data.settings && typeof data.settings === 'object') b.settings = data.settings;
-    if (Array.isArray(data.books)) b.books = data.books.map((x) => normalizeBook(x));
-    if (data.manualState && typeof data.manualState === 'object') b.manualState = data.manualState;
-    if (data.importLog && Array.isArray(data.importLog)) b.importLog = data.importLog.slice(-IMPORT_LOG_LIMIT);
-    if (data.ui && typeof data.ui === 'object') b.ui = data.ui;
-    if (Array.isArray(data.snapshots)) b.snapshots = evictSnapshots(data.snapshots);
+    if (source.settings && typeof source.settings === 'object') b.settings = source.settings;
+    if (Array.isArray(source.books)) b.books = source.books.map((x) => normalizeBook(x));
+    if (source.manualState && typeof source.manualState === 'object') b.manualState = source.manualState;
+    if (source.importLog && Array.isArray(source.importLog)) b.importLog = source.importLog.slice(-IMPORT_LOG_LIMIT);
+    if (source.ui && typeof source.ui === 'object') b.ui = source.ui;
+    if (Array.isArray(source.snapshots)) b.snapshots = evictSnapshots(source.snapshots);
+    // 导入的是"一整套存档"：版本号跟着走，下次打开不会再迁一遍
+    b.version = DATA_VERSION;
     commit();
     return { books: b.books.length };
   }
@@ -350,5 +396,22 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     renameSnapshot,
     exportAll,
     importAll,
+    /** 存档格式版本与最近一次迁移结果（诊断页用） */
+    getDataVersion() {
+      try {
+        return Number(bucket().version) || DATA_VERSION;
+      } catch {
+        return DATA_VERSION;
+      }
+    },
+    getMigrationInfo() {
+      return lastMigration ? { ...lastMigration } : null;
+    },
+    /** 手动触发一次迁移检查（导入后、或在诊断页点"检查数据"时） */
+    migrateNow() {
+      const b = bucket();
+      migrateIfNeeded(b);
+      return lastMigration ? { ...lastMigration } : { ok: true, from: DATA_VERSION, to: DATA_VERSION, notes: [], at: Date.now() };
+    },
   };
 }

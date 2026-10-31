@@ -12,7 +12,9 @@ import { el, on } from './dom.js';
 import { helpButton, closeOverlay, isOverlayOpen } from './help.js';
 import {
   pickLayout,
+  pickDensity,
   defaultWindowGeometry,
+  maximizeGeometry,
   clampGeometry,
   defaultFabPosition,
   clampFabPosition,
@@ -54,6 +56,10 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
   );
   let fabPos = clampFabPosition(saved.fab ?? defaultFabPosition(layout, initialViewport), initialViewport);
   let open = saved.open === true;
+  let minimized = false;
+  let maximized = false;
+  let restoreGeometry = null;
+  let density = pickDensity(geometry.w);
   let mounted = false;
   let visible = true;
   let saveTimer = null;
@@ -77,9 +83,23 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
   const titleNode = el('div', { class: 'ilb-window-title', text: '世界书 · ILB' });
   const layoutNode = el('div', { class: 'ilb-window-sub' });
   const closeBtn = el('button', { type: 'button', class: 'ilb-window-x', 'aria-label': '关闭', title: '关闭', text: '×' });
+  const minBtn = el('button', {
+    type: 'button',
+    class: 'ilb-window-btn',
+    'aria-label': '最小化',
+    title: '最小化到悬浮球（不会丢掉正在改的内容）',
+    text: '－',
+  });
+  const maxBtn = el('button', {
+    type: 'button',
+    class: 'ilb-window-btn',
+    'aria-label': '最大化',
+    title: '最大化 / 还原',
+    text: '□',
+  });
   const head = el('div', { class: 'ilb-window-head' }, [
     el('div', { class: 'ilb-window-titles' }, [titleNode, layoutNode]),
-    el('div', { class: 'ilb-window-tools' }, [helpButton('fab', '这个浮窗怎么用'), closeBtn]),
+    el('div', { class: 'ilb-window-tools' }, [helpButton('fab', '这个浮窗怎么用'), minBtn, maxBtn, closeBtn]),
   ]);
   const body = el('div', { class: 'ilb-window-body' });
   const win = el(
@@ -129,19 +149,90 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
   function applyLayout() {
     const viewport = viewportOf();
     layout = pickLayout(viewport);
+    if (maximized) geometry = maximizeGeometry(viewport);
     geometry = clampGeometry(geometry, layout, viewport);
     fabPos = clampFabPosition(fabPos, viewport);
     win.classList.add('ilb-window-desktop');
     applyGeometry();
     applyFab();
     applyOpenState();
+    applyWindowState();
     layoutNode.textContent = describeLayout(layout);
+  }
+
+  // ---- 最小化 / 最大化（ILB-6.25）----
+  // 最小化不是关闭：面板还挂着、草稿还在，只是把窗子收起来。
+  function applyWindowState() {
+    win.classList.toggle('ilb-window-min', minimized);
+    win.classList.toggle('ilb-window-max', maximized);
+    // 用内联 display 而不是只靠类：.ilb-window-open 里的 display 会盖过类选择器。
+    win.style.display = minimized ? 'none' : '';
+    maxBtn.textContent = maximized ? '❐' : '□';
+    maxBtn.setAttribute('aria-label', maximized ? '还原' : '最大化');
+    maxBtn.title = maximized ? '还原成原来的大小' : '最大化（铺满屏幕）/ 还原';
+    minBtn.textContent = minimized ? '❐' : '－';
+    minBtn.setAttribute('aria-label', minimized ? '恢复窗口' : '最小化');
+    minBtn.title = minimized ? '把窗子收回来' : '最小化到悬浮球（不会丢掉正在改的内容）';
+  }
+
+  function minimize() {
+    if (!open || minimized) return false;
+    minimized = true;
+    applyWindowState();
+    scheduleSave();
+    return true;
+  }
+
+  function unminimize() {
+    if (!minimized) return false;
+    minimized = false;
+    applyWindowState();
+    scheduleSave();
+    return true;
+  }
+
+  function toggleMaximize() {
+    if (!open) return false;
+    if (minimized) unminimize();
+    if (!maximized) {
+      restoreGeometry = { ...geometry };
+      maximized = true;
+      geometry = maximizeGeometry(viewportOf());
+      applyGeometry();
+      applyWindowState();
+      applyDensity(win.clientWidth || geometry.w);
+      scheduleSave();
+      return true;
+    }
+    maximized = false;
+    geometry = clampGeometry(restoreGeometry ?? defaultWindowGeometry(layout, viewportOf()), layout, viewportOf());
+    restoreGeometry = null;
+    applyGeometry();
+    applyWindowState();
+    applyDensity(win.clientWidth || geometry.w);
+    scheduleSave();
+    return true;
+  }
+
+  /**
+   * 密度只看窗子**内部**有多宽（ILB-6.26）。
+   * 屏幕 1920 但窗子被拖到 480 时，也必须是紧凑布局。
+   */
+  function applyDensity(width) {
+    const next = pickDensity(width);
+    if (next === density && win.getAttribute && win.getAttribute('data-density') === next) return density;
+    density = next;
+    if (typeof win.setAttribute === 'function') win.setAttribute('data-density', next);
+    win.classList.remove('ilb-density-compact', 'ilb-density-standard', 'ilb-density-wide');
+    win.classList.add(`ilb-density-${next}`);
+    return density;
   }
 
   // ---- 开关 ----
   function openWindow() {
     if (open) return;
     open = true;
+    minimized = false;
     lastFocus = document.activeElement;
     applyLayout();
     try {
@@ -173,6 +264,11 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
   }
 
   function toggle() {
+    // 最小化状态下点悬浮球 = 把窗子收回来（不是关掉重开，草稿还在）
+    if (minimized) {
+      unminimize();
+      return;
+    }
     if (open) closeWindow();
     else openWindow();
   }
@@ -268,9 +364,11 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
       try {
         const observer = new ResizeObserver(() => {
           if (!mounted || !open || !visible) return;
+          if (maximized) return; // 最大化时尺寸跟着屏幕走，别被这次回调改回去
           const w = Math.round(win.offsetWidth);
           const h = Math.round(win.offsetHeight);
           if (!w || !h) return;
+          applyDensity(w);
           if (w !== geometry.w || h !== geometry.h) {
             geometry = clampGeometry({ ...geometry, w, h }, layout, viewportOf());
             scheduleSave();
@@ -299,6 +397,11 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     // 注意：悬浮球"点一下打开"是靠 pointerup 里判断"有没有拖动"实现的，
     // 这里不要再加 click 监听，否则一次点击会开关两次。
     on(closeBtn, 'click', closeWindow);
+    on(minBtn, 'click', () => {
+      if (minimized) unminimize();
+      else minimize();
+    });
+    on(maxBtn, 'click', toggleMaximize);
     on(document, 'keydown', (event) => {
       if (event.key !== 'Escape' || !open) return;
       if (isOverlayOpen()) return; // 先关浮层，再关窗口
@@ -323,6 +426,7 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     }
     mounted = true;
     applyLayout();
+    applyDensity(win.clientWidth || geometry.w);
     bind();
     return true;
   }
@@ -376,7 +480,13 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     open: openWindow,
     close: closeWindow,
     toggle,
+    minimize,
+    unminimize,
+    toggleMaximize,
     isOpen: () => open,
+    isMinimized: () => minimized,
+    isMaximized: () => maximized,
+    density: () => density,
     layout: () => layout,
     body,
     setStatus,
@@ -386,6 +496,9 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
       open,
       visible,
       layout,
+      density,
+      minimized,
+      maximized,
       geometry: { ...geometry },
       fab: { ...fabPos },
       mounted,

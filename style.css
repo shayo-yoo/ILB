@@ -1334,3 +1334,171 @@ body.ilb-overlay-open .ilb-fab {
 .ilb-flow-pick {
   font-size: 0.86em;
 }
+
+/* ===== v0.15.0 新增：流程可读性 / 条件组 / 宿主联动 =====
+   只加新类名，不改上面既有规则（ILB-10 第 8 条：不一刀切改全局 CSS 命名）。 */
+
+.ilb-flow-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--SmartThemeBodyColor, #ddd);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 1em;
+  line-height: 1;
+}
+
+.ilb-flow-more-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 6px 6px;
+}
+
+.ilb-flow-more-menu button {
+  font-size: 0.86em;
+}
+
+.ilb-flow-unknown {
+  border-left: 3px solid #d08a2e;
+}
+
+.ilb-flow-raw {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  border-radius: 6px;
+}
+
+.ilb-flow-group-cond {
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ilb-flow-group-depth-1 { margin-left: 10px; }
+.ilb-flow-group-depth-2 { margin-left: 20px; }
+.ilb-flow-group-depth-3 { margin-left: 28px; }
+
+.ilb-flow-group-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ilb-flow-validate {
+  font-size: 0.86em;
+  padding: 2px 0;
+}
+
+.ilb-flow-validate-bad {
+  border-left: 3px solid #d08a2e;
+  padding-left: 8px;
+}
+
+.ilb-flow-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(128, 128, 128, 0.25);
+}
+
+.ilb-flow-group:last-child {
+  border-bottom: 0;
+}
+
+.ilb-flow-group-more {
+  opacity: 0.9;
+}
+
+.ilb-flow-search {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.ilb-flow-picker-body {
+  width: 100%;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.ilb-reason {
+  font-size: 0.9em;
+  padding: 2px 0 2px 8px;
+  border-left: 3px solid transparent;
+}
+
+.ilb-reason-on { border-left-color: #3f8f4a; }
+.ilb-reason-off { border-left-color: #9a6a2a; }
+
+.ilb-inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* ---- 浮窗按钮与密度（ILB-5.1 / 5.2）---- */
+.ilb-window-btn {
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  background: transparent;
+  color: var(--SmartThemeBodyColor, #ddd);
+  cursor: pointer;
+  font-size: 0.95em;
+}
+
+.ilb-window-btn:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+
+/* 紧凑：窗子内部窄于 560 —— 导航收窄、标签变小、不再假装宽屏 */
+.ilb-window[data-density="compact"] .ilb-window-body {
+  padding: 6px 8px;
+}
+
+.ilb-window[data-density="compact"] .ilb-tabs {
+  gap: 2px;
+}
+
+.ilb-window[data-density="compact"] .ilb-tab {
+  flex: 1 0 30%;
+  font-size: 0.82em;
+  padding: 4px 6px;
+}
+
+.ilb-window[data-density="compact"] .ilb-tab-blurb {
+  display: none;
+}
+
+.ilb-window[data-density="compact"] .ilb-toolbar {
+  flex-wrap: wrap;
+}
+
+/* 宽屏：能并排看两栏时，书卡与设置卡铺成两列 */
+.ilb-window[data-density="wide"] .ilb-window-body {
+  padding: 10px 14px;
+}
+
+.ilb-window[data-density="wide"] .ilb-book-list,
+.ilb-window[data-density="wide"] .ilb-settings-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  align-items: start;
+}

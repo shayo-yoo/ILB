@@ -1,18 +1,35 @@
 // ui/view-shelf.js —— 书架页（ILB-6.1）
 // 一本书一张卡：卡可以长，但不横向撑出屏幕。
 
-import { makeEmptyBook, bookTokenEstimate } from '../core/model.js';
+import { makeEmptyBook, bookTokenEstimate, strategyOf } from '../core/model.js';
 import { exportNativeWorld } from '../core/export-native.js';
 import { estimateTokens } from '../core/budget.js';
 import { filterBooks } from '../core/search.js';
 import { sourceHashOf } from '../core/import-native.js';
+import {
+  HOST_SOURCE_LABEL, STRATEGY_LABEL, OVERRIDE_LABEL, normalizeHostContext, describeMatch, matchBookToHost,
+} from '../core/host-context.js';
 import {
   el, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
   searchInput, selectBox, actionRow, metaLine, card, downloadJson,
 } from './widgets.js';
 import { openImportDialog } from './importer.js';
 
-const MODE_LABEL = { always: '永远启用', character: '跟随角色卡', manual: '手动开关' };
+// 说明"这本书现在为什么开 / 为什么关"：策略 + 强制覆盖 + 宿主关联，三者合成一句话（ILB-4.6）。
+// 这里只做展示用的推算；真正判定在 core/resolve-books.js，两边规则一致。
+function reasonOf(book, host) {
+  const strategy = strategyOf(book.activation);
+  const override = book.activation?.override ?? 'auto';
+  if (override === 'off') return { on: false, text: '你强制停用了它（覆盖策略）' };
+  if (override === 'on') return { on: true, text: '你强制启用了它（覆盖策略）' };
+  if (strategy === 'always') return { on: true, text: '策略是「始终启用」' };
+  if (strategy === 'manual') return { on: null, text: '策略是「手动控制」，看下面的手动开关' };
+  if (!host.contextAvailable) return { on: null, text: '还没读到酒馆上下文（状态未知），先按手动开关走' };
+  const match = matchBookToHost(book, host);
+  if (match.matched) return { on: true, text: describeMatch(match) };
+  if (match.candidate) return { on: false, text: `酒馆里有同名书「${match.candidate}」，但只凭名字相同不会自动启用` };
+  return { on: false, text: '当前角色 / 聊天没有关联这本书' };
+}
 
 function shortHash(hash) {
   const text = String(hash ?? '');
@@ -71,9 +88,20 @@ export function renderShelf(ctx) {
     }, { ghost: true }));
   }
 
+  function readHost() {
+    try {
+      return typeof ctx.getHostContext === 'function' ? ctx.getHostContext() : null;
+    } catch (err) {
+      console.warn('[ILB] 读取宿主联动信息失败', err);
+      return null;
+    }
+  }
+
   function draw() {
     const all = repository.listBooks();
     const manual = repository.getManualState();
+    // 宿主上下文每次重画都重新读：切了角色就该看到新的"为什么"
+    const host = normalizeHostContext(readHost());
     const shown = filterBooks(all, ctx.state.bookQuery);
     const visible = new Set(shown.map((b) => b.book_id));
     for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
@@ -91,18 +119,21 @@ export function renderShelf(ctx) {
       listHost.appendChild(emptyText('没有匹配的书。换个关键词试试。'));
       return;
     }
-    for (const book of shown) listHost.appendChild(renderBook(book, manual));
+    for (const book of shown) listHost.appendChild(renderBook(book, manual, host));
     drawBatch(shown);
   }
 
-  function renderBook(book, manual) {
-    const mode = book.activation?.mode ?? 'manual';
+  function renderBook(book, manual, host) {
+    const strategy = strategyOf(book.activation);
+    const override = book.activation?.override ?? 'auto';
     const on = Object.prototype.hasOwnProperty.call(manual, book.book_id)
       ? manual[book.book_id] !== false
       : book.activation?.manual !== false;
     const source = book._source ?? {};
     const count = Number(source.import_count) || 1;
-    const badges = [badge(MODE_LABEL[mode] ?? mode), badge(`${book.entries.length} 条`)];
+    const reason = reasonOf(book, host);
+    const badges = [badge(STRATEGY_LABEL[strategy] ?? strategy), badge(`${book.entries.length} 条`)];
+    if (override !== 'auto') badges.push(badge(override === 'on' ? '已强制启用' : '已强制停用'));
     if (count > 1) badges.push(badge(`导入 ${count} 次`));
 
     return card([
@@ -138,11 +169,27 @@ export function renderShelf(ctx) {
           : null,
       ]),
 
+      el('div', { class: `ilb-reason ${reason.on === true ? 'ilb-reason-on' : reason.on === false ? 'ilb-reason-off' : ''}`.trim() }, [
+        el('span', { class: 'ilb-sub', text: `现在：${reason.text}` }),
+      ]),
+
+      hostRow(book, host),
+
       el('div', { class: 'ilb-book-controls' }, [
         el('label', { class: 'ilb-inline' }, [
-          el('span', { class: 'ilb-sub', text: '启用方式' }),
-          selectBox(mode, Object.entries(MODE_LABEL).map(([value, label]) => ({ value, label })), (value) => {
-            book.activation = { ...(book.activation ?? {}), mode: value };
+          el('span', { class: 'ilb-sub', text: '启用策略' }),
+          selectBox(strategy, Object.entries(STRATEGY_LABEL).map(([value, label]) => ({ value, label })), (value) => {
+            // mode 是 v0.14 的老字段：保留并同步，老版本读到它时行为尽量一致
+            const mode = value === 'auto' ? 'character' : value;
+            book.activation = { ...(book.activation ?? {}), strategy: value, mode };
+            repository.saveBook(book);
+            draw();
+          }),
+        ]),
+        el('label', { class: 'ilb-inline' }, [
+          el('span', { class: 'ilb-sub', text: '强制覆盖' }),
+          selectBox(override, Object.entries(OVERRIDE_LABEL).map(([value, label]) => ({ value, label })), (value) => {
+            book.activation = { ...(book.activation ?? {}), override: value };
             repository.saveBook(book);
             draw();
           }),
@@ -185,6 +232,58 @@ export function renderShelf(ctx) {
           draw();
         }, { ghost: true }),
       ]),
+    ]);
+  }
+
+  // 「酒馆关联」：只读展示 + 手动建立/解除 ILB 映射（ILB-4.7）。
+  // 建立映射只写 ILB 自己的 host.nativeNames，不动酒馆的原生绑定。
+  function hostRow(book, host) {
+    const match = matchBookToHost(book, host);
+    const nodes = [];
+    if (match.matched.length > 0) {
+      const labels = [...new Set(match.matched.map((m) => m.label))];
+      nodes.push(el('span', { class: 'ilb-sub', text: `酒馆关联：${labels.join('、')}` }));
+    } else if (!host.contextAvailable) {
+      nodes.push(el('span', { class: 'ilb-sub', text: '酒馆关联：还没同步到宿主状态' }));
+    } else {
+      nodes.push(el('span', { class: 'ilb-sub', text: '酒馆关联：没有' }));
+    }
+    nodes.push(button('手动关联…', () => pickHostBook(book, host), { ghost: true }));
+    if ((book.host?.nativeNames ?? []).length > 0) {
+      nodes.push(button('解除映射', () => {
+        book.host = { ...(book.host ?? {}), nativeNames: [], lastMatchedAt: 0 };
+        repository.saveBook(book);
+        ctx.toast('已解除 ILB 映射；酒馆自己的世界书绑定没有动');
+        draw();
+      }, { ghost: true }));
+    }
+    return el('div', { class: 'ilb-inline-list' }, nodes);
+  }
+
+  function pickHostBook(book, host) {
+    if (!host.sources.length) {
+      ctx.openOverlay('手动关联到酒馆的书', [
+        hint('这一轮没读到任何原生世界书来源。先在酒馆里给角色 / 聊天关联一本书，或者确认扩展读到了宿主信息。'),
+      ]);
+      return;
+    }
+    const rows = host.sources.map((source) => el('div', { class: 'ilb-row' }, [
+      el('span', { class: 'ilb-sub', text: `${describeHostSource(source)} → ${source.name}` }),
+      button('就是这本', () => {
+        book.host = { ...(book.host ?? {}), nativeNames: [source.name], lastMatchedAt: Date.now() };
+        repository.saveBook(book);
+        try {
+          ctx.closeOverlay?.();
+        } catch {
+          /* 关不掉浮层不影响保存 */
+        }
+        ctx.toast(`已把《${book.name}》关联到酒馆的「${source.name}」`);
+        draw();
+      }, { ghost: true }),
+    ]));
+    ctx.openOverlay('手动关联到酒馆的书', [
+      hint('建立的是 ILB 自己的映射：只记录"这本书对应酒馆的哪一本"，不会改酒馆的原生绑定。'),
+      ...rows,
     ]);
   }
 

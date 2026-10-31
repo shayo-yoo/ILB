@@ -47,6 +47,19 @@ export function renderSettings(ctx) {
     ctx.render();
   }
 
+  // 迁移结果只在这里露一行：成功不打扰，失败要看得见（ILB-7.15）。
+  function migrationLine() {
+    try {
+      const info = repository.getMigrationInfo ? repository.getMigrationInfo() : null;
+      if (!info) return '';
+      if (info.ok === false) return `；上次迁移失败：${info.error ?? '未说明'}`;
+      if (info.changed) return `；已从 v${info.from} 迁移到 v${info.to}`;
+      return '';
+    } catch {
+      return '';
+    }
+  }
+
   const policySelect = selectBox(
     settings.importEnabledPolicy ?? DEFAULT_SETTINGS.importEnabledPolicy,
     IMPORT_POLICIES.map((p) => ({ value: p, label: IMPORT_POLICY_LABEL[p] })),
@@ -126,6 +139,22 @@ export function renderSettings(ctx) {
         el('span', { class: 'ilb-sub', text: '在注入内容之间加分隔线' }),
       ]),
       hint('有些模型对分隔线比较敏感。默认不加。'),
+    ]),
+
+    el('div', { class: 'ilb-card' }, [
+      el('h5', { class: 'ilb-section-title', text: '酒馆联动' }),
+      toggle('跟随酒馆的原生世界书关联', 'hostLinkEnabled', '默认打开：角色 / 聊天 / Persona / 全局关联了哪本原生世界书，"自动跟随"的书就跟着开。关掉后完全按 v0.14 的老规则走。'),
+      field('同一本书两边都注入时', selectBox(
+        settings.doubleInjectPolicy ?? DEFAULT_SETTINGS.doubleInjectPolicy,
+        [
+          { value: 'warn', label: '照常注入，只在诊断页提醒' },
+          { value: 'allow', label: '照常注入，不提醒' },
+          { value: 'skip', label: '跳过 ILB 这边的副本' },
+        ],
+        (value) => save({ doubleInjectPolicy: value }),
+      ), 'ILB 导入的副本和原生世界书可能同时进上下文（同源双重注入）。默认只提醒。'),
+      el('p', { class: 'ilb-sub', text: `存档格式：v${repository.getDataVersion ? repository.getDataVersion() : '?'}${migrationLine()}` }),
+      hint('迁移会在第一次打开时自动做一次，做之前会先存一份「迁移前」快照，失败不会覆盖原数据。'),
     ]),
 
     el('div', { class: 'ilb-card' }, [

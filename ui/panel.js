@@ -46,7 +46,7 @@ const TAB_BLURB = {
 };
 
 export function createPanel(deps) {
-  const { repository, nativeWorlds, pipeline, getChatId, notify } = deps;
+  const { repository, nativeWorlds, pipeline, getChatId, notify, getHostContext, describeHost } = deps;
 
   const state = {
     activeTab: 'shelf',
@@ -92,6 +92,9 @@ export function createPanel(deps) {
     pipeline,
     getChatId,
     notify,
+    // 宿主联动：页面只拿"这一刻读到的"结果，不自己去摸宿主（ILB-4.3）
+    getHostContext: typeof getHostContext === 'function' ? getHostContext : () => null,
+    describeHost: typeof describeHost === 'function' ? describeHost : () => ({ moduleLoaded: false, via: '', error: '', supported: [] }),
     state,
     toast,
     render,

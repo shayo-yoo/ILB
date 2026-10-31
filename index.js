@@ -13,6 +13,8 @@
 import { loadHost } from './host.js';
 import { createRepository } from './adapters/repository.js';
 import { createNativeWorlds } from './adapters/native-worlds.js';
+import { createSillyTavernContext } from './adapters/sillytavern-context.js';
+import { createHostWatcher } from './adapters/sillytavern-events.js';
 import { createInjector } from './adapters/inject.js';
 import { createPipeline } from './runtime/pipeline.js';
 import { createApi } from './runtime/api.js';
@@ -25,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.14.1';
+const VERSION = '0.15.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -101,10 +103,28 @@ async function boot() {
     },
   });
 
+  // 宿主联动（ILB-4.3）：把"当前角色 / 聊天 / Persona / 全局关联了哪些原生世界书"读成统一形状。
+  // 读不到不算错误——只是这些书按手动开关走，并在诊断页写清楚为什么。
+  let hostContext = null;
+  try {
+    hostContext = createSillyTavernContext({
+      getContext,
+      logger: {
+        warn: (m) => console.warn(`[ILB] ${m}`),
+      },
+    });
+    await hostContext.init();
+  } catch (err) {
+    hostContext = null;
+    console.warn('[ILB] 宿主联动初始化失败，这一版按手动开关工作', err);
+  }
+
   const pipeline = createPipeline({
     repository,
     injector,
     registry,
+    // 每轮判定时同步读一次：读到的是"这一刻"的角色与聊天，不是启动时的快照
+    readHostContext: () => (hostContext ? hostContext.read() : null),
     logger: {
       info: (m) => console.info(`[ILB] ${m}`),
       warn: (m) => console.warn(`[ILB] ${m}`),
@@ -132,6 +152,15 @@ async function boot() {
     repository,
     nativeWorlds,
     pipeline,
+    // 书架与诊断页要显示"为什么启用"：这里给的是实时读到的宿主上下文
+    getHostContext: () => {
+      try {
+        return hostContext ? hostContext.read() : null;
+      } catch {
+        return null;
+      }
+    },
+    describeHost: () => (hostContext ? hostContext.describe() : { moduleLoaded: false, via: '', error: '宿主联动没初始化', supported: [] }),
     getChatId: () => {
       try {
         return resolveChatId(getContext());
@@ -253,6 +282,9 @@ async function boot() {
   }
 
   // 事件订阅：任何一个处理器挂掉都不能影响扩展其他部分（ILB-2.5）
+  // 角色 / 聊天 / 群聊 / Persona / 世界书关联的变更统一由 adapters/sillytavern-events.js 订阅，
+  // 别处不再各自 source.on（ILB-4.9：订阅集中管理，UI 销毁时清理）。
+  let watcher = null;
   try {
     const eventTypes = host.getEventTypes() ?? {};
     const source = host.getEventSource();
@@ -260,23 +292,54 @@ async function boot() {
       const genEvent = eventTypes.GENERATION_STARTED ?? 'generation_started';
       source.on(genEvent, () => runOnce('generation'));
 
-      const chatEvent = eventTypes.CHAT_CHANGED ?? 'chat_changed';
-      source.on(chatEvent, () => {
-        try {
-          pipeline.reset();
-          panel.render();
-          card.render();
-          shell.setStatus('idle');
-          api.notify('chat_changed');
-        } catch (err) {
-          console.warn('[ILB] 切换对话后刷新界面失败', err);
-        }
+      watcher = createHostWatcher({
+        getEventSource: () => source,
+        getEventTypes: () => eventTypes,
+        logger: {
+          warn: (m) => console.warn(`[ILB] ${m}`),
+        },
+        onChange: ({ reasons, groups }) => {
+          try {
+            // 上一轮诊断是按旧角色算的：先清掉，免得界面显示过期结论
+            pipeline.reset();
+            panel.render();
+            card.render();
+            shell.setStatus('idle');
+            const isChat = groups.includes('chat');
+            api.notify(isChat ? 'chat_changed' : 'host_changed');
+          } catch (err) {
+            console.warn('[ILB] 宿主变化后刷新界面失败', err);
+          }
+          void reasons;
+        },
       });
+      const info = watcher.subscribe();
+      if (info.skipped.length > 0) {
+        console.info(
+          `[ILB] 这些事件在当前酒馆版本里没有，已跳过：${info.skipped.map((x) => x.event).join('、')}`,
+        );
+      }
+      if (info.failures.length > 0) {
+        console.warn('[ILB] 有些事件订阅失败（不影响注入）', info.failures);
+      }
     } else {
       console.warn('[ILB] 拿不到事件源，扩展不会自动注入；请检查 SillyTavern 版本');
     }
   } catch (err) {
     console.error('[ILB] 订阅事件失败', err);
+  }
+
+  // 卸载时把订阅退掉，免得热重载后同一件事被处理两次
+  try {
+    globalThis.addEventListener?.('pagehide', () => {
+      try {
+        watcher?.dispose?.();
+      } catch {
+        /* 退订失败不影响页面卸载 */
+      }
+    });
+  } catch {
+    /* 没有 window 就跳过 */
   }
 
   // 给高级用户排障用

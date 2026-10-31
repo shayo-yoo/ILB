@@ -316,6 +316,29 @@ step('流程里能加「界面」步骤，空着会当场提示', () => {
   if (!warns.some((n) => String(n.textContent ?? '').includes('这一步是空的'))) throw new Error('空着的界面步骤没有提示');
 });
 
+// 条件组：v0.15.0 的「条件组」节点（ILB-4.22）。文本语法装不下它，所以文本模式必须只读，
+// 不能让用户一收就把整棵条件组吃掉（ILB-7.16）。
+step('流程里能加条件组，文本模式不会悄悄吃掉它', () => {
+  clickText(body, '＋ 添加一步');
+  clickText(body, '＋ 条件组');
+  const groups = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-group-cond'));
+  if (groups.length === 0) throw new Error('条件组没有画出来');
+  const tools = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-group-tools'));
+  if (tools.length === 0) throw new Error('条件组里没有「添加条件 / 添加条件组」的入口');
+
+  clickText(body, '文本模式');
+  const area = walk(body).find((n) => n.className && String(n.className).includes('ilb-flow-area'));
+  if (!area) throw new Error('文本模式没有文本框');
+  if (area.readOnly !== true) throw new Error('文本模式装不下条件组，却是可写的');
+  const warns = walk(body).filter((n) => n.className && String(n.className).includes('ilb-warn'));
+  if (!warns.some((n) => String(n.textContent ?? '').includes('只读'))) throw new Error('没有说明文本模式为什么只读');
+  // 就算硬点「收下这段文本」，也不能把条件组覆盖掉
+  clickText(body, '收下这段文本');
+  clickText(body, '切回表单');
+  const after = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-group-cond'));
+  if (after.length === 0) throw new Error('点了一下「收下」就把条件组丢了');
+});
+
 step('文本模式里看不懂的行会当场列出来', () => {
   clickText(body, '文本模式');
   const area = walk(body).find((n) => n.className && String(n.className).includes('ilb-flow-area'));
@@ -416,6 +439,38 @@ step('悬浮球与浮窗能开关', async () => {
   floating.close();
   floating.setVisible(false);
   floating.setVisible(true);
+});
+
+step('浮窗能最小化 / 最大化 / 还原，密度跟着窗子宽度走', async () => {
+  const { createFloatingWindow } = await import('../ui/floating.js');
+  const floating = createFloatingWindow({ repository, notify: (t) => notes.push(`float:${t}`) });
+  floating.mount();
+  floating.open();
+  const start = floating.describe();
+  if (!start.density) throw new Error('describe() 没报密度');
+  if (start.minimized || start.maximized) throw new Error('刚打开的窗子不该是最小/最大化');
+
+  floating.toggleMaximize();
+  const maxed = floating.describe();
+  if (!maxed.maximized) throw new Error('最大化了却没生效');
+  if (maxed.geometry.w <= start.geometry.w && maxed.geometry.h <= start.geometry.h) {
+    throw new Error('最大化之后窗口没有变大');
+  }
+  if (maxed.density !== 'wide') throw new Error(`最大化之后密度还是「${maxed.density}」`);
+
+  floating.toggleMaximize();
+  const back = floating.describe();
+  if (back.maximized) throw new Error('还原没生效');
+  if (back.geometry.w !== start.geometry.w || back.geometry.h !== start.geometry.h) {
+    throw new Error('还原之后尺寸没回到原来的样子');
+  }
+
+  floating.minimize();
+  if (!floating.describe().minimized) throw new Error('最小化没生效');
+  if (floating.describe().open !== true) throw new Error('最小化把窗口关掉了（应该只是收起来）');
+  floating.toggle();
+  if (floating.describe().minimized) throw new Error('点悬浮球没能把窗子收回来');
+  floating.close();
 });
 
 step('手机界面能开关，二级页能弹能关', async () => {

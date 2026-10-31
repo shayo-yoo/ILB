@@ -24,6 +24,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
   // 书
   followCharacterCard: true,
+  // 宿主联动（ILB-4.x）：按酒馆原生世界书的关联（角色主书/额外书/Persona/聊天/全局/群聊）
+  // 自动启停 ILB 书。关掉后完全退回 v0.14 的老行为（只认"跟随角色卡"的书名匹配 + 手动开关）。
+  hostLinkEnabled: true,
+  // 映射到原生书的那本 ILB 副本，两边都注入会让同一段设定出现两次。
+  // 默认只警告、不改变行为；用户在书详情里显式选择后才按选择执行。
+  doubleInjectPolicy: 'warn',        // warn / allow / skip
 
   // 导入（ILB-3.6）
   importEnabledPolicy: 'ask',       // ask / keep / on / off

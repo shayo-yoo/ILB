@@ -71,13 +71,10 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 | 布局计算 | `ui/layout.js` | 纯函数：判 PC/手机、算窗口与球的位置、防越界 |
 | 界面公共件 | `ui/dom.js` / `ui/help.js` / `ui/widgets.js` | 造元素、帮助浮层、控件工厂 |
 | 面板路由 | `ui/panel.js` | 只负责切标签与提供 `ctx`，一页坏了只坏一页 |
-| 七个页面 | `ui/view-shelf.js` / `view-rules.js` / `view-logic.js` / `view-snapshots.js` / `view-state.js` / `view-diagnostics.js` / `view-settings.js` | 书架 / 规则 / 逻辑 / 快照 / 状态 / 诊断 / 设置 |
-| 对外接口 | `runtime/api.js` | `window.ILB.api` v1.2：`snapshot / set / remove / call / callAsync / subscribe`（调用可带回一条界面指令 `ui`），失败用 `ok/blocked/error` 三态区分；给以后的 UI 扩展用 |
-| 独立逻辑 | `core/model.js` + `core/evaluate.js` | 逻辑可自带触发词、脱离条目运行；跳转/调用/随机数/元触发器都在 `core/flow.js` |
+| 六个页面 | `ui/view-shelf.js` / `view-rules.js` / `view-snapshots.js` / `view-state.js` / `view-diagnostics.js` / `view-settings.js` | 书架 / 规则 / 快照 / 状态 / 诊断 / 设置 |
 | 使用说明 | `ui/guide.js` + `data/guide/zh-cn.json` | 标签栏「使用说明」；同一份 JSON 导出成 `docs/使用指南.md` |
 | 编辑器 | `ui/editor.js` | 四段式规则编辑 + 「试一句」预演 + 「判定流程」原地展开 |
-| 流程编辑器 | `ui/flow-editor.js` | 树形节点编辑（不是连线画布），手机上不横滑；右上角可切成文本写法 |
-| 流程文本层 | `core/flow-text.js` | 纯函数：节点树 ⇄ 文本（13 个固定关键词、三种值），只做转译、不参与执行；自带可复制的 AI 提示词（v0.13.1） |
+| 流程编辑器 | `ui/flow-editor.js` | 树形节点编辑（不是连线画布），手机上不横滑 |
 | 导入界面 | `ui/importer.js` | 批量导入、选择浮层、导入结果报告 |
 | 自检 | `ui/selftest.js` | 一键回答"哪一环断了"：样式表、浮层规则、浮层能否开出来、扩展是否就绪 |
 | 浏览器探针 | `tests/browser-probe.html` | 用真实 Chrome 量浮层矩形与关闭按钮，布局结论不靠推断 |
@@ -125,7 +122,8 @@ node tests/gacha-demo.mjs
 # 5) 独立逻辑演示（v0.9.0）：没有条目的书也能跑逻辑；AI 正文调用扣款；未开放的名字被拒
 node tests/logic-demo.mjs
 
-# 6) 对外接口演示（v0.12.0）：模拟 UI 扩展走一遍 snapshot / set / call，看 ok / blocked / error 三种结果
+# 6) 对外接口演示（v0.12.0）：模拟 UI 扩展走一遍 snapshot / set / call，
+#    看 ok、blocked、error 三种结果，以及 nonce 如何让"再抽一次"生效
 node tests/api-demo.mjs
 
 # 7) 把扩展里的「使用说明」导出成 docs/使用指南.md（改了 data/guide/zh-cn.json 就跑一次）
@@ -133,12 +131,27 @@ node tests/export-guide.mjs
 ```
 
 三个检查都通过的结果（2026-10-27 实测）：单元 199/199、链接 49 个模块全通过（**包含入口 `index.js`**）、
-冒烟 22 步全过（含「使用说明」入口与说明渲染）。注意这三样**都不是浏览器实测**：DOM 是假的，宿主是假的。
+冒烟 24 步全过（含「使用说明」入口与说明渲染、流程里的「界面」步骤）。注意这三样**都不是浏览器实测**：DOM 是假的，宿主是假的。
 
-> **真实宿主验收（v0.13.1 起）**：`tests/live/` 下四个文件用 CDP 连一个真在跑的 SillyTavern（无头 Chrome），
-> 验扩展能否加载、桌面外壳会不会横向溢出、文本模式能否渲染、手机视口下编辑框是否 ≥ 半屏。
-> 2026-10-27 在 SillyTavern 1.19.0 上首次实测全过，并抓到假 DOM 抓不到的主题对比度问题（已修，D-0052）。
-> 跑法见 `tests/live/README.md`；它们不在 `node --test` 里。
+### 真实宿主验收（v0.13.1 起）
+
+上面三样抓不到"真主题、真样式表、真布局"。另有四个文件在真酒馆里跑：
+
+```bat
+:: 前置：酒馆在跑（node server.js --port 8000），Chrome 带 --remote-debugging-port=9222
+cd extension
+set ST_DIR=D:\1\APP\SillyTavern
+node tests/live/st-live-check.mjs    :: 扩展加载 / 接口版本 / 桌面外壳 / 横向溢出
+node tests/live/st-flow-text.mjs     :: 文本模式渲染 / 复制按钮 / 手机上半屏
+node tests/live/st-ui-step.mjs       :: 「界面」步骤：call 带回 ui / callAsync / 事件顺序 / 真 DOM 六格
+```
+
+它们**不在** `node --test` 里（依赖外部环境），细节与已知盲区见 `tests/live/README.md`。
+2026-10-27 在 SillyTavern 1.19.0 上首次实测：加载、面板、文本模式、手机高度全过；
+同时抓到一个假 DOM 抓不到的问题（输入框背景 fallback 写死深色，浅色主题下字看不见），已修（D-0052）。
+
+> 给别的扩展用：`window.ILB.api`（**v1.2**）开 `snapshot / set / remove / call / callAsync / subscribe` 与 `ui.openPanel / close`，
+> 契约见 `docs/UI扩展接口.md`；它只读写聊天变量，不含任何宿主对象。
 
 > 标签栏最右的「使用说明」读 `data/guide/zh-cn.json`；`docs/使用指南.md` 是它导出的同源副本，**不要手改 md**。
 
@@ -235,23 +248,22 @@ node tests/serve.mjs 8792
   但 **SillyDroid 这类 WebView 的真机还没试**：`showModal()` 进 top layer 是否与宿主的模态叠加冲突、安卓返回键是否走 `cancel` 事件，
   都只有推断。
 - 浮窗"上次是开着"会被记住，刷新后仍开着；不喜欢的话改 `ui/floating.js` 里的 `open` 初值。
-- 叙事引擎（v0.6.0 并入，默认关闭）：记账、重放、消息块、注入、自检都已有测试，
-  但**真实 SillyTavern 对话端到端还没跑过**——探针只能证明 DOM 与 `setExtensionPrompt` 接线，
-  不能证明"模型的下一轮真的会遵守账本"。
-- 账本的界面（v0.6.1 起，v0.7.0 合并成「叙事」标签页）：开关/预算/检查点间隔、账本预览、编辑声明
-  （JSON 校验后才保存）、复制编写说明、重建账本；手机整屏界面顶部另有一条只读账本坞。
-  都是只读或"整份替换"级别，**没有**逐条事实的手动补记/撤销入口，也没有可视化事件编辑器。
-- 用户实测（v0.6.2）暴露过两个时序问题：账本被插在最新一条用户消息之前、"已发生的 N 条"少 1。
-  已改成深度 0 + `USER_MESSAGE_RENDERED`/`MESSAGE_SENT` 时立刻重算；这类问题只有真实宿主能暴露，
-  后续仍以实测为准。
-- 检查点（v0.7.0）只存"状态 + 累计统计"，旧楼层被隐藏/删除后不会再从聊天记录恢复；
-  点「重建账本」会丢掉这部分。真实 ST 的聊天标识字段（`chatId`/`chatMetadata`）未在真机确认过，
-  若识别不到会退回同一个默认桶，不同聊天可能共用检查点——这是下一轮实测要看的点。
-- 正文里的 `[[ILB:…]]` 标记目前仍原样显示（不做剥离，避免和宿主的重画互相打架），
-  只读账本块负责把它翻译成人话；"剥掉标记只留徽章"是未做项。
+- 独立逻辑、跳转/调用、随机数、元触发器、AI 正文调用（v0.9–v0.10）都只有单元测试与
+  `tests/logic-demo.mjs` / `tests/logic-v2.test.mjs` 兜底；**真实模型会不会照写 `[[ILB:名字(参数)]]`、会不会滥用，仍未验证**。
+  AI 调用默认关闭，开关在设置页「AI 调用逻辑」。
+- 同一楼层重画时随机数应保持不变（种子 = 聊天 id + 楼层 + 节点 id），但真实宿主里"楼层"如何计数未经实测。
+- 「每轮都跑」的逻辑在滑动重生成时会跑几次，取决于宿主重画次数与幂等键（`__ilbCallsSeen`），需真机确认。
+- 聊天变量只支持数字/文本/开关（`normalizeVars` 不收数组与对象），没有列表编辑界面。
+- 对外接口 `window.ILB.api` 现为 **v1.2**：`tests/api.test.mjs` 15 条用例、`tests/api-demo.mjs` 演示，
+  以及在真酒馆里跑的 `tests/live/st-ui-step.mjs`（`call` 带回 `ui`/`durationMs`/`id`、`callAsync` 不抛、事件顺序 `call,ui`）。
+  但**还没有真实的第三方 UI 扩展长期消费它**（ILBUI 已按 1.2 落地 0.10.0，联调仍在进行）；`ilb:ready` 的真实加载时序也未在宿主里验证。
+- 「界面」步骤（v0.14.0，接口 1.2）只产出一条一次性指令，**只有用户点按钮调用时**才会执行（聊天里自动触发会跳过并留诊断）；
+  **ILBUI 拿到指令后实际翻页/提示的观感还没联调过**，手机外壳里更没试过。
 - 流程的文本模式（v0.13.0，v0.13.1 认直接赋值与行内注释）只有 `tests/flow-text.test.mjs` 的 17 条用例与冒烟 2 步兜底；
-  真实 SillyTavern 里没试过，也没有语法高亮/自动补全。它和表单改的是同一份 `flow.nodes`，不是第二套执行逻辑（D-0050）。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（181 + 49 模块 + 22 步），但**它们用的都是假宿主与假 DOM**。
+  **真实 SillyTavern 里没试过**，也没有语法高亮/自动补全。它和表单改的是同一份 `flow.nodes`，不是第二套执行逻辑（D-0050）。
+- 「复制给 AI 的说明」在桌面 Chrome 上走 `navigator.clipboard`，手机 WebView 里可能被拒，会退回 `execCommand('copy')`；
+  这条路**没有在 SillyDroid 之类容器里实测过**。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（199 + 49 模块 + 24 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 独立逻辑、跳转/调用、AI 正文调用（v0.9.0）只在单元测试与 `tests/logic-demo.mjs` 里验证过；
   真实模型会不会照着写 `[[ILB:…]]`、跳转长流程在界面上累不累，都要等实机。

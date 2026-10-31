@@ -1,6 +1,7 @@
 // ui/view-diagnostics.js —— 诊断页：上一轮每条规则为什么出现 / 没出现（ILB-6.3）
 
 import { el, hint, badge, button, card, emptyText } from './widgets.js';
+import { HOST_SOURCE_LABEL, summarizeHostContext } from '../core/host-context.js';
 
 const STAGE_LABEL = {
   trigger: '触发词',
@@ -14,6 +15,20 @@ const STAGE_LABEL = {
   call: 'AI 调用',
   book: '书没启用',
   disabled: '规则被关掉',
+};
+
+// 和 core/resolve-books.js 里的 rule 一一对应：这里只负责翻译给人看。
+const RULE_LABEL = {
+  provider: '由扩展点决定',
+  'force-off': '强制停用覆盖',
+  'force-on': '强制启用覆盖',
+  always: '始终启用',
+  auto: '自动跟随酒馆',
+  'auto-candidate': '只找到同名书，没有自动启用',
+  'auto-unknown': '读不到宿主状态，先按手动',
+  manual: '手动控制',
+  'legacy-character': '老行为：按角色卡绑定的书名',
+  'legacy-unknown': '读不到角色卡绑定，按手动',
 };
 
 function timeText(ts) {
@@ -60,13 +75,17 @@ export function renderDiagnostics(ctx) {
 
   if (last.error) root.appendChild(el('p', { class: 'ilb-error', text: `这一步出了错：${last.error}` }));
 
+  root.appendChild(renderHostCard(ctx, last));
+
   const inactive = last.books?.inactive ?? [];
+  const bookNames = new Map(repository.listBooks().map((b) => [b.book_id, b.name]));
   if (inactive.length) {
     root.appendChild(el('div', { class: 'ilb-card' }, [
       el('h5', { class: 'ilb-section-title', text: '这轮没被启用的书' }),
-      el('ul', { class: 'ilb-warn-list' }, inactive.map((b) => el('li', {
-        text: `${b.name ?? b.book_id}：${last.books?.reasons?.[b.book_id] ?? '未说明原因'}`,
-      }))),
+      el('ul', { class: 'ilb-warn-list' }, inactive.map((b) => {
+        const id = typeof b === 'string' ? b : b.book_id;
+        return el('li', { text: `${bookNames.get(id) ?? id}：${last.books?.reasons?.[id] ?? '未说明原因'}` });
+      })),
     ]));
   }
 
@@ -119,6 +138,52 @@ export function renderDiagnostics(ctx) {
 
   root.appendChild(hint('这一页只是"读"，不会改变任何规则。想验证单条规则，去"规则"页点它的"试一句"。'));
   return root;
+}
+
+function renderHostCard(ctx, last) {
+  const books = ctx.repository.listBooks();
+  const nameOf = new Map(books.map((b) => [b.book_id, b.name]));
+  const host = last.books?.hostContext ?? null;
+  const summary = last.host
+    ?? (typeof ctx.getHostContext === 'function' ? summarizeHostContext(ctx.getHostContext()) : null);
+  const details = last.books?.details ?? {};
+  const ids = Object.keys(details);
+  let desc = null;
+  try {
+    desc = typeof ctx.describeHost === 'function' ? ctx.describeHost() : null;
+  } catch {
+    desc = null;
+  }
+
+  const nodes = [el('h5', { class: 'ilb-section-title', text: '酒馆联动' })];
+  nodes.push(el('p', { class: 'ilb-sub', text: summary?.line ?? '还没读到酒馆上下文（状态未知）' }));
+  if (desc && !desc.moduleLoaded) {
+    nodes.push(hint(`读不到酒馆的世界书模块${desc.error ? `（${desc.error}）` : ''}：全局世界书与角色额外书暂时按手动控制，其余来源仍然可用。`));
+  }
+  const sources = host?.sources ?? [];
+  if (sources.length) {
+    nodes.push(el('p', {
+      class: 'ilb-sub',
+      text: `读到的来源：${sources.map((s) => `${HOST_SOURCE_LABEL[s.kind] ?? s.kind}「${s.name}」`).join('、')}`,
+    }));
+  }
+  for (const kind of host?.unsupported ?? []) {
+    nodes.push(hint(`${HOST_SOURCE_LABEL[kind] ?? kind}：当前宿主版本不支持自动识别（没有可靠的公开接口，ILB 不会去读页面 DOM 猜）。`));
+  }
+  for (const w of host?.warnings ?? []) nodes.push(hint(String(w)));
+
+  if (ids.length) {
+    nodes.push(el('ul', { class: 'ilb-warn-list' }, ids.map((id) => el('li', {
+      text: `${nameOf.get(id) ?? id}：${details[id].enabled ? '启用' : '停用'} —— ${details[id].reason ?? RULE_LABEL[details[id].rule] ?? details[id].rule}`,
+    }))));
+    const doubleCount = ids.filter((id) => details[id].enabled && (details[id].matched?.length ?? 0) > 0).length;
+    if (doubleCount > 0) {
+      nodes.push(hint(`有 ${doubleCount} 本映射到原生世界书的书会被酒馆和 ILB 各注入一次（同源双重注入）。内容重复的话，在酒馆里关掉原生那本，或把这里改成手动控制。`));
+    }
+  } else {
+    nodes.push(hint('上一次运行没有留下每本书的启用原因（还没跑过，或者是老版本的数据）。'));
+  }
+  return el('div', { class: 'ilb-card' }, nodes);
 }
 
 function runHealthCheck(ctx) {
