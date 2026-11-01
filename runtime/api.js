@@ -18,6 +18,7 @@
 //   - subscribe(非函数) 不再抛异常
 
 import { evaluateFlow } from '../core/flow.js';
+import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { coerceValue, normalizeVars } from '../core/vars.js';
 
 /** 接口契约版本。加字段不算破坏性变更，改字段语义才算。 */
@@ -168,15 +169,29 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
    */
   function findLogic(target) {
     const books = enabledBooks();
+    // v0.23.0：不挂书的逻辑也能被 AI / 按钮按名字或 id 调用（组启用才进候选）。
+    let standalone = [];
+    try {
+      const groups = repository.listLogicGroups?.() ?? [];
+      const activeIds = new Set(books.map((book) => book.book_id));
+      standalone = runnableStandaloneLogics(groups, repository.listStandaloneLogics?.() ?? [], activeIds);
+    } catch {
+      standalone = [];
+    }
     for (const book of books) {
       const hit = (Array.isArray(book.logic) ? book.logic : []).find((l) => l.enabled !== false && l.id === target);
       if (hit) return { logic: hit };
     }
+    const hitStandalone = standalone.find((l) => l.id === target);
+    if (hitStandalone) return { logic: hitStandalone };
     const matches = [];
     for (const book of books) {
       for (const l of Array.isArray(book.logic) ? book.logic : []) {
         if (l.enabled !== false && l.name === target) matches.push({ id: l.id, name: l.name, book: book.name || book.book_id, logic: l });
       }
+    }
+    for (const l of standalone) {
+      if (l.name === target) matches.push({ id: l.id, name: l.name, book: '逻辑组', logic: l });
     }
     if (matches.length === 0) return {};
     if (matches.length > 1) return { ambiguous: matches.map(({ id, name, book }) => ({ id, name, book })) };

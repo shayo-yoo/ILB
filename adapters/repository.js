@@ -4,7 +4,7 @@
 // 这个文件只认"拿来一个 getContext 就能读写"的对象，不 import 宿主。
 
 import { DEFAULT_SETTINGS } from '../core/settings-defaults.js';
-import { normalizeBook } from '../core/model.js';
+import { normalizeBook, normalizeLogic } from '../core/model.js';
 import { DATA_VERSION, migrateBucket } from '../core/migrate.js';
 import { createSnapshot, evictSnapshots } from '../core/snapshot.js';
 
@@ -31,7 +31,36 @@ function emptyState() {
     snapshots: [],
     // 触发次数（v0.22.0）：只做界面排序用，不参与判定。老存档里没有这个键，读的时候补空。
     stats: emptyStats(),
+    // 独立逻辑（v0.23.0）：逻辑组 + 不挂在任何书上的逻辑。老存档没有这两个键，读的时候补空。
+    logicGroups: [],
+    logics: [],
   };
+}
+
+/** 逻辑组：可以独立启用/停用，也可以选择"某本书启用时我才跑"。 */
+function normalizeLogicGroup(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const id = String(src.id || '').trim() || `g-${Date.now().toString(36)}`;
+  return {
+    id,
+    name: String(src.name || '未命名逻辑组').slice(0, 60),
+    enabled: src.enabled !== false,
+    // 空 = 不跟着任何书；填 book_id = 那本书启用时才跑这组
+    followBookId: String(src.followBookId || ''),
+    ui: {
+      order: Number(src.ui?.order) || 0,
+      createdAt: Number(src.ui?.createdAt) || Date.now(),
+      updatedAt: Number(src.ui?.updatedAt) || Date.now(),
+    },
+  };
+}
+
+/** 不挂书的逻辑：id 原样保留（可能是从书里搬过来的 book::L::xxx），只补 groupId。 */
+function normalizeStandaloneLogic(raw, fallbackGroupId = '') {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const logic = normalizeLogic(src, '');
+  logic.groupId = String(src.groupId || fallbackGroupId || '');
+  return logic;
 }
 
 /**
@@ -77,6 +106,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     b.stats = b.stats && typeof b.stats === 'object' ? b.stats : emptyStats();
     b.stats.entries = b.stats.entries && typeof b.stats.entries === 'object' ? b.stats.entries : {};
     b.stats.logics = b.stats.logics && typeof b.stats.logics === 'object' ? b.stats.logics : {};
+    b.logicGroups = Array.isArray(b.logicGroups) ? b.logicGroups : [];
+    b.logics = Array.isArray(b.logics) ? b.logics : [];
     migrateIfNeeded(b);
     cache = b;
     return b;
@@ -160,6 +191,68 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     delete b.manualState[String(bookId)];
     commit();
     return b.books.length !== before;
+  }
+
+  // ---- 独立逻辑组（v0.23.0）：逻辑不再必须以一本书为前提 ----
+
+  function listLogicGroups() {
+    try {
+      return bucket().logicGroups.map((raw) => normalizeLogicGroup(raw));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveLogicGroup(raw) {
+    const group = normalizeLogicGroup(raw);
+    group.ui = { ...group.ui, updatedAt: Date.now() };
+    const b = bucket();
+    const idx = b.logicGroups.findIndex((x) => x && x.id === group.id);
+    if (idx >= 0) b.logicGroups[idx] = group;
+    else b.logicGroups.push(group);
+    commit();
+    return group;
+  }
+
+  function deleteLogicGroup(groupId) {
+    const b = bucket();
+    const id = String(groupId);
+    b.logicGroups = b.logicGroups.filter((g) => g && g.id !== id);
+    // 组没了，组里的逻辑一起删；删除前界面会二次确认
+    const before = b.logics.length;
+    b.logics = b.logics.filter((l) => String(l?.groupId ?? '') !== id);
+    commit();
+    return { removedLogics: before - b.logics.length };
+  }
+
+  function listStandaloneLogics(groupId) {
+    try {
+      const list = bucket().logics.map((raw) => normalizeStandaloneLogic(raw));
+      if (groupId === undefined || groupId === null) return list;
+      return list.filter((logic) => logic.groupId === String(groupId));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveStandaloneLogic(raw) {
+    const logic = normalizeStandaloneLogic(raw);
+    if (!logic.groupId) throw new Error('独立逻辑要指定一个逻辑组');
+    logic.ui = { ...logic.ui, updatedAt: Date.now() };
+    const b = bucket();
+    const idx = b.logics.findIndex((x) => x && String(x.id) === String(logic.id));
+    if (idx >= 0) b.logics[idx] = logic;
+    else b.logics.push(logic);
+    commit();
+    return logic;
+  }
+
+  function deleteStandaloneLogic(logicId) {
+    const b = bucket();
+    const before = b.logics.length;
+    b.logics = b.logics.filter((l) => String(l?.id ?? '') !== String(logicId));
+    commit();
+    return b.logics.length !== before;
   }
 
   function getManualState() {
@@ -399,6 +492,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
         ui: b.ui,
         snapshots: b.snapshots,
         stats: b.stats,
+        logicGroups: b.logicGroups,
+        logics: b.logics,
       },
       {},
     );
@@ -425,6 +520,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
       b.stats = { entries: source.stats.entries ?? {}, logics: source.stats.logics ?? {} };
     }
     if (Array.isArray(source.snapshots)) b.snapshots = evictSnapshots(source.snapshots);
+    if (Array.isArray(source.logicGroups)) b.logicGroups = source.logicGroups.map((g) => normalizeLogicGroup(g));
+    if (Array.isArray(source.logics)) b.logics = source.logics.map((l) => normalizeStandaloneLogic(l));
     // 导入的是"一整套存档"：版本号跟着走，下次打开不会再迁一遍
     b.version = DATA_VERSION;
     commit();
@@ -452,6 +549,12 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     saveUiState,
     recordTrigger,
     getTriggerStats,
+    listLogicGroups,
+    saveLogicGroup,
+    deleteLogicGroup,
+    listStandaloneLogics,
+    saveStandaloneLogic,
+    deleteStandaloneLogic,
     listSnapshots,
     getSnapshot,
     saveSnapshot,

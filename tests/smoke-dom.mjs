@@ -256,6 +256,56 @@ step('书架搜索', () => {
   panel.state.bookQuery = '';
 });
 
+step('书架卡片：默认紧凑摘要、详情可展开、⋯菜单可开可关、模式能切', () => {
+  panel.setTab('shelf');
+  const rootEl = panel.element ?? hostEl;
+  const klass = (n) => String(n.className ?? '');
+  const findCard = () => walk(rootEl).find((n) => klass(n).includes('ilb-book-card'));
+  let card = findCard();
+  if (!card) throw new Error('书架上没有书籍卡片');
+  if (!klass(card).includes('ilb-book-card-compact')) throw new Error('默认不是紧凑模式');
+  if (walk(card).some((n) => klass(n).includes('ilb-book-controls'))) throw new Error('默认就展开了管理详情');
+
+  const menu = walk(card).find((n) => klass(n).includes('ilb-book-menu'));
+  if (!menu) throw new Error('卡片没有「⋯」菜单');
+  if (menu.hidden !== true) throw new Error('「⋯」菜单默认是展开的');
+  const moreBtn = walk(card).find((n) => n.textContent === '⋯' && (n._listeners?.click ?? []).length > 0);
+  if (!moreBtn) throw new Error('找不到「⋯」按钮');
+  moreBtn.dispatch('click');
+  if (menu.hidden !== false) throw new Error('点「⋯」没有展开菜单');
+  moreBtn.dispatch('click');
+  if (menu.hidden !== true) throw new Error('再点「⋯」没有收起菜单');
+
+  clickText(card, '展开详情');
+  card = findCard();
+  if (!walk(card).some((n) => klass(n).includes('ilb-book-controls'))) throw new Error('展开后没有启用策略/开关等控件');
+  if (!walk(card).some((n) => n.textContent === '收起详情 ▴')) throw new Error('展开后按钮没有变成「收起详情」');
+
+  clickText(rootEl, '舒适');
+  card = findCard();
+  if (!klass(card).includes('ilb-book-card-comfort')) throw new Error('切到舒适模式后卡片没有换样式');
+  clickText(rootEl, '紧凑');
+  card = findCard();
+  if (!klass(card).includes('ilb-book-card-compact')) throw new Error('切回紧凑没有生效');
+  // 收起详情，别把展开状态留给后面的步骤
+  clickText(card, '收起详情');
+});
+
+step('逻辑页：有逻辑组容器，独立逻辑不依赖当前书籍', () => {
+  panel.setTab('logic');
+  const rootEl = panel.element ?? hostEl;
+  const all = walk(rootEl);
+  const groupSelect = all.find((n) => String(n.className ?? '').includes('ilb-group-select'));
+  if (!groupSelect) throw new Error('逻辑页没有逻辑组选择器');
+  if ((repository.listLogicGroups?.() ?? []).length === 0) throw new Error('打开逻辑页没有默认逻辑组');
+  if (!all.some((n) => n.textContent === '新增逻辑')) throw new Error('逻辑页没有「新增逻辑」按钮');
+  // 没选书时也应该能正常渲染（逻辑组不依赖书）
+  panel.state.activeBookId = null;
+  panel.render();
+  const after = walk(panel.element ?? hostEl);
+  if (!after.some((n) => String(n.className ?? '').includes('ilb-group-select'))) throw new Error('没选书时逻辑页崩了');
+});
+
 step('快照保存与恢复', () => {
   panel.setTab('snapshots');
   panel.render();
@@ -993,6 +1043,21 @@ step('手机：顶部操作区默认收起、能展开排序；底栏挂在滚�
   const shown = all.filter((n) => cls(n) === 'ilb-m-top-row' && n.hidden !== true);
   if (shown.length !== 1) throw new Error(`点开排序后应该有 1 组展开，实际 ${shown.length}`);
   if (!walk(shown[0]).some((n) => cls(n).includes('ilb-sort-key'))) throw new Error('排序组里没有排序键下拉');
+
+  // 再点同一个按钮要能收起（之前内联与委托各改一半，收起时被委托又展开）
+  chip.dispatch('click');
+  all = walk(host);
+  const afterSecond = all.filter((n) => cls(n) === 'ilb-m-top-row' && n.hidden !== true);
+  if (afterSecond.length !== 0) throw new Error(`再点一次应全部收起，实际还有 ${afterSecond.length} 组展开`);
+
+  // 点开 A 再点 B：只留 B
+  chip.dispatch('click');
+  const filterChip = walk(host).find((n) => cls(n) === 'ilb-m-chip' && walk(n).some((x) => x.textContent === '筛选'));
+  if (!filterChip) throw new Error('没有「筛选」展开按钮');
+  filterChip.dispatch('click');
+  const onlyFilter = walk(host).filter((n) => cls(n) === 'ilb-m-top-row' && n.hidden !== true);
+  if (onlyFilter.length !== 1) throw new Error(`切到筛选后应只剩 1 组，实际 ${onlyFilter.length}`);
+  if (!walk(onlyFilter[0]).some((n) => cls(n).includes('ilb-m-filter'))) throw new Error('留下的不是筛选组');
 
   // 手动排序：卡片上要出现权重输入框
   p.state.listSort.rules = { key: 'manual', dir: 'desc' };

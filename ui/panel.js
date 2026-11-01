@@ -26,7 +26,7 @@ import {
   describeBookContext,
   bookOptionLabel,
 } from './nav.js';
-import { SORT_KEYS, SORT_LABEL, SORT_HINT, defaultDir, defaultSorts, normalizeSorts, normalizeSort, sortList } from '../core/sort.js';
+import { SORT_KEYS, SORT_LABEL, SORT_HINT, SECOND_NONE, defaultDir, defaultSorts, normalizeSorts, normalizeSort, sortList } from '../core/sort.js';
 import { makeEmptyBook, validateBook, normalizeEntry } from '../core/model.js';
 import { filterEntries, listGroups, describeFilter, RULE_MODES, RULE_MODE_LABEL } from '../core/search.js';
 import { renderShelf } from './view-shelf.js';
@@ -96,10 +96,23 @@ export function createPanel(deps) {
     hitsScope: uiState.hitsScope === 'global' ? 'global' : 'chat',
     // 手机顶部操作区当前展开的是哪一组（null = 全收起）
     topOpen: null,
+    // 书架显示模式（紧凑 / 舒适），存在 uiState 里
+    shelfMode: uiState.shelfMode === 'comfort' ? 'comfort' : 'compact',
+    // 逻辑页当前选中的逻辑组
+    logicGroupId: null,
   };
 
   const root = el('div', { class: 'ilb-root' });
   let lastNav = '';
+  // 手机顶部操作区：收起入口与"点空白处收起"的绑定（每页重画只绑一次）
+  let closeTop = null;
+  let topOutsideBound = false;
+  const onTopOutsideClick = (event) => {
+    if (!state.topOpen) return;
+    const target = event?.target;
+    if (target?.closest?.('.ilb-m-top')) return;
+    if (closeTop) closeTop();
+  };
 
   function layout() {
     try {
@@ -204,27 +217,43 @@ export function createPanel(deps) {
   }
 
   function sortedEntries(book) {
-    return sortList(book?.entries ?? [], sortOf('rules'), hitsOf('entries'));
+    return sortList(book?.entries ?? [], sortOf('rules'), { hitsOf: hitsOf('entries') });
   }
 
   function sortedLogics(book) {
-    return sortList(book?.logic ?? [], sortOf('logic'), hitsOf('logics'));
+    return sortList(book?.logic ?? [], sortOf('logic'), { hitsOf: hitsOf('logics') });
+  }
+
+  /** 书的「启用」以启停开关为准：强制开/始终启用的算启用，手动控制看手动开关。 */
+  function bookEnabled(book) {
+    if (book?.activation?.override === 'on') return true;
+    if (book?.activation?.strategy === 'always') return true;
+    let manual = {};
+    try {
+      manual = repository.getManualState?.() ?? {};
+    } catch {
+      manual = {};
+    }
+    if (Object.prototype.hasOwnProperty.call(manual, book.book_id)) return manual[book.book_id] !== false;
+    return true;
   }
 
   function sortedBooks(books) {
-    return sortList(books, sortOf('shelf'));
+    return sortList(books, sortOf('shelf'), { enabledOf: bookEnabled });
   }
 
   /** 排序条：桌面放进页面工具栏，手机放进顶部「排序」展开组。 */
   function sortBar(list) {
     const spec = sortOf(list);
-    const scopeBtn = list !== 'shelf' && spec.key === 'hits'
+    const scopeBtn = list !== 'shelf' && (spec.key === 'hits' || spec.secondKey === 'hits')
       ? button(state.hitsScope === 'chat' ? '统计：当前聊天' : '统计：全部聊天', () => {
         state.hitsScope = state.hitsScope === 'chat' ? 'global' : 'chat';
         persistSort();
         render();
       }, { ghost: true, title: '触发次数按哪个范围算' })
       : null;
+    const secondKeys = [{ value: SECOND_NONE, label: '不设次排序' }]
+      .concat(SORT_KEYS[list].filter((key) => key !== spec.key).map((key) => ({ value: key, label: SORT_LABEL[key] })));
     return el('div', { class: 'ilb-sortbar' }, [
       el('span', { class: 'ilb-sub', text: '排序' }),
       selectBox(spec.key, SORT_KEYS[list].map((key) => ({ value: key, label: SORT_LABEL[key] })), (value) => {
@@ -233,8 +262,20 @@ export function createPanel(deps) {
       button(spec.dir === 'asc' ? '正序 ↑' : '倒序 ↓', () => {
         setSort(list, { dir: spec.dir === 'asc' ? 'desc' : 'asc' });
       }, { ghost: true, title: '切换正序/倒序' }),
+      el('span', { class: 'ilb-sub', text: '再按' }),
+      selectBox(spec.secondKey ?? SECOND_NONE, secondKeys, (value) => {
+        setSort(list, {
+          secondKey: value,
+          secondDir: value === SECOND_NONE ? 'asc' : defaultDir(value),
+        });
+      }, 'ilb-select ilb-sort-second'),
+      spec.secondKey && spec.secondKey !== SECOND_NONE
+        ? button(spec.secondDir === 'asc' ? '次正序 ↑' : '次倒序 ↓', () => {
+          setSort(list, { secondDir: spec.secondDir === 'asc' ? 'desc' : 'asc' });
+        }, { ghost: true, title: '切换次排序的正序/倒序' })
+        : null,
       scopeBtn,
-      el('span', { class: 'ilb-sub ilb-sort-hint', text: SORT_HINT[spec.key] ?? '' }),
+      el('span', { class: 'ilb-sub ilb-sort-hint', text: `启用的在前；${SORT_HINT[spec.key] ?? ''}` }),
     ]);
   }
 
@@ -452,6 +493,10 @@ export function createPanel(deps) {
 
   /** 顶部操作区：按功能分开的展开按钮；列表滚到哪都在。 */
   function mobileTop() {
+    if (!topOutsideBound && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      topOutsideBound = true;
+      document.addEventListener('click', onTopOutsideClick);
+    }
     const canBook = BOOK_TABS.has(state.activeTab);
     const list = SORT_LISTS[state.activeTab] ?? null;
     const groups = [
@@ -463,18 +508,17 @@ export function createPanel(deps) {
     ].filter(Boolean);
 
     const rows = {};
+    const chipNodes = [];
     const chips = el('div', { class: 'ilb-m-chips' }, groups.map(([id, label]) => {
-      const on = state.topOpen === id;
-      return el('button', {
+      const node = el('button', {
         type: 'button',
-        class: `ilb-m-chip ${on ? 'ilb-m-chip-on' : ''}`.trim(),
-        'aria-expanded': on ? 'true' : 'false',
-        onclick: () => {
-          const next = state.topOpen === id ? null : id;
-          state.topOpen = next;
-          for (const [key, node] of Object.entries(rows)) applyHidden(node, key !== next);
-        },
-      }, [el('span', { text: label }), el('span', { class: 'ilb-m-chip-caret', text: on ? '▴' : '▾' })]);
+        class: 'ilb-m-chip',
+        'data-chip': id,
+        'aria-expanded': 'false',
+        onclick: () => setOpen(state.topOpen === id ? null : id),
+      }, [el('span', { text: label }), el('span', { class: 'ilb-m-chip-caret', text: '▾' })]);
+      chipNodes.push(node);
+      return node;
     }));
 
     // hidden 既写属性也写 property：真浏览器里两者联动，测试用的假 DOM 不联动。
@@ -484,31 +528,40 @@ export function createPanel(deps) {
       else node.removeAttribute('hidden');
     };
 
+    /**
+     * 展开/收起只走这一条路：状态、行、按钮高亮、aria、箭头一起改。
+     * 之前内联事件与委托监听各改一半，收起时委托监听又把行显示回来，
+     * 于是「再点一次收不起来、点别的也收不起来」。
+     */
+    function setOpen(next) {
+      state.topOpen = next;
+      for (const [key, node] of Object.entries(rows)) applyHidden(node, key !== next);
+      for (const node of chipNodes) {
+        const isOn = node.getAttribute('data-chip') === next;
+        node.classList.toggle('ilb-m-chip-on', isOn);
+        node.setAttribute('aria-expanded', isOn ? 'true' : 'false');
+        const caret = node.querySelector('.ilb-m-chip-caret');
+        if (caret) caret.textContent = isOn ? '▴' : '▾';
+      }
+      closeTop = () => setOpen(null);
+    }
+    closeTop = () => setOpen(null);
+
     const body = el('div', { class: 'ilb-m-top-body' });
     for (const [id, label] of groups) {
       const row = el('div', { class: 'ilb-m-top-row' }, [topRowContent(id)]);
       applyHidden(row, state.topOpen !== id);
-      if (!row) continue;
       rows[id] = row;
       body.appendChild(row);
     }
-
-    // 点按钮时把 aria 与高亮一次性弄对（上面内联事件里拿不到 eventTarget，这里统一处理）
-    chips.addEventListener('click', (event) => {
-      const btn = event.target?.closest?.('.ilb-m-chip');
-      if (!btn) return;
-      const label = btn.textContent ?? '';
-      const id = groups.find(([, text]) => label.startsWith(text))?.[0];
-      if (!id) return;
-      for (const [key, node] of Object.entries(rows)) applyHidden(node, key !== id);
-      chips.querySelectorAll?.('.ilb-m-chip').forEach((node) => {
-        const isOn = node === btn;
-        node.classList?.toggle?.('ilb-m-chip-on', isOn);
-        node.setAttribute('aria-expanded', isOn ? 'true' : 'false');
-        const caret = node.querySelector?.('.ilb-m-chip-caret');
-        if (caret) caret.textContent = isOn ? '▴' : '▾';
-      });
-    });
+    // 初始高亮跟着 state 走（切页回来时保留之前展开的那组）
+    for (const node of chipNodes) {
+      const isOn = node.getAttribute('data-chip') === state.topOpen;
+      node.classList.toggle('ilb-m-chip-on', isOn);
+      node.setAttribute('aria-expanded', isOn ? 'true' : 'false');
+      const caret = node.querySelector('.ilb-m-chip-caret');
+      if (caret) caret.textContent = isOn ? '▴' : '▾';
+    }
 
     return el('div', { class: 'ilb-m-top' }, [chips, body]);
   }

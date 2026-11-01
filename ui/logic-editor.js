@@ -22,13 +22,23 @@ function splitList(input) {
 /**
  * 打开独立逻辑编辑器。
  * @param {object} ctx 面板上下文（要 openOverlay/closeOverlay/toast/render/repository）
- * @param {object} book 所属世界书
+ * @param {object} target 这本书（老用法）或逻辑组：`{ kind:'group', id, name, book }`
  * @param {object|null} existing 已有逻辑；null = 新建
  */
-export function openLogicEditor(ctx, book, existing) {
+export function openLogicEditor(ctx, target, existing) {
   const { repository } = ctx;
+  const isGroup = target?.kind === 'group';
+  const book = isGroup ? (target.book ?? null) : target;
+  const group = isGroup ? target : null;
   const logic = existing ? JSON.parse(JSON.stringify(existing)) : defaultLogic({ name: '新逻辑' });
-  const logics = Array.isArray(book.logic) ? book.logic : [];
+  const logics = isGroup
+    ? (repository.listStandaloneLogics?.(group.id) ?? [])
+    : (Array.isArray(book?.logic) ? book.logic : []);
+  // 「调用逻辑」下拉：书里的逻辑和所有独立逻辑都能点名
+  const allLogics = [
+    ...(book?.logic ?? []),
+    ...(repository.listStandaloneLogics?.() ?? []),
+  ].filter((l) => l.id !== logic.id);
 
   const nameInput = el('input', { class: 'ilb-input', type: 'text', value: logic.name ?? '' });
   const enabledBox = checkbox(logic.enabled !== false, () => {});
@@ -63,8 +73,8 @@ export function openLogicEditor(ctx, book, existing) {
     flowHost.innerHTML = '';
     flowHost.appendChild(renderFlowEditor({
       flow,
-      entries: (book.entries ?? []).map((e) => ({ id: e.id, title: `${book.name} / ${e.title || e.id}` })),
-      logics: logics.filter((l) => l.id !== logic.id).map((l) => ({ id: l.id, name: l.name || l.id })),
+      entries: (book?.entries ?? []).map((e) => ({ id: e.id, title: `${book?.name ?? '独立逻辑'} / ${e.title || e.id}` })),
+      logics: allLogics.map((l) => ({ id: l.id, name: l.name || l.id })),
       ctx,
       // 手机上默认折叠成摘要（与规则编辑器一致，§6.5）
       defaultCollapsed: isMobile,
@@ -96,12 +106,23 @@ export function openLogicEditor(ctx, book, existing) {
       },
       flow,
     };
-    const next = normalizeLogic(draft.id ? draft : { ...draft, id: undefined, localId: undefined }, book.book_id);
+    const next = normalizeLogic(
+      draft.id ? draft : { ...draft, id: undefined, localId: undefined },
+      isGroup ? '' : book.book_id,
+    );
+    // 界面排序用的时间戳（v0.22.0）
+    next.ui = { ...(logic.ui ?? {}), createdAt: Number(logic.ui?.createdAt) || Date.now(), updatedAt: Date.now() };
+    if (isGroup) {
+      next.groupId = group.id;
+      const isNew = !logics.some((l) => l.id === next.id);
+      repository.saveStandaloneLogic(next);
+      ctx.closeOverlay();
+      ctx.render();
+      ctx.toast(isNew ? '逻辑已添加' : '逻辑已保存');
+      return;
+    }
     const list = logics.slice();
     const index = list.findIndex((l) => l.id === next.id);
-    // 界面排序用的时间戳（v0.22.0）
-    const prevUi = index >= 0 ? (list[index].ui ?? {}) : {};
-    next.ui = { ...prevUi, createdAt: Number(prevUi.createdAt) || Date.now(), updatedAt: Date.now() };
     if (index >= 0) list[index] = next;
     else list.push(next);
     book.logic = list;

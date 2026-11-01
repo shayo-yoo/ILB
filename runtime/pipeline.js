@@ -5,6 +5,7 @@
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
 import { applyDoubleInjectPolicy } from '../core/double-inject.js';
+import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { summarizeHostContext } from '../core/host-context.js';
 import { expandMacros, normalizeVars, resolveChatId } from '../core/vars.js';
 import { notifyObservers } from './registry.js';
@@ -193,6 +194,15 @@ export function createPipeline(deps) {
       // 独立逻辑（ILB-4.14）：只取"启用的书"里的逻辑，和条目的激活范围保持一致。
       const activeIds = new Set(resolved.activeBooks ?? []);
       const logics = books.filter((book) => activeIds.has(book.book_id)).flatMap((book) => book.logic ?? []);
+      // 不挂书的逻辑（v0.23.0）：组启用才跑；组若填了 followBookId，那本书启用时才跑。
+      // 这里失败只丢独立逻辑，不影响书里的逻辑照常判定。
+      try {
+        const groups = typeof repository.listLogicGroups === 'function' ? repository.listLogicGroups() : [];
+        const standalone = typeof repository.listStandaloneLogics === 'function' ? repository.listStandaloneLogics() : [];
+        logics.push(...runnableStandaloneLogics(groups, standalone, activeIds));
+      } catch (err) {
+        log.warn(`独立逻辑组没读出来（这一轮先不跑它们）: ${err?.message ?? err}`);
+      }
       result = evaluate(request, { resolved, settings, logics });
     } catch (err) {
       lastError = err;

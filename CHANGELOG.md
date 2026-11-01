@@ -1,3 +1,30 @@
+## 0.23.0 · 2026-11-01 · 改进 · 书架卡片三级化，双排序（启用优先），逻辑和世界书解耦成「逻辑组」
+
+**一句话**：书架卡片按「摘要 / 展开详情 / ⋯更多」三级重做，默认紧凑、可切舒适并记住；排序改成「启用的永远在前」+ 主排序 + 次排序；逻辑不再必须挂在一本书上——可以建「逻辑组」，组能独立启停、也能选「某本书启用时才跑」，书里的逻辑可以搬进组、组里的逻辑能复制到别的组；顺手修掉折叠条点第二次收不起来、点空白处收不起来的问题。
+
+**起因**：
+1. 用户提供的《书架页面世界书卡片显示优化》要求手机卡片紧凑化：一级摘要、二级展开、三级更多，紧凑/舒适两种模式，触控目标 ≥44px，不横向溢出；
+2. 排序只有单一键，希望「启用的排在前面」成为不需要设置的默认，再叠加主排序 + 次排序；
+3. 逻辑目前存在 `book.logic` 里，必须选一本书才能建、才跟着书启停，不能独立成为功能；
+4. 手机顶部折叠条（v0.22.0）：点同一个按钮收不起来，点别的按钮也收不起来，点空白处也不收。
+
+**根因**：
+- 卡片是一整块平铺：来源/指纹/元数据、管理模式全在卡面上，手机上很长；
+- 折叠条的内联 `onclick` 与容器上的委托监听各改了一半 DOM：内联先把行藏起来，委托监听又按「点到的按钮」把行显示回来，于是 `state.topOpen` 与画面不一致，第二次点击看起来"没反应"；
+- 逻辑的数据结构与运行入口都按「书 → 逻辑」写死（`book.logic`、`pipeline` 只从启用的书里取逻辑）。
+
+**修法**：
+- 书架卡片（`ui/view-shelf.js` + `style.css`）：头部统一「选择框 + 书名 + 状态点 + ⋯」，下面一行摘要标签（启用/策略/规则数/逻辑数/导入次数/强制覆盖/进总池），再一行「为什么启用」+ 酒馆关联；「打开规则」与「展开详情」在卡脚；详情里才是酒馆关联管理、启用策略、强制覆盖、手动开关、进总池、来源/指纹/导入时间与导出/重导/复制/删除。`⋯` 菜单另外提供「完整元数据」。紧凑/舒适模式存 `uiState.shelfMode`。
+- 排序（`core/sort.js`）：`sortList` 第一层永远按 `enabled` 分组（启用的在前，可用 `enabledOf` 覆盖，书用手动开关）；第二层主键，第三层次键，第四层原顺序。`SORT_KEYS.rules` 增加 `inject`（注入位置 → 深度）；`normalizeSort` 增加 `secondKey/secondDir`（次键不能和主键相同）；`ui/panel.js` 的排序条加「再按」下拉与次排序正/倒序按钮。
+- 逻辑组（`core/logic-groups.js` 新建、`adapters/repository.js`、`runtime/pipeline.js`、`runtime/api.js`、`ui/view-logic.js`、`ui/logic-editor.js`）：存档新增 `logicGroups[]` 与 `logics[]`（老存档读到就补空，不迁移、不动 `book.logic`）；组字段 `{id,name,enabled,followBookId}`；`runnableStandaloneLogics(groups, logics, activeBookIds)` 决定这一轮跑哪些；pipeline 把书里的逻辑和可运行的独立逻辑合并交给 `evaluate`；`api.call` 的 `findLogic` 也能按名字/id 找到独立逻辑。逻辑页改成「逻辑组」为主：组选择、新建/改名/删除、组启用、跟随书；组内可新建/编辑/试一句/停用/导出/删除、移动到组、复制到组；书里的逻辑单列一段，可搬进/复制进逻辑组。
+- 折叠条（`ui/panel.js`）：把「改状态 + 改行 + 改按钮高亮/aria/箭头」收进唯一的 `setOpen(next)`，去掉重复的委托监听；点击同一按钮 = 收起，点另一按钮 = 换组，点 `.ilb-m-top` 以外 = 收起（文档级监听，只绑一次）。
+
+**文件**：`core/sort.js`、`core/logic-groups.js`（新）、`adapters/repository.js`、`runtime/pipeline.js`、`runtime/api.js`、`ui/panel.js`、`ui/view-shelf.js`、`ui/view-logic.js`、`ui/logic-editor.js`、`style.css`、`index.js`、`manifest.json`、`tests/sort.test.mjs`、`tests/logic-groups.test.mjs`（新）、`tests/smoke-dom.mjs`、`tests/live/st-v23-check.mjs`（新）；文档：`CHANGELOG.md`、`docs/决策记录.md`（D-0077–D-0079）、`docs/开发规划-现阶段.md` §35、`docs/交接-给下个智能体.md`、`docs/真机验收记录.md`、`参考文档.md`、`extension/tests/live/README.md`。
+
+**验收**：单元 **368/368**（新增 sort 双重排序与启用优先、logic-groups 7 条）、`linkcheck` **60 个模块全通过**、假 DOM 冒烟 **40 步 0 失败**；真酒馆（ST 1.19.0 + Chrome 156，桌面 1360×900）：新探针 `st-v23-check` 全过——卡片默认紧凑、`⋯` 可开可关、详情可展开、舒适模式切换并写进 `uiState`；规则列表把停用的排在启用后面；次排序选「名称」后写进 `listSort.rules.secondKey`；手动排序出现权重框；逻辑页有默认组、新建组后组数 +1、在组里新建逻辑成功且 `groupId` 对得上。
+
+**未验证**：真机（320–430px）上卡片触控热区与手指操作手感、超长书名/组名换行、深色主题下新卡片与菜单的对比度、软键盘弹出时逻辑组页面的滚动表现。
+
 ## 0.22.0 · 补记（2026-11-01）· 构建 · CI 变绿，发布一键完成
 
 **一句话**：main 上的 `checks` 从 2026-10-26 起一直是红的——不是测试挂了，是 `tests/linkcheck.mjs` 在仓库根把 `memory/`（已移出扩展的旧叙事模块留档）也当成扩展模块去 import，留档里只保留了部分文件，必然报「找不到模块」。现在 linkcheck 跳过 `memory/`（和 `tests/`、`lab/` 一样），并补了 `scripts/publish-github.mjs`：一条命令完成「同步 extension → github、提交、推送」。

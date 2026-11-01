@@ -39,6 +39,7 @@ node tests/live/st-extra-check.mjs
 node tests/live/st-window-check.mjs
 node tests/live/st-breakpoint-check.mjs
 node tests/live/st-v22-mobile.mjs
+node tests/live/st-v23-check.mjs
 ```
 
 - `st-live-check.mjs`：`globalThis.ILB` 是否加载、接口版本（现 1.2）与 `caps`（要含 `ui`、`callAsync`）、桌面外壳能开面板、不横向溢出；截图 `live/last-panel.png`。
@@ -54,6 +55,7 @@ node tests/live/st-v22-mobile.mjs
 - `st-extra-check.mjs`：v0.19.4 加。两件事：① C2 复杂往返——把「条件组 全部满足 + 两条条件 + 成立/不成立 + 按概率 + 重复 + 结束」整段写进文本模式，收下后切回表单再切回文本，要求逐行一致、报告「没有看不懂的行」；② E2 六十项上限——列表写 60 项，循环只跑 50 次，并断言步骤里写「原来的 60 项只留前 50 项」。截图 `live/last-extra-check.png`。
 
 - `st-v22-mobile.mjs`：v0.22.0 加。手机视口 390×844 验这一轮的手机界面重排：底栏是不是挂在滚动区外、内容 1 条与 12 条时底边都不动；顶部「书籍 / 新建 / 排序 / 筛选 / 变量」默认收起、展开后能选书；排序切「手动」后每条卡片有「排序权重」输入框，把最后一条权重改成 999 它会跳到第一条并把 `listSort.rules` 写进 `uiState`；卡片「⋯ → 设置分组」能把 `entry.group` 存下来；「更多」是页面而不是浮层，点「设置」真的切页。截图 `live/last-v22-mobile.png`。
+- `st-v23-check.mjs`：v0.23.0 加。桌面 1360×900 验这一轮：书架卡片默认紧凑、「⋯」菜单可开可关、「展开详情」出现管理控件、切「舒适」后写进 `uiState.shelfMode`；规则列表停用项沉底（启用优先）、次排序选「名称」后 `listSort.rules.secondKey` 落盘、手动排序有权重框；逻辑页有默认组、新建组后组数 +1、组内新建逻辑成功且 `groupId` 对得上。截图 `live/last-v23-shelf.png`。
 
 这些脚本都会自建临时书并在结束时删掉，**不会动你已有的书**。跑之前酒馆必须已经把 `extension/` 里的新版拷进 `third-party\ILB`，否则验的是老版本。
 

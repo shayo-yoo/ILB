@@ -29,19 +29,31 @@ test('排序键：每个列表只允许自己支持的那几个', () => {
   assert.equal(SORT_LABEL.updated, '上次修改');
 });
 
-test('默认排序：不认识的键退回收录顺序，方向按每个键的直觉给', () => {
-  assert.deepEqual(normalizeSort({ key: '不存在' }, 'rules'), { key: 'imported', dir: 'asc' });
-  assert.deepEqual(normalizeSort(null, 'rules'), { key: 'imported', dir: 'asc' });
+test('默认排序：不认识的键退回收录顺序，方向按每个键的直觉给；次排序默认不设', () => {
+  const base = { key: 'imported', dir: 'asc', secondKey: 'none', secondDir: 'asc' };
+  assert.deepEqual(normalizeSort({ key: '不存在' }, 'rules'), base);
+  assert.deepEqual(normalizeSort(null, 'rules'), base);
   assert.equal(defaultDir('updated'), 'desc');
   assert.equal(defaultDir('name'), 'asc');
-  assert.deepEqual(normalizeSorts({ rules: { key: 'hits', dir: 'asc' } }).rules, { key: 'hits', dir: 'asc' });
-  // shelf 不支持 hits，洗掉
-  assert.deepEqual(normalizeSorts({ shelf: { key: 'hits', dir: 'desc' } }).shelf, { key: 'imported', dir: 'asc' });
+  assert.deepEqual(normalizeSorts({ rules: { key: 'hits', dir: 'asc' } }).rules, {
+    key: 'hits', dir: 'asc', secondKey: 'none', secondDir: 'asc',
+  });
+  // shelf 不支持 hits / inject，洗掉
+  assert.deepEqual(normalizeSorts({ shelf: { key: 'hits', dir: 'desc' } }).shelf, base);
+  assert.deepEqual(normalizeSorts({ rules: { key: 'name', secondKey: 'inject', secondDir: 'desc' } }).rules, {
+    key: 'name', dir: 'asc', secondKey: 'inject', secondDir: 'desc',
+  });
+  // 次排序不能和主排序同一个键
+  assert.equal(normalizeSort({ key: 'name', secondKey: 'name' }, 'rules').secondKey, 'none');
 });
 
 test('sortLabel 说人话', () => {
-  assert.equal(sortLabel({ key: 'manual', dir: 'desc' }), '手动权重（倒序）');
-  assert.equal(sortLabel({ key: 'imported', dir: 'asc' }), '收录顺序（正序）');
+  assert.equal(sortLabel({ key: 'manual', dir: 'desc' }), '手动权重（倒序），启用的在前');
+  assert.equal(sortLabel({ key: 'imported', dir: 'asc' }), '收录顺序（正序），启用的在前');
+  assert.equal(
+    sortLabel({ key: 'manual', dir: 'desc', secondKey: 'name', secondDir: 'asc' }),
+    '手动权重（倒序），再看名称（正序）',
+  );
 });
 
 test('收录顺序：不动；倒序就整体反过来', () => {
@@ -83,4 +95,64 @@ test('不原地改数组，输入为空也不炸', () => {
   assert.deepEqual(source.map((x) => x.id), ['a', 'b', 'c']);
   assert.notEqual(sorted, source);
   assert.deepEqual(sortList(null, defaultSorts().rules), []);
+});
+
+test('启用优先：不管主排序是什么，停用的都沉到后面', () => {
+  const mix = [
+    { id: 'off1', title: '阿', enabled: false, ui: { order: 9 } },
+    { id: 'on1', title: '波', enabled: true, ui: { order: 1 } },
+    { id: 'off2', title: '次', enabled: false, ui: { order: 5 } },
+    { id: 'on2', title: '丁', enabled: true, ui: { order: 3 } },
+  ];
+  assert.deepEqual(sortList(mix, { key: 'imported', dir: 'asc' }).map((x) => x.id), ['on1', 'on2', 'off1', 'off2']);
+  assert.deepEqual(sortList(mix, { key: 'manual', dir: 'desc' }).map((x) => x.id), ['on2', 'on1', 'off1', 'off2']);
+  // 传 enabledOf 时以调用方为准（书用手动开关）
+  const books = [
+    { id: 'b1', activation: { strategy: 'manual' } },
+    { id: 'b2', activation: { strategy: 'always' } },
+  ];
+  assert.deepEqual(
+    sortList(books, { key: 'imported', dir: 'asc' }, { enabledOf: (b) => b.id !== 'b2' }).map((b) => b.id),
+    ['b1', 'b2'],
+  );
+});
+
+test('双重排序：主键相等时看次键；次键也不同才回到原顺序', () => {
+  const list = [
+    { id: 'a', title: '乙', ui: { order: 5 } },
+    { id: 'b', title: '甲', ui: { order: 5 } },
+    { id: 'c', title: '丙', ui: { order: 5 } },
+    { id: 'd', title: '丁', ui: { order: 9 } },
+  ];
+  assert.deepEqual(
+    sortList(list, { key: 'manual', dir: 'desc', secondKey: 'name', secondDir: 'asc' }).map((x) => x.id),
+    ['d', 'c', 'b', 'a'],
+  );
+  assert.deepEqual(
+    sortList(list, { key: 'manual', dir: 'desc', secondKey: 'name', secondDir: 'desc' }).map((x) => x.id),
+    ['d', 'a', 'b', 'c'],
+  );
+  assert.deepEqual(sortList(list, { key: 'manual', dir: 'desc' }, null).map((x) => x.id), ['d', 'a', 'b', 'c']);
+});
+
+test('注入顺序：位置在前、深度在后；同位置同深度保持原顺序', () => {
+  const list = [
+    { id: 'in_chat', injection: { position: 'in_chat', depth: 0 } },
+    { id: 'after_4', injection: { position: 'after_char', depth: 4 } },
+    { id: 'before', injection: { position: 'before_char', depth: 0 } },
+    { id: 'after_2', injection: { position: 'after_char', depth: 2 } },
+    { id: 'after_2b', injection: { position: 'after_char', depth: 2 } },
+  ];
+  assert.deepEqual(
+    sortList(list, { key: 'inject', dir: 'asc' }).map((x) => x.id),
+    ['before', 'after_2', 'after_2b', 'after_4', 'in_chat'],
+  );
+});
+
+test('触发次数：可以传 {hitsOf} 对象，旧写法传函数也还认', () => {
+  const hits = { a: 3, b: 1 };
+  const byObject = sortList(items(), { key: 'hits', dir: 'desc' }, { hitsOf: (item) => hits[item.id] ?? 0 });
+  assert.deepEqual(byObject.map((x) => x.id), ['a', 'b', 'c']);
+  const byFn = sortList(items(), { key: 'hits', dir: 'desc' }, (item) => hits[item.id] ?? 0);
+  assert.deepEqual(byFn.map((x) => x.id), ['a', 'b', 'c']);
 });
