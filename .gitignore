@@ -21,3 +21,10 @@ tests/live/last-*.png
 
 # 旧的手机端截图（早期探针留下的，只作本地参考）
 tests/shot-*.png
+
+# 本机临时脚本、打包产物与提交信息草稿（不进仓库）
+.tmp-*
+tmp-*.mjs
+*.zip
+dbg.txt
+.commit-*.txt

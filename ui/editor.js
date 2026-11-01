@@ -10,6 +10,8 @@ import { previewEntry } from '../core/evaluate.js';
 import { el, button, checkbox, field, hint, badge, selectBox } from './widgets.js';
 import { renderFlowEditor, flowSummary } from './flow-editor.js';
 import { normalizeFlow } from '../core/flow.js';
+import { validateFlow } from '../core/validate.js';
+import * as guard from './guard.js';
 
 const POSITION_LABEL_ = { before_char: '角色设定之前', after_char: '角色设定之后', in_chat: '聊天记录里' };
 const ROLE_LABEL_ = { system: '系统', user: '用户', assistant: '角色' };
@@ -45,6 +47,10 @@ export function openEditor(ctx, book, existing) {
   let combineMode = unboxed.mode;
   // 判定流程（ILB-4.11）：默认是空的，空流程 = 完全按关键词工作。
   let logic = normalizeFlow(entry.logic);
+  // 有没有改过：任何 input/change 都算。- 交给 ui/guard.js 决定离开时要不要拦。
+  let dirty = false;
+  // 每次改动顺手刷新右侧摘要：宽屏下"边改边看结果"，不用滚回去数。
+  const markDirty = () => { dirty = true; refreshSummary(); };
 
   const titleInput = el('input', { class: 'ilb-input', type: 'text', value: entry.title ?? '' });
   const contentInput = el('textarea', { class: 'ilb-textarea', rows: '5' }, [entry.content ?? '']);
@@ -183,9 +189,50 @@ export function openEditor(ctx, book, existing) {
     return out;
   }
 
+  const isMobile = (() => {
+    try {
+      return typeof ctx.layout === 'function' ? ctx.layout() === 'mobile' : false;
+    } catch {
+      return false;
+    }
+  })();
+
   let flowOpen = false;
   const flowHost = el('div', { class: 'ilb-flow-host' });
-  const flowToggle = button('编辑流程', () => {
+
+  function flowEditorNode() {
+    return renderFlowEditor({
+      flow: logic,
+      entries: ruleEntries(),
+      ctx,
+      // 手机上流程是独立子页：默认折成一行摘要，点哪步再展开哪步（§6.5）。
+      defaultCollapsed: isMobile,
+      onChange: (next) => {
+        logic = next;
+        dirty = true;
+        refreshFlowSummary();
+        refreshSummary();
+      },
+    });
+  }
+
+  /**
+   * 手机上流程是**独立子页**（§6.4/§6.5）：整屏里叠一层，树形默认折叠，
+   * 画完点「完成」回到规则表单——规则本身没有保存，草稿还在。
+   * 电脑上仍就地展开，宽屏时能一边看表单一边看流程。
+   */
+  const flowToggle = button(isMobile ? '打开流程编辑页' : '编辑流程', () => {
+    if (isMobile) {
+      const body = flowEditorNode();
+      ctx.openOverlay({
+        title: '判定流程',
+        nodes: [body],
+        footer: [button('完成', () => ctx.closeOverlay(), { primary: true })],
+        wide: true,
+        key: 'flow-editor',
+      });
+      return;
+    }
     flowOpen = !flowOpen;
     flowToggle.textContent = flowOpen ? '收起流程' : '编辑流程';
     renderFlowHost();
@@ -193,18 +240,8 @@ export function openEditor(ctx, book, existing) {
 
   function renderFlowHost() {
     flowHost.innerHTML = '';
-    if (!flowOpen) return;
-    flowHost.appendChild(
-      renderFlowEditor({
-        flow: logic,
-        entries: ruleEntries(),
-        ctx,
-        onChange: (next) => {
-          logic = next;
-          refreshFlowSummary();
-        },
-      }),
-    );
+    if (!flowOpen || isMobile) return;
+    flowHost.appendChild(flowEditorNode());
   }
 
   // —— 时效 ——
@@ -280,6 +317,46 @@ export function openEditor(ctx, book, existing) {
     };
   }
 
+  // —— 试一句（就地出结果，不再开浮层）——
+  // 为什么不再开浮层：电脑上的浮层是"替换"而不是"叠加"，从编辑器里点开就会
+  // 把编辑器连同草稿一起换掉（关掉试一句后回不到表单）。就地显示既不会丢草稿，
+  // 手机上也不用先关一层再回来。
+  const pvText = el('textarea', { class: 'ilb-textarea', rows: '2' }, ['王城今晚开始夜巡。']);
+  const pvCount = el('input', { class: 'ilb-input', type: 'number', value: '3' });
+  const pvResult = el('div', { class: 'ilb-preview' });
+  const previewHost = el('div', { class: 'ilb-preview-box', hidden: true }, [
+    el('p', { class: 'ilb-sub', text: '只判断"这句话会不会让它出现"，不检查预算、不检查同组，也不改任何状态。' }),
+    field('假设下一句是', pvText),
+    field('当作第几条消息', pvCount, '影响延迟/冷却的判断'),
+    button('试一下', () => runPreview(), { ghost: true }),
+    pvResult,
+  ]);
+
+  function runPreview() {
+    const draft = buildEntry();
+    const result = previewEntry(draft, {
+      text: pvText.value,
+      messageCount: Number(pvCount.value) || 0,
+      state: { lastActiveAt: null, activeSince: null },
+    });
+    pvResult.innerHTML = '';
+    pvResult.appendChild(el('p', {
+      class: result.passed ? 'ilb-preview-pass' : 'ilb-preview-fail',
+      text: result.passed ? '会出现在这一轮' : `不会出现：${result.reason}`,
+    }));
+    if (result.steps?.length) {
+      pvResult.appendChild(el('ul', { class: 'ilb-warn-list' }, result.steps.map((s) => el('li', {
+        text: `${s.passed ? '✓' : '✗'} ${s.stage}：${s.reason}`,
+      }))));
+    }
+    previewHost.hidden = false;
+    try {
+      previewHost.scrollIntoView?.({ block: 'nearest' });
+    } catch {
+      /* 滚动失败无所谓 */
+    }
+  }
+
   function save() {
     const draft = buildEntry();
     // 新规则还没有 id：交给 normalizeEntry 补 `<book_id>::e-xxxx`，否则会得到空 id，
@@ -289,10 +366,15 @@ export function openEditor(ctx, book, existing) {
       : normalizeEntry({ ...draft, id: `e-${Date.now().toString(36)}` }, book.book_id);
     const list = book.entries.slice();
     const index = list.findIndex((e) => e.id === next.id);
+    // 界面排序用的时间戳（v0.22.0）：创建时间只在第一次落，修改时间每次都更新。
+    const prevUi = index >= 0 ? (list[index].ui ?? {}) : {};
+    next.ui = { ...prevUi, createdAt: Number(prevUi.createdAt) || Date.now(), updatedAt: Date.now() };
     if (index >= 0) list[index] = next;
     else list.push(next);
     book.entries = list;
     ctx.saveEntries(book);
+    // 先清掉"改过"再关：否则守卫会在关浮层时再弹一次确认。
+    dirty = false;
     ctx.closeOverlay();
     ctx.render();
     ctx.toast(index >= 0 ? '规则已保存' : '规则已添加');
@@ -302,43 +384,62 @@ export function openEditor(ctx, book, existing) {
   drawConds();
   refreshFlowSummary();
 
-  ctx.openOverlay(existing ? '编辑规则' : '新增规则', [
-    el('div', { class: 'ilb-editor' }, [
-      el('div', { class: 'ilb-inline' }, [
-        el('label', { class: 'ilb-inline' }, [enabledBox, el('span', { class: 'ilb-sub', text: '启用这条规则' })]),
-        button('?', () => ctx.showHelp('editor'), { ghost: true, title: '这些选项都是什么' }),
-      ]),
-      field('标题（只给自己看）', titleInput),
-      field('正文（会出现在提示词里）', contentInput),
+  // ---- 分区：基本 / 高级（默认收起）/ 试运行 ----
+  // 手机上"一屏塞十几项"最容易迷路，所以常用的（标题、正文、触发词、流程）在前，
+  // 条件、时效、注入、概率收进 <details>，需要时再展开。
+  const sectionTitle = (text, topic) => el('div', { class: 'ilb-section-head' }, [
+    el('h5', { class: 'ilb-section-title', text }),
+    topic ? button('?', () => ctx.showHelp(topic), { ghost: true, title: '这几项是什么意思' }) : null,
+  ]);
 
-      el('h5', { class: 'ilb-section-title', text: '什么时候出现' }),
-      field('触发方式', triggerMode),
-      field('谁说的话算数', sourceSelect, '默认两边都看。只看 AI 时，用户说触发词不会让它出现（也能靠独立逻辑点名）。'),
-      el('label', { class: 'ilb-inline' }, [
-        waitBox,
-        el('span', { class: 'ilb-sub', text: '等候模式：不自己出现，只等独立逻辑点名（适合被调用的段落）' }),
-      ]),
-      triggerHost,
+  // 宽屏时右侧再多一栏摘要（§5.4）：左边改，右边立刻看到"它会变成什么样"。
+  // 窄窗 / 手机上不并排，摘要就不画——不然输入框会被挤成一条缝。
+  const isWideEditor = (() => {
+    try {
+      return typeof ctx.density === 'function' && ctx.density() === 'wide';
+    } catch {
+      return false;
+    }
+  })();
+  const summaryHost = el('aside', { class: 'ilb-editor-summary' });
+
+  const formNodes = [
+    sectionTitle('基本设置', 'editor'),
+    el('label', { class: 'ilb-inline ilb-switch' }, [
+      enabledBox,
+      el('span', { class: 'ilb-sub', text: '启用这条规则' }),
+    ]),
+    field('标题（只给自己看）', titleInput),
+    field('正文（会出现在提示词里）', contentInput),
+
+    el('h5', { class: 'ilb-section-title', text: '什么时候出现' }),
+    field('触发方式', triggerMode),
+    field('谁说的话算数', sourceSelect, '默认两边都看。只看 AI 时，用户说触发词不会让它出现（也能靠独立逻辑点名）。'),
+    el('label', { class: 'ilb-inline' }, [
+      waitBox,
+      el('span', { class: 'ilb-sub', text: '等候模式：不自己出现，只等独立逻辑点名（适合被调用的段落）' }),
+    ]),
+    triggerHost,
+
+    sectionTitle('判定流程（可以不加）', 'flow'),
+    hint('不画任何一步，这条规则就完全按上面的触发词和注入参数工作——和原生世界书一样。'),
+    flowSummaryText,
+    el('div', { class: 'ilb-inline' }, [flowModeSelect, flowToggle]),
+    flowHost,
+
+    el('details', { class: 'ilb-details' }, [
+      el('summary', { class: 'ilb-details-summary', text: '高级设置：条件、时效、注入、概率（默认收起）' }),
 
       el('h5', { class: 'ilb-section-title', text: '还要满足的条件（可以不加）' }),
       el('div', { class: 'ilb-row' }, [
         combineBox,
         el('div', { class: 'ilb-actions' }, [
-          button('+ 文本包含', () => { cards.push({ type: 'contains', within: 'text', text: '', negate: false }); drawConds(); }, { ghost: true }),
-          button('+ 另一条已出现', () => { cards.push({ type: 'activated', entryId: '' }); drawConds(); }, { ghost: true }),
-          button('+ 变量', () => { cards.push({ type: 'var', name: '', op: 'equals', value: '' }); drawConds(); }, { ghost: true }),
+          button('+ 文本包含', () => { cards.push({ type: 'contains', within: 'text', text: '', negate: false }); markDirty(); drawConds(); }, { ghost: true }),
+          button('+ 另一条已出现', () => { cards.push({ type: 'activated', entryId: '' }); markDirty(); drawConds(); }, { ghost: true }),
+          button('+ 变量', () => { cards.push({ type: 'var', name: '', op: 'equals', value: '' }); markDirty(); drawConds(); }, { ghost: true }),
         ]),
       ]),
       condHost,
-
-      el('div', { class: 'ilb-inline' }, [
-        el('h5', { class: 'ilb-section-title', text: '判定流程（可以不加）' }),
-        button('?', () => ctx.showHelp('flow'), { ghost: true, title: '判定流程怎么用' }),
-      ]),
-      hint('不画任何一步，这条规则就完全按上面的触发词和下面的注入参数工作——和原生世界书一样。想加更复杂的判断时，才在这里往下画。'),
-      flowSummaryText,
-      el('div', { class: 'ilb-inline' }, [flowModeSelect, flowToggle]),
-      flowHost,
 
       el('h5', { class: 'ilb-section-title', text: '出现多久' }),
       el('div', { class: 'ilb-row' }, [
@@ -359,14 +460,148 @@ export function openEditor(ctx, book, existing) {
       ]),
       el('label', { class: 'ilb-inline' }, [probOn, el('span', { class: 'ilb-sub', text: '按概率出现' }), probValue, el('span', { class: 'ilb-sub', text: '%' })]),
       el('label', { class: 'ilb-inline' }, [chainOn, el('span', { class: 'ilb-sub', text: '允许被别的条目连锁带出' })]),
-
-      el('div', { class: 'ilb-modal-foot' }, [
-        button('试一句', () => openPreview(ctx, book, buildEntry()), { ghost: true }),
-        button('保存', save, { primary: true }),
-        button('取消', () => ctx.closeOverlay(), { ghost: true }),
-      ]),
     ]),
-  ]);
+
+    previewHost,
+  ];
+
+  const editorRoot = el('div', { class: isWideEditor ? 'ilb-editor ilb-editor-cols' : 'ilb-editor' }, isWideEditor
+    ? [el('div', { class: 'ilb-editor-form' }, formNodes), summaryHost]
+    : formNodes);
+
+  /** 右侧摘要：触发 / 流程 / 结构检查。只读，不改任何数据。 */
+  function refreshSummary() {
+    if (!summaryHost || !isWideEditor) return;
+    summaryHost.innerHTML = '';
+    let draft;
+    try {
+      draft = buildEntry();
+    } catch {
+      return;
+    }
+    summaryHost.appendChild(el('div', { class: 'ilb-flow-props-title', text: '这条规则的样子' }));
+    summaryHost.appendChild(el('p', { class: 'ilb-sub', text: draft.title || '未命名规则' }));
+
+    const tags = [draft.enabled === false ? '已停用' : '已启用'];
+    if (draft.wait) tags.push('等候模式');
+    if (draft.always) tags.push('常驻');
+    if (draft.useProbability) tags.push(`概率 ${draft.probability}%`);
+    summaryHost.appendChild(el('div', { class: 'ilb-badges' }, tags.map((t) => badge(t))));
+
+    const trigger = [];
+    if (draft.trigger.any.length) trigger.push(`出现任一：${draft.trigger.any.slice(0, 6).join('、')}`);
+    if (draft.trigger.all.length) trigger.push(`同时出现：${draft.trigger.all.slice(0, 6).join('、')}`);
+    if (draft.trigger.not.length) trigger.push(`排除：${draft.trigger.not.slice(0, 6).join('、')}`);
+    summaryHost.appendChild(el('p', {
+      class: 'ilb-summary-line',
+      text: trigger.length ? trigger.join('；') : '还没有设置触发词：它不会自己出现。',
+    }));
+
+    summaryHost.appendChild(el('p', { class: 'ilb-summary-line', text: `流程：${flowSummary(draft.logic ?? { nodes: [] })}` }));
+
+    let problems = [];
+    try {
+      problems = validateFlow(draft.logic ?? { nodes: [] }, { entries: ruleEntries() }).problems ?? [];
+    } catch {
+      problems = [];
+    }
+    if (problems.length) {
+      summaryHost.appendChild(el('p', { class: 'ilb-warn', text: `流程有 ${problems.length} 处要检查：${problems[0].message}` }));
+    } else {
+      summaryHost.appendChild(el('p', { class: 'ilb-hint', text: '流程没发现结构问题。' }));
+    }
+  }
+
+  // 任何输入都算"改过"：离开时守卫据此决定要不要问。
+  editorRoot.addEventListener('input', markDirty);
+  editorRoot.addEventListener('change', markDirty);
+
+  const unregister = guard.registerEditor({
+    label: existing ? '编辑规则' : '新增规则',
+    dirty: () => dirty,
+    save: () => save(),
+    discard: () => {
+      dirty = false;
+      unregister();
+      ctx.closeOverlay();
+    },
+  });
+
+  function removeKeys() {
+    try {
+      document.removeEventListener('keydown', onKey, true);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * 快捷键（§5.6）：Ctrl/Cmd+S 保存、Ctrl/Cmd+Enter 试运行。
+   * 用捕获阶段：避免宿主的全局保存/发送快捷键先把它吃掉。
+   */
+  function onKey(event) {
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) return;
+    const key = String(event.key ?? '').toLowerCase();
+    if (key === 's') {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        save();
+      } catch (err) {
+        ctx.toast(`保存失败：${err?.message ?? err}`, 'error');
+      }
+    } else if (key === 'enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      runPreview();
+    }
+  }
+  try {
+    document.addEventListener('keydown', onKey, true);
+  } catch {
+    /* 没有 document 也要能开（自检环境） */
+  }
+
+  // 打开时就先算一次摘要：右侧不能空着等用户先改一个字。
+  refreshSummary();
+
+  ctx.openOverlay({
+    title: existing ? '编辑规则' : '新增规则',
+    nodes: [editorRoot],
+    // 底部操作栏交给浮层去固定（电脑固定在浮层底部，手机在安全区上方），
+    // 不再跟着内容一起滚出屏幕（§5.4 / §6.4）。
+    footer: [
+      button('试运行', runPreview, { ghost: true, title: 'Ctrl / Cmd + Enter' }),
+      button('保存', () => {
+        try {
+          save();
+        } catch (err) {
+          ctx.toast(`保存失败：${err?.message ?? err}`, 'error');
+        }
+      }, { primary: true, title: 'Ctrl / Cmd + S' }),
+      button('取消', () => {
+        // 有改动先问：保存并离开 / 放弃修改 / 继续编辑
+        if (guard.allowLeave()) ctx.closeOverlay();
+      }, { ghost: true }),
+    ],
+    wide: true,
+    onBeforeClose: () => {
+      // 浮层的 ×、点击背景、Esc、手机返回都会走这里
+      if (guard.isDirty()) {
+        guard.allowLeave(() => {
+          dirty = false;
+          ctx.closeOverlay();
+        });
+        return false;
+      }
+      return true;
+    },
+    onClose: () => {
+      unregister();
+      removeKeys();
+    },
+  });
 }
 
 /** "试一句"：只回答这一句会不会让它出现，不改任何状态。 */

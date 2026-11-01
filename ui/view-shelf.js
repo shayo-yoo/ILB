@@ -102,7 +102,7 @@ export function renderShelf(ctx) {
     const manual = repository.getManualState();
     // 宿主上下文每次重画都重新读：切了角色就该看到新的"为什么"
     const host = normalizeHostContext(readHost());
-    const shown = filterBooks(all, ctx.state.bookQuery);
+    const shown = ctx.sortedBooks(filterBooks(all, ctx.state.bookQuery));
     const visible = new Set(shown.map((b) => b.book_id));
     for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
 
@@ -330,16 +330,21 @@ export function renderShelf(ctx) {
   }
 
   function createBook() {
-    const name = window.prompt('给新书起个名字', '新世界书');
-    if (!name) return;
-    const book = makeEmptyBook(name.trim());
+    // 统一走面板里的新建流程（带书名输入框，手机上不用原生 prompt）
+    if (typeof ctx.newBook === 'function') {
+      ctx.newBook();
+      return;
+    }
+    const book = makeEmptyBook('新世界书');
+    book.ui = { createdAt: Date.now(), updatedAt: Date.now() };
     repository.saveBook(book);
     ctx.state.activeBookId = book.book_id;
     draw();
   }
 
+  const mobile = ctx.layout?.() === 'mobile';
   const view = el('div', {}, [
-    toolbar([
+    mobile ? null : toolbar([
       button('新建书', createBook),
       button('导入原生世界书', () => openImportDialog(ctx)),
       button('一键导入全部（跳过已导入）', () => openImportDialog(ctx, { preselect: 'new', title: '一键导入未导入过的书' }), { ghost: true }),
@@ -351,13 +356,15 @@ export function renderShelf(ctx) {
       }, { ghost: true }),
       button('?', () => ctx.showHelp('shelf'), { ghost: true, title: '这一页怎么用' }),
     ]),
-    filterBar([
+    mobile ? null : filterBar([
       searchInput(ctx.state.bookQuery, '搜书名、来源文件、条目标题…', (value) => {
         ctx.state.bookQuery = value;
         draw();
       }),
       counterLine,
     ]),
+    mobile ? counterLine : null,
+    mobile ? null : ctx.sortBar?.('shelf'),
     hint('「手动开关」决定这本书参不参与判定；「进总条目池」表示即使这本书没启用，它的条目也能被别的书的规则引用。'),
     batchHost,
     listHost,

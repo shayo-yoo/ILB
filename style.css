@@ -1,5 +1,17 @@
 /* ILB 界面样式。所有类名以 ilb- 开头，避免和宿主或别的扩展打架。 */
 
+/* 「隐藏」就该真的隐藏。
+   下面很多菜单/浮层默认是 display:flex 或 display:grid，作者样式会盖过浏览器默认的
+   [hidden] { display: none }，结果 hidden 元素在真浏览器里照样显示（假 DOM 看不出来）。
+   统一在这里兜住：只在 ILB 自己的容器里生效，不碰宿主。 */
+.ilb-root [hidden],
+.ilb-window [hidden],
+.ilb-overlay [hidden],
+.ilb-m [hidden],
+.ilb-guard [hidden] {
+  display: none !important;
+}
+
 .ilb-root {
   margin-top: 8px;
 }
@@ -508,7 +520,14 @@ body.ilb-overlay-open .ilb-fab {
   overflow: hidden;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.16));
   border-radius: 12px;
-  background: var(--SmartThemeBlurTintColor, rgba(24, 24, 30, 0.97));
+  background-color: var(--SmartThemeBlurTintColor, rgba(24, 24, 30, 0.97));
+  /* 宿主的 tint 常是半透明的（这个主题是 rgba(245,248,253,0.82)），而且 blurStrength 可能是 0，
+     指望背景模糊兜不住——聊天正文会从窗子里透出来，字很难认。把同一层 tint 再叠一遍：
+     颜色不变，不透明度从 0.82 叠到 0.97 左右，正文就不透出来了。 */
+  background-image: linear-gradient(
+    var(--SmartThemeBlurTintColor, rgba(24, 24, 30, 0.97)),
+    var(--SmartThemeBlurTintColor, rgba(24, 24, 30, 0.97))
+  );
   color: var(--SmartThemeBodyColor, inherit);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
@@ -1502,3 +1521,783 @@ body.ilb-overlay-open .ilb-fab {
   gap: 8px 10px;
   align-items: start;
 }
+
+/* ===== v0.16.0 导航 / 书籍上下文 / 规则卡 / 未保存守卫（Phase 3） ===== */
+/* 一条原则：导航形态由**浮窗内部宽度**决定（.ilb-root[data-density]），
+   不读屏幕宽度；窗子拉窄时宁可换成下拉，也不让一排按钮挤成两行。 */
+
+.ilb-root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ilb-root-desktop.ilb-density-wide {
+  gap: 10px;
+}
+
+.ilb-shell {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.ilb-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---- 导航通用 ---- */
+
+.ilb-nav {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ilb-nav-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.35;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+
+.ilb-nav-btn:hover {
+  background: rgba(128, 128, 128, 0.16);
+  opacity: 1;
+}
+
+.ilb-nav-active {
+  opacity: 1;
+  font-weight: 600;
+  background: rgba(122, 167, 255, 0.16);
+  border-color: rgba(122, 167, 255, 0.4);
+}
+
+.ilb-nav-tools {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.ilb-nav-top {
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+  padding-bottom: 4px;
+  position: relative;
+}
+
+.ilb-nav-main {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ilb-nav-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  border-radius: 8px;
+  background: var(--SmartThemeBlurTintColor, #1c1c24);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.ilb-nav-menu .ilb-nav-btn {
+  text-align: left;
+  white-space: normal;
+}
+
+.ilb-nav-compact {
+  flex-wrap: nowrap;
+}
+
+.ilb-nav-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---- 宽屏：左侧固定分组导航 ---- */
+
+.ilb-nav-side {
+  flex: 0 0 176px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+}
+
+.ilb-nav-brand {
+  font-weight: 600;
+  font-size: 0.92em;
+  padding: 2px 6px 6px;
+  opacity: 0.9;
+}
+
+.ilb-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ilb-nav-group-label {
+  font-size: 0.78em;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+  padding: 6px 6px 2px;
+}
+
+.ilb-nav-side-btn {
+  text-align: left;
+  white-space: normal;
+}
+
+.ilb-nav-side-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px dashed var(--SmartThemeBorderColor, #444);
+}
+
+/* ---- 统一书籍上下文 ---- */
+
+.ilb-bookbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.ilb-bookbar-label {
+  font-size: 0.85em;
+  opacity: 0.72;
+}
+
+.ilb-book-select {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.ilb-bookbar-note {
+  font-size: 0.82em;
+  opacity: 0.7;
+  margin-left: auto;
+}
+
+.ilb-tab-blurb {
+  margin: 0;
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.ilb-empty-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* ---- 规则卡：次要操作收进「⋯」---- */
+
+.ilb-rule-side {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-left: auto;
+}
+
+.ilb-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ilb-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.ilb-icon-btn:hover {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.ilb-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  border-radius: 8px;
+  background: var(--SmartThemeBlurTintColor, #1c1c24);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.ilb-menu .ilb-btn {
+  width: 100%;
+  text-align: left;
+}
+
+.ilb-card-selected {
+  outline: 2px solid rgba(122, 167, 255, 0.55);
+  outline-offset: -1px;
+}
+
+.ilb-filter-extra {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 6px;
+  border: 1px dashed var(--SmartThemeBorderColor, #444);
+  border-radius: 8px;
+}
+
+/* ---- 编辑器分区 / 试运行 ---- */
+
+.ilb-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ilb-details {
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ilb-details-summary {
+  cursor: pointer;
+  font-size: 0.9em;
+  opacity: 0.85;
+  padding: 2px 0;
+}
+
+.ilb-preview-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed var(--SmartThemeBorderColor, #444);
+  border-radius: 8px;
+}
+
+/* ---- 手机底部四个入口（§6.1）---- */
+
+.ilb-m-nav {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  margin-top: 8px;
+  padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--SmartThemeBorderColor, #444);
+  background: var(--SmartThemeBlurTintColor, #181820);
+}
+
+.ilb-m-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 4px 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.ilb-m-nav-btn:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.ilb-m-nav-active {
+  opacity: 1;
+  color: var(--SmartThemeQuoteColor, #8ab4f8);
+  font-weight: 600;
+}
+
+.ilb-m-nav-glyph {
+  font-size: 1.05em;
+  line-height: 1;
+}
+
+.ilb-m-nav-label {
+  font-size: 0.76em;
+  line-height: 1.2;
+}
+
+.ilb-m-more-item {
+  width: 100%;
+  text-align: left;
+  min-height: 44px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.08));
+}
+
+/* ---- 未保存守卫 ---- */
+
+.ilb-guard {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483002;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.ilb-guard-box {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--SmartThemeBorderColor, #555);
+  background: var(--SmartThemeBlurTintColor, #1c1c24);
+  color: inherit;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.ilb-guard-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ilb-guard-text {
+  margin: 0;
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+.ilb-guard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ilb-guard-actions .ilb-btn {
+  flex: 1 1 120px;
+  min-height: 40px;
+}
+
+/* 窄窗里导航按钮不再强制单行：宁可换行，也不要横向滚动 */
+.ilb-root[data-density="compact"] .ilb-nav-btn {
+  padding: 5px 8px;
+  font-size: 0.9em;
+}
+
+.ilb-root[data-density="compact"] .ilb-tab-blurb {
+  display: none;
+}
+
+.ilb-root[data-density="compact"] .ilb-btn {
+  padding: 5px 8px;
+}
+
+@media (max-width: 560px) {
+  .ilb-nav-tools {
+    margin-left: 0;
+  }
+
+  .ilb-guard-actions {
+    flex-direction: column;
+  }
+}
+
+/* ---- 宽屏流程编辑：左大纲 / 中分支树 / 右属性 + 底部运行反馈（§5.5） ---- */
+
+.ilb-flow-workspace {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) minmax(240px, 320px);
+  gap: 10px;
+  align-items: start;
+  margin: 8px 0;
+}
+
+.ilb-flow-outline,
+.ilb-flow-props {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(62vh, 620px);
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ilb-flow-outline-title,
+.ilb-flow-props-title {
+  font-weight: 600;
+  font-size: 0.9em;
+  padding: 2px 2px 6px;
+  opacity: 0.9;
+}
+
+.ilb-flow-outline-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ilb-flow-outline-item:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.ilb-flow-outline-active {
+  background: rgba(122, 167, 255, 0.16);
+  border-color: rgba(122, 167, 255, 0.4);
+}
+
+.ilb-flow-outline-kind {
+  font-size: 0.84em;
+  font-weight: 600;
+}
+
+.ilb-flow-outline-text {
+  font-size: 0.76em;
+  line-height: 1.25;
+  opacity: 0.72;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.ilb-flow-node-selected {
+  border-color: rgba(122, 167, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(122, 167, 255, 0.28);
+}
+
+/* 中间那栏只摆结构：卡片之间别留太多空隙，否则树一长就要一直滚 */
+.ilb-flow-canvas > .ilb-flow-list > .ilb-flow-node {
+  margin-bottom: 6px;
+}
+
+.ilb-flow-feedback {
+  margin-top: 10px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ilb-flow-feedback > summary {
+  cursor: pointer;
+  font-size: 0.86em;
+  opacity: 0.85;
+}
+
+/* ---- 宽屏改规则：左表单 / 右摘要（§5.4） ---- */
+
+.ilb-editor-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  gap: 14px;
+  align-items: start;
+}
+
+.ilb-editor-form {
+  min-width: 0;
+}
+
+.ilb-editor-summary {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: min(66vh, 640px);
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ilb-summary-line {
+  margin: 0;
+  font-size: 0.84em;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* 窗子不够宽时，三栏会让每栏都窄到没法用：退回一列 */
+.ilb-root[data-density="standard"] .ilb-flow-workspace,
+.ilb-root[data-density="compact"] .ilb-flow-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ilb-root[data-density="standard"] .ilb-flow-outline,
+.ilb-root[data-density="standard"] .ilb-flow-props,
+.ilb-root[data-density="compact"] .ilb-flow-outline,
+.ilb-root[data-density="compact"] .ilb-flow-props {
+  position: static;
+  max-height: none;
+}
+/* ============================================================
+   v0.22.0 鎵嬫満绔細搴曟爮鍥哄畾銆侀《閮ㄥ父椹绘姌鍙犲尯銆佺揣鍑戝崱鐗囥€佹帓搴?   ============================================================ */
+
+/* 搴曟爮鏀惧湪婊氬姩鍖哄闈紙.ilb-m-nav-slot 鏄?dialog 鐨勪竴琛岋級锛屼笉鍐?sticky 璺熺潃鍐呭娴?*/
+.ilb-m-nav {
+  position: relative;
+  bottom: auto;
+  margin-top: 0;
+  width: 100%;
+}
+
+.ilb-m-nav-slot {
+  flex: 0 0 auto;
+  background: var(--SmartThemeBlurTintColor, #181820);
+  border-top: 1px solid var(--SmartThemeBorderColor, #444);
+}
+
+/* 椤堕儴甯搁┗鎿嶄綔鍖猴細鎸夊姛鑳藉垎鎸夐挳锛岄粯璁ゅ叏鏀惰捣锛涘垪琛ㄦ粴鍒板摢閮借兘鎿嶄綔 */
+.ilb-m-top {
+  position: sticky;
+  top: 0;
+  z-index: 7;
+  background: var(--SmartThemeBlurTintColor, #181820);
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #333);
+}
+
+.ilb-m-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 8px;
+  scrollbar-width: none;
+}
+
+.ilb-m-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.ilb-m-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(128, 128, 128, 0.14);
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ilb-m-chip-on {
+  border-color: var(--SmartThemeQuoteColor, #8ab4f8);
+  background: rgba(138, 180, 248, 0.18);
+}
+
+.ilb-m-chip-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.ilb-m-top-body {
+  padding: 0 10px 8px;
+}
+
+.ilb-m-top-row[hidden] {
+  display: none !important;
+}
+
+.ilb-m-top-row .ilb-sortbar {
+  padding: 2px 0 4px;
+}
+
+.ilb-m-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ilb-m-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 38vh;
+  overflow: auto;
+}
+
+.ilb-var-line {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ilb-var-key {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.ilb-var-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 鎺掑簭鏉★紙妗岄潰涔熷鐢級 */
+.ilb-sortbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.ilb-sortbar .ilb-select {
+  max-width: 150px;
+}
+
+.ilb-sort-hint {
+  flex: 1 1 100%;
+}
+
+/* 鎵嬪姩鎺掑簭鏉冮噸 */
+.ilb-weight-inline {
+  gap: 6px;
+}
+
+.ilb-sort-weight {
+  width: 76px !important;
+  min-width: 64px !important;
+  text-align: right;
+}
+
+/* 鎵嬫満鍗＄墖鏇寸揣鍑戯細鎸夐挳閫備腑锛屽埆鍗犳帀鍗婂睆 */
+.ilb-m .ilb-rule-card {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.ilb-m .ilb-rule-card .ilb-title {
+  font-size: 14px;
+}
+
+.ilb-m .ilb-rule-card .ilb-rule-head {
+  gap: 6px;
+}
+
+.ilb-m .ilb-rule-card .ilb-actions {
+  padding-top: 4px;
+  gap: 6px;
+}
+
+.ilb-m .ilb-rule-card .ilb-btn {
+  min-height: 34px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.ilb-m .ilb-rule-card .ilb-meta {
+  gap: 6px;
+  font-size: 12px;
+}
+
+.ilb-m .ilb-icon-btn {
+  width: 36px;
+  height: 36px;
+}
+
+/* 鎵嬫満澶撮儴鍘嬬煯锛氬彧鐣欐爣棰?+ 鍏抽棴 */
+.ilb-m .ilb-m-head {
+  padding: 5px 10px;
+  padding-top: max(5px, env(safe-area-inset-top));
+}
+
+.ilb-m .ilb-m-title {
+  font-size: 15px;
+}
+
+.ilb-m .ilb-m-x {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  font-size: 20px;
+}
+
+/* 鎵嬫満涓婇〉闈㈤噷鐨勮鏄庢枃瀛楀皯鍗犲湴鏂?*/
+.ilb-m .ilb-tab-blurb {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .ilb-m .ilb-rule-card {
+    padding: 7px 9px;
+  }
+}
+

@@ -19,6 +19,8 @@ import {
   CONDITION_KIND_LABEL,
   COMPARE_OPS,
   CALC_OPS,
+  MAX_CANDIDATES,
+  MAX_REPEAT,
   makeNode,
   normalizeFlow,
   checkUiNode,
@@ -30,18 +32,41 @@ export const FLOW_TEXT_KEYWORDS = {
   test: '检测',
   judge: '判定',
   compare: '比较',
-  define: '定义',
+  if: '条件组',
+  chance: '按概率',
+  set: '变量',
   calc: '计算',
+  define: '定义',
   random: '随机数',
+  choose: '随机选',
   add: '添加',
   remember: '记住',
   activate: '激活',
+  repeat: '重复',
+  repeatList: '按列表',
+  list: '列表',
+  switch: '分支选择',
   goto: '跳转',
   call: '调用',
   ui: '界面',
+  stop: '结束',
   pass: '通过',
   fail: '不通过',
 };
+
+/** 「变量」节点九种动作在文本里的写法。顺序固定：解析时按前缀匹配（彼此不是前缀）。 */
+export const SET_TEXT_OPS = [
+  ['set', '设为'],
+  ['add', '增加'],
+  ['sub', '减少'],
+  ['mul', '乘以'],
+  ['append', '追加文字'],
+  ['clear', '清空'],
+  ['delete', '删除'],
+  ['clamp', '限制在范围内'],
+  ['round', '取整'],
+];
+const SET_LABEL = new Map(SET_TEXT_OPS);
 
 const MODE_ONLY = '只看流程';
 const MODE_AND = '关键词 + 流程';
@@ -49,12 +74,25 @@ const BRANCH_THEN = '成立';
 const BRANCH_ELSE = '不成立';
 const COND_PREFIX = '条件';
 const INDENT = '  ';
+const SWITCH_CASE = '等于';
+const SWITCH_ELSE = '否则';
+/** 分支选择的一条：等于 <值>（值是 $变量 / 数字 / "文本"）。 */
+const SWITCH_CASE_RE = /^等于\s+([\s\S]+)$/;
 
 /** 给界面与 AI 看的写法说明（和 FLOW_KIND_HINT 一样，是文案不是逻辑）。 */
 export const FLOW_TEXT_HINT = [
-  '一个节点一行，写在分支里的行往右缩进两格。',
+  '一个节点一行，写在分支里的行往右缩进两格（中文输入法的全角空格也认，一个算两格）。',
   '三种值：$名字 是变量，12 是数字，"文字" 是文本（带引号）。',
   '计算分两种：计算 $变量 = $甲 - $乙 [存]（算），计算 $变量 = 0 [存]（直接赋值）。',
+  '变量操作：变量 $金币 设为 100 / 增加 5 / 减少 5 / 乘以 2 / 追加文字 "…" / 清空 / 删除 / 限制在范围内 0..999 / 取整 2 位（可加 [临时]）。',
+  '随机选择：随机选 $抽中的 = "SSR" "SR" "R"（不写 $变量 就追加到正文；可加 [临时]）。',
+  '按概率：按概率 30%，下面缩进写「成立 / 不成立」两块。',
+  '条件组：条件组 全部满足（或 任一满足），下面缩进写若干行「条件 …」；文本只支持一层，要套娃请切表单。',
+  '重复：重复 3 次，下面直接缩进写要重复的步骤（有上限）。',
+  '按列表循环：按列表 $清单 重复（当前项 $项），下面直接缩进写每项要做的步骤（最多 50 项；括号可省）。',
+  '列表变量：列表 $清单 设为 "甲,乙,丙" / 追加 "丁" / 清空；默认按换行拆开，换分隔符请切表单。',
+  '分支选择：分支选择 $等级，下面缩进写「等于 3」一块、「等于 5」一块，最后可写一块「否则」；每块体再缩进一层。',
+  '提前结束：结束 当作通过 / 结束 当作不通过 "原因"。',
   '引用别的东西：激活 #条目名、调用 >逻辑名、跳转 @2✓.1（位置）。',
   '界面：界面 结果页 "SSR！" 聚焦 card-3（页面 id 直接写，没引号；提示要带引号；可加 问 "标题" "正文" "确定"）。',
   '判断节点写在上一行，它的两个分支各占一块，块头就是「成立」和「不成立」。',
@@ -87,7 +125,15 @@ export const FLOW_TEXT_AI_PROMPT = `你在帮我把「判定流程」写成一�
 定义 $名字 = "值"
 计算 $变量 = $甲 + 1 [存]        （运算符：+ - * / min max）
 计算 $变量 = 0 [存]              （没有运算符就是直接赋值）
+变量 $金币 增加 5                 （动作：设为/增加/减少/乘以/追加文字/清空/删除/限制在范围内 0..999/取整 2 位；可加 [临时]）
 随机数 $变量 = 1..6              （可加 [小数] 表示小数、[临时] 表示不存进聊天）
+随机选 $抽中的 = "SSR" "SR" "R"  （不写 $变量 就追加到正文；可加 [临时]）
+按概率 30%                       （下面缩进写「成立」「不成立」两块）
+条件组 全部满足                  （下面缩进写若干「条件 …」；只支持一层，要套娃请用表单）
+重复 3 次                        （下面直接缩进写要重复的步骤）
+按列表 $清单 重复（当前项 $项）   （下面直接缩进写每项要做的步骤；括号可省）
+列表 $清单 设为 "甲,乙,丙"       （动作：设为 / 追加 "丁" / 清空；默认按换行拆开）
+分支选择 $等级                   （下面缩进写「等于 3」「等于 5」各一块，最后可写「否则」）
 添加 "要追加到正文的一段话"
 记住 $变量 = "值"                （记住会写进这张聊天，下一轮还在）
 激活 #条目名                     （让另一条规则也出场）
@@ -96,6 +142,7 @@ export const FLOW_TEXT_AI_PROMPT = `你在帮我把「判定流程」写成一�
 界面 结果页 "SSR！"              （让界面翻到某一页 + 提示一句；页面 id 不带引号）
 界面 - "SSR！" 聚焦 card-3       （只提示不翻页：页面位置写 -；聚焦写控件 id）
 界面 结果页 问 "确认抽卡？" "消耗 10 金币" "确定"   （问一句；**只提示，不会停下来等**）
+结束 当作通过 "原因"              （提前收尾：当作通过 / 当作不通过；原因可省）
 通过                             （到此为止，这条规则出现）
 不通过                           （到此为止，这条规则不出现）
 
@@ -117,10 +164,10 @@ $变量名 ／ 数字（如 12、0.5、-3）／ "带引号的文本"
 
 ## 硬规定
 1. 一行只写一个节点，不要合并。
-2. 缩进只用空格（两格一层），不要用 Tab。
+2. 缩进只用空格（两格一层），不要用 Tab。中文输入法打出来的全角空格也认，一个全角空格算两格。
 3. 行首或行尾可以写 // 注释，注释不执行。
 4. 变量名不要带空格；中文可以。
-5. 不要写「如果/否则/循环」这类词，流程本身就按顺序执行，跳转用 跳转 @位置。
+5. 不要写「如果/否则/while」这类词；分支写在「检测 / 判定 / 比较 / 条件组 / 按概率」下面的「成立 / 不成立」，循环用「重复 N 次」，跳转用 跳转 @位置。
 6. 只输出这段文本，不要输出 JSON、不要输出解释。
 
 ## 例子
@@ -265,7 +312,7 @@ function branchTitle(key) {
 }
 
 function isBranchKind(kind) {
-  return kind === 'test' || kind === 'judge' || kind === 'compare';
+  return kind === 'test' || kind === 'judge' || kind === 'compare' || kind === 'if' || kind === 'chance';
 }
 
 /**
@@ -295,10 +342,29 @@ export function renderFlowText(flow, refs = {}) {
     (Array.isArray(list) ? list : []).forEach((node, index) => {
       const label = prefix ? `${prefix}.${index + 1}` : String(index + 1);
       lines.push(`${INDENT.repeat(depth)}${renderNode(node, label, entries, logics, labels)}`);
-      if (isBranchKind(node.kind) && Array.isArray(node.conditions)) {
+      if (node.kind === 'judge' && Array.isArray(node.conditions)) {
         node.conditions.forEach((cond) => {
           lines.push(`${INDENT.repeat(depth + 1)}${COND_PREFIX} ${renderCondition(cond, entries)}`);
         });
+      }
+      if (node.kind === 'if' && Array.isArray(node.when?.children)) {
+        node.when.children.forEach((cond) => {
+          lines.push(`${INDENT.repeat(depth + 1)}${COND_PREFIX} ${renderCondition(cond, entries)}`);
+        });
+      }
+      if (node.kind === 'repeat' && Array.isArray(node.body) && node.body.length > 0) {
+        walk(node.body, depth + 1, `${label}.body`);
+      }
+      // 分支选择：每条分支头写「等于 <值>」，最后可以有一块「否则」
+      if (node.kind === 'switch') {
+        (Array.isArray(node.cases) ? node.cases : []).forEach((item) => {
+          lines.push(`${INDENT.repeat(depth + 1)}${SWITCH_CASE} ${renderOperand(item?.match)}`);
+          walk(item?.body ?? [], depth + 2, `${label}.case`);
+        });
+        if (Array.isArray(node.else) && node.else.length > 0) {
+          lines.push(`${INDENT.repeat(depth + 1)}${SWITCH_ELSE}`);
+          walk(node.else, depth + 2, `${label}.else`);
+        }
       }
       if (isBranchKind(node.kind)) {
         ['then', 'else'].forEach((key) => {
@@ -323,6 +389,10 @@ function renderNode(node, label, entries, logics, labels) {
       return `判定 ${node.mode === 'any' ? '任一满足' : '全部满足'}`;
     case 'compare':
       return `比较 ${renderOperand(node.left)} ${node.op} ${renderOperand(node.right)}`;
+    case 'if':
+      return `条件组 ${node.when?.op === 'or' ? '任一满足' : '全部满足'}`;
+    case 'chance':
+      return `按概率 ${node.percent ?? 50}%`;
     case 'define':
       return `定义 $${node.name || ''} = ${renderOperand(node.value)}`;
     case 'calc':
@@ -331,6 +401,29 @@ function renderNode(node, label, entries, logics, labels) {
         : `计算 $${node.target || ''} = ${renderOperand(node.left)} ${node.op} ${renderOperand(node.right)}${node.persist ? ' [存]' : ''}`;
     case 'random':
       return `随机数 $${node.target || ''} = ${node.min}..${node.max}${node.integer ? '' : ' [小数]'}${node.persist ? '' : ' [临时]'}`;
+    case 'choose': {
+      const cands = (Array.isArray(node.candidates) ? node.candidates : []).map(textLiteral).join(' ');
+      const head = node.target ? `随机选 $${node.target} =` : '随机选';
+      return `${head} ${cands}${node.persist === false ? ' [临时]' : ''}`.trimEnd();
+    }
+    case 'set': {
+      const label = SET_LABEL.get(node.op) ?? node.op;
+      const bits = [`变量 $${node.name || ''}`, label];
+      if (node.op === 'clamp') bits.push(`${node.min ?? 0}..${node.max ?? 999}`);
+      else if (node.op === 'round') bits.push(`${node.digits ?? 0} 位`);
+      else if (node.op !== 'clear' && node.op !== 'delete') bits.push(renderOperand(node.value));
+      if (node.persist === false) bits.push('[临时]');
+      return bits.join(' ');
+    }
+    case 'repeat': {
+      if (node.mode === 'list') {
+        const tail = node.itemName ? `（当前项 $${node.itemName}）` : '';
+        return `${FLOW_TEXT_KEYWORDS.repeatList} $${node.listName || ''} ${FLOW_TEXT_KEYWORDS.repeat}${tail}`;
+      }
+      return `重复 ${node.times ?? 3} 次`;
+    }
+    case 'stop':
+      return `结束 ${node.result === 'fail' ? '当作不通过' : '当作通过'}${node.reason ? ` ${textLiteral(node.reason)}` : ''}`;
     case 'add':
       return `添加 ${textLiteral(node.text)}`;
     case 'remember':
@@ -357,6 +450,16 @@ function renderNode(node, label, entries, logics, labels) {
       return '通过';
     case 'fail':
       return '不通过';
+    case 'switch':
+      return `分支选择 ${renderOperand(node.value)}`;
+    case 'list': {
+      if ((node.separator ?? '\n') !== '\n') {
+        return `列表 $${node.name || ''}（自定义分隔符，只能在表单里编辑）`;
+      }
+      const label = node.op === 'append' ? '追加' : node.op === 'clear' ? '清空' : '设为';
+      const tail = node.op === 'clear' ? '' : ` ${renderOperand(node.value)}`;
+      return `列表 $${node.name || ''} ${label}${tail}`;
+    }
     default:
       return `${FLOW_KIND_LABEL[node.kind] ?? node.kind}`;
   }
@@ -375,6 +478,13 @@ function stripComment(text) {
   return text;
 }
 
+/** 缩进按"显示列"算：一个全角空格（中文输入法常吐出来的）算两列，等同两个半角空格。 */
+function indentWidth(text) {
+  let width = 0;
+  for (const ch of text) width += ch === '\u3000' ? INDENT.length : 1;
+  return width;
+}
+
 /** 把文本切成带缩进的行；空行与 // 注释丢掉，行号保留原样给人报错用。 */
 function toLines(text) {
   return String(text ?? '')
@@ -382,8 +492,15 @@ function toLines(text) {
     .split('\n')
     .map((raw, index) => {
       const expanded = stripComment(raw).replace(/\t/g, INDENT);
+      const lead = expanded.slice(0, expanded.length - expanded.trimStart().length);
       const body = expanded.trim();
-      return { no: index + 1, indent: expanded.length - expanded.trimStart().length, body };
+      return {
+        no: index + 1,
+        indent: indentWidth(lead),
+        // 行首除了普通空格与全角空格外还混进别的空白（不间断空格等）——出问题时值得点出来
+        odd: /[^\u0020\u3000]/.test(lead),
+        body,
+      };
     })
     .filter((line) => line.body !== '');
 }
@@ -400,6 +517,17 @@ const RANDOM_RE = /^随机数\s+(\$[^\s]+)\s*=\s*(-?\d+)\s*\.\.\s*(-?\d+)(\s*\[�
 const ADD_RE = /^添加\s+(".*")$/;
 const ACTIVATE_RE = /^激活\s+(#\S.*)$/;
 const CALL_RE = /^调用\s+(>\S.*)$/;
+const IF_RE = /^条件组\s+(全部满足|任一满足)$/;
+const CHANCE_RE = /^按概率\s*(\d{1,3})\s*%$/;
+const SET_RE = /^变量\s+(\$[^\s]+)\s+(.+)$/;
+const CHOOSE_RE = /^随机选\s+(?:\$([^\s=]+)\s*=\s*)?(.*)$/;
+const REPEAT_RE = /^重复\s*(\d+)\s*次$/;
+/** 按列表循环：按列表 $清单 重复（当前项 $项）。括号里可省，省了就不绑定当前项。 */
+const REPEAT_LIST_RE = /^按列表\s+\$([^\s（]+)\s+重复(?:\s*（\s*当前项\s*\$([^\s）]+)\s*）)?$/;
+/** 列表变量：列表 $清单 设为 "…" / 追加 "…" / 清空。 */
+const LIST_RE = /^列表\s+\$([^\s]+)\s+(设为|追加|清空)(?:\s+([\s\S]+))?$/;
+const SWITCH_RE = /^分支选择\s+([\s\S]+)$/;
+const STOP_RE = /^结束\s*(当作通过|当作不通过)(?:\s+(".*"))?$/;
 const VAR_RE_LINE = /^(\$[^\s]+)\s+(没有值|有值)$/;
 
 /**
@@ -431,7 +559,7 @@ export function parseFlowText(text, refs = {}) {
       const line = lines[i];
       if (line.indent < indent) break;
       if (line.indent > indent) {
-        note(line, '这一行缩进多了，它上面没有能装下它的分支');
+        note(line, `这一行缩进多了（${line.indent} 格，上一层是 ${indent} 格），它上面没有能装下它的分支${line.odd ? '；行首还混了特殊空白（比如不间断空格）' : ''}`);
         i += 1;
         continue;
       }
@@ -451,14 +579,58 @@ export function parseFlowText(text, refs = {}) {
       const node = parsed;
       i += 1;
 
-      // 判定节点的条件行（在分支之前）
-      if (node.kind === 'judge') {
+      // 判定 / 条件组节点的条件行（在分支之前）
+      if (node.kind === 'judge' || node.kind === 'if') {
         while (i < lines.length && lines[i].indent > indent && lines[i].body.startsWith(`${COND_PREFIX} `)) {
           const bare = lines[i].body.slice(COND_PREFIX.length + 1);
           const got = parseCondition(bare, entries);
           if (got.reason) note(lines[i], got.reason);
-          else node.conditions.push({ id: nextCondId(), ...got.cond });
+          else if (node.kind === 'judge') node.conditions.push({ id: nextCondId(), ...got.cond });
+          else node.when.children.push({ id: nextCondId(), ...got.cond });
           i += 1;
+        }
+      }
+
+      // 「重复」的循环体：直接缩进写步骤，没有「成立 / 不成立」这一层
+      if (node.kind === 'repeat' && i < lines.length && lines[i].indent > indent) {
+        if (lines[i].body === BRANCH_THEN || lines[i].body === BRANCH_ELSE) {
+          note(lines[i], '「重复」里面不用写「成立 / 不成立」，直接把要重复的步骤缩进写在它下面');
+        } else {
+          const got = readNodes(i, lines[i].indent, depth + 1);
+          node.body.push(...got.nodes);
+          i = got.index;
+        }
+      }
+
+      // 分支选择：「等于 <值>」每条一块，「否则」最多一块，块体再缩进一层
+      if (node.kind === 'switch') {
+        while (i < lines.length && lines[i].indent > indent) {
+          const head = lines[i];
+          if (head.body === SWITCH_ELSE) {
+            const childIndent = lines[i + 1] && lines[i + 1].indent > head.indent ? lines[i + 1].indent : head.indent + INDENT.length;
+            const got = readNodes(i + 1, childIndent, depth + 1);
+            node.else.push(...got.nodes);
+            i = got.index;
+            continue;
+          }
+          const m = SWITCH_CASE_RE.exec(head.body);
+          if (!m) {
+            note(head, head.body.startsWith(SWITCH_CASE)
+              ? `「${SWITCH_CASE}」后面要跟一个值：$变量、数字或 "文本"`
+              : `分支选择里只写「${SWITCH_CASE} <值>」或「${SWITCH_ELSE}」开头的一块`);
+            i += 1;
+            continue;
+          }
+          const match = parseOperand(m[1]);
+          if (!match) {
+            note(head, `「${SWITCH_CASE}」后面要跟一个值：$变量、数字或 "文本"`);
+            i += 1;
+            continue;
+          }
+          const childIndent = lines[i + 1] && lines[i + 1].indent > head.indent ? lines[i + 1].indent : head.indent + INDENT.length;
+          const got = readNodes(i + 1, childIndent, depth + 1);
+          node.cases.push({ id: nextCaseId(), match, body: got.nodes });
+          i = got.index;
         }
       }
 
@@ -485,6 +657,19 @@ export function parseFlowText(text, refs = {}) {
   }
 
   const built = readNodes(start, lines.length > start ? lines[start].indent : 0, 0);
+
+  // 剩下没读进去的行不能装作没看见：多半是缩进不对（例如「条件」没写进判定下面）
+  for (let k = built.index; k < lines.length; k += 1) {
+    const line = lines[k];
+    const where = `这一行缩进 ${line.indent} 格${line.odd ? '，行首还混了特殊空白（比如不间断空格）' : ''}`;
+    problems.push({
+      line: line.no ?? 0,
+      text: line.body,
+      reason: line.body.startsWith(`${COND_PREFIX} `)
+        ? `「${COND_PREFIX}」行要缩进写在「判定 / 条件组」下面`
+        : `没找到它属于哪一步（${where}；全角空格算两格，也许多打了或少打了一格，或者上面缺「成立 / 不成立」）`,
+    });
+  }
 
   // 跳转写的是位置（@2✓.1）。要在 normalizeFlow 之前换算：洗一遍会把 wanted/lineNo 丢掉。
   const byPath = new Map();
@@ -551,6 +736,12 @@ let condCounter = 0;
 function nextCondId() {
   condCounter += 1;
   return `t-${Date.now().toString(36)}-${condCounter.toString(36)}`;
+}
+
+let caseCounter = 0;
+function nextCaseId() {
+  caseCounter += 1;
+  return `s-${Date.now().toString(36)}-${caseCounter.toString(36)}`;
 }
 
 /**
@@ -856,6 +1047,176 @@ function readNode(line, entries, logics, note) {
   }
 
   if (VAR_RE_LINE.test(body)) return null; // 变量条件只能出现在「条件」行里
+
+  if (IF_RE.test(body)) {
+    const any = body.endsWith('任一满足');
+    return { ...makeNode('if'), when: { what: 'group', op: any ? 'or' : 'and', negate: false, children: [] } };
+  }
+
+  if (CHANCE_RE.test(body)) {
+    const m = CHANCE_RE.exec(body);
+    const percent = Math.max(0, Math.min(100, Number(m[1])));
+    return { ...makeNode('chance'), percent };
+  }
+
+  if (body.startsWith('变量 ')) {
+    const m = SET_RE.exec(body);
+    if (!m) {
+      note(line, '变量操作要写成：变量 $名字 增加 5（动作可用：' + SET_TEXT_OPS.map(([, label]) => label).join(' / ') + '）');
+      return null;
+    }
+    const name = m[1].slice(1);
+    let rest = m[2].trim();
+    let persist = true;
+    if (/\s*\[临时\]\s*$/.test(rest)) {
+      persist = false;
+      rest = rest.replace(/\s*\[临时\]\s*$/, '').trim();
+    }
+    const hit = SET_TEXT_OPS.find(([, label]) => rest.startsWith(label));
+    if (!hit) {
+      note(line, `不认识的变量动作「${rest.slice(0, 12)}」；能用的有：${SET_TEXT_OPS.map(([, label]) => label).join(' / ')}`);
+      return null;
+    }
+    const [op, label] = hit;
+    const tail = rest.slice(label.length).trim();
+    const base = { ...makeNode('set'), name, op, persist };
+    if (op === 'clamp') {
+      const got = /^(-?[\d.]+)\s*\.\.\s*(-?[\d.]+)$/.exec(tail);
+      if (!got) {
+        note(line, '「限制在范围内」要写成：变量 $名字 限制在范围内 0..999');
+        return null;
+      }
+      return { ...base, min: Number(got[1]), max: Number(got[2]) };
+    }
+    if (op === 'round') {
+      const got = /^(-?\d+)\s*位$/.exec(tail);
+      if (!got) {
+        note(line, '「取整」要写成：变量 $名字 取整 2 位（0 表示取整到个位）');
+        return null;
+      }
+      return { ...base, digits: Number(got[1]) };
+    }
+    if (op === 'clear' || op === 'delete') {
+      if (tail !== '') note(line, `「${label}」后面不用再写值`);
+      return base;
+    }
+    if (tail === '') {
+      note(line, `「${label}」要跟一个值：$变量、数字或 "文本"`);
+      return null;
+    }
+    const value = parseOperand(tail);
+    if (!value) {
+      note(line, `「${label}」要跟一个值：$变量、数字或 "文本"`);
+      return null;
+    }
+    return { ...base, value };
+  }
+
+  if (body.startsWith('随机选 ')) {
+    const m = CHOOSE_RE.exec(body);
+    if (!m) {
+      note(line, '随机选要写成：随机选 $抽中的 = "SSR" "SR" "R"（不写 $变量 就追加到正文）');
+      return null;
+    }
+    let rest = String(m[2] ?? '').trim();
+    let persist = true;
+    if (/\s*\[临时\]\s*$/.test(rest)) {
+      persist = false;
+      rest = rest.replace(/\s*\[临时\]\s*$/, '').trim();
+    }
+    const candidates = [];
+    const re = /"((?:[^"\\]|\\.)*)"/g;
+    let mm;
+    while ((mm = re.exec(rest))) {
+      try {
+        candidates.push(JSON.parse(`"${mm[1]}"`));
+      } catch {
+        note(line, '候选里的引号没闭合');
+        return null;
+      }
+    }
+    if (candidates.length === 0) {
+      note(line, '随机选至少要写一条带引号的候选，例如 "SSR" "SR"');
+      return null;
+    }
+    if (candidates.length > MAX_CANDIDATES) {
+      note(line, `候选太多了（最多 ${MAX_CANDIDATES} 条）`);
+      return null;
+    }
+    return { ...makeNode('choose'), target: m[1] ? m[1] : '', candidates, persist };
+  }
+
+  if (REPEAT_LIST_RE.test(body)) {
+    const m = REPEAT_LIST_RE.exec(body);
+    return { ...makeNode('repeat'), mode: 'list', listName: m[1], itemName: m[2] ?? '', body: [] };
+  }
+
+  if (body.startsWith('列表 ')) {
+    const m = LIST_RE.exec(body);
+    if (!m) {
+      note(line, '列表要写成：列表 $清单 设为 "甲,乙,丙"（或 追加 "丁" / 清空）');
+      return null;
+    }
+    const [, name, label, rawValue] = m;
+    const op = label === '追加' ? 'append' : label === '清空' ? 'clear' : 'set';
+    const base = { ...makeNode('list'), name, op };
+    if (op === 'clear') {
+      if (String(rawValue ?? '').trim()) note(line, '「列表 … 清空」后面不用再写值');
+      return base;
+    }
+    if (!String(rawValue ?? '').trim()) {
+      note(line, `「列表 … ${label}」要跟一个值：$变量、数字或 "文本"`);
+      return null;
+    }
+    const value = parseOperand(rawValue);
+    if (!value) {
+      note(line, `「列表 … ${label}」要跟一个值：$变量、数字或 "文本"`);
+      return null;
+    }
+    return { ...base, value };
+  }
+
+  if (body.startsWith('分支选择 ')) {
+    const m = SWITCH_RE.exec(body);
+    if (!m) {
+      note(line, '分支选择要写成：分支选择 $变量（下面缩进写「等于 3」和「否则」）');
+      return null;
+    }
+    const value = parseOperand(m[1]);
+    if (!value) {
+      note(line, '「分支选择」后面要跟一个值：$变量、数字或 "文本"');
+      return null;
+    }
+    return { ...makeNode('switch'), value, cases: [], else: [] };
+  }
+
+  if (REPEAT_RE.test(body)) {
+    const m = REPEAT_RE.exec(body);
+    const times = Number(m[1]);
+    if (times < 1) {
+      note(line, '「重复」的次数至少要 1');
+      return null;
+    }
+    if (times > MAX_REPEAT) {
+      note(line, `「重复」最多 ${MAX_REPEAT} 次（永远有限，不会有 while）`);
+      return null;
+    }
+    return { ...makeNode('repeat'), times, body: [] };
+  }
+
+  if (STOP_RE.test(body)) {
+    const m = STOP_RE.exec(body);
+    let reason = '';
+    if (m[2]) {
+      const op = parseOperand(m[2]);
+      if (!op) {
+        note(line, '「结束」后面的原因要带引号，例如 "药水用完了"');
+        return null;
+      }
+      reason = op.value;
+    }
+    return { ...makeNode('stop'), result: m[1] === '当作不通过' ? 'fail' : 'pass', reason };
+  }
 
   if (body === '通过') return makeNode('pass');
   if (body === '不通过') return makeNode('fail');

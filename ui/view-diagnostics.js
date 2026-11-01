@@ -176,9 +176,15 @@ function renderHostCard(ctx, last) {
     nodes.push(el('ul', { class: 'ilb-warn-list' }, ids.map((id) => el('li', {
       text: `${nameOf.get(id) ?? id}：${details[id].enabled ? '启用' : '停用'} —— ${details[id].reason ?? RULE_LABEL[details[id].rule] ?? details[id].rule}`,
     }))));
-    const doubleCount = ids.filter((id) => details[id].enabled && (details[id].matched?.length ?? 0) > 0).length;
-    if (doubleCount > 0) {
-      nodes.push(hint(`有 ${doubleCount} 本映射到原生世界书的书会被酒馆和 ILB 各注入一次（同源双重注入）。内容重复的话，在酒馆里关掉原生那本，或把这里改成手动控制。`));
+    const di = last.books?.doubleInject ?? null;
+    const dupIds = Array.isArray(di?.duplicates)
+      ? di.duplicates
+      : ids.filter((id) => details[id].enabled && (details[id].matched?.length ?? 0) > 0);
+    const skippedNames = (di?.skipped ?? []).map((id) => nameOf.get(id) ?? id);
+    if (skippedNames.length) {
+      nodes.push(hint(`按设置「跳过 ILB 这边的副本」，这一轮没有注入：${skippedNames.join('、')}。原生世界书仍由酒馆注入；想让两边都注入，去设置把这一项改成「照常注入」。`));
+    } else if ((di?.policy ?? 'warn') === 'warn' && dupIds.length > 0) {
+      nodes.push(hint(`有 ${dupIds.length} 本映射到原生世界书的书会被酒馆和 ILB 各注入一次（同源双重注入）。内容重复的话，在酒馆里关掉原生那本，或去设置改成「跳过 ILB 这边的副本」。`));
     }
   } else {
     nodes.push(hint('上一次运行没有留下每本书的启用原因（还没跑过，或者是老版本的数据）。'));

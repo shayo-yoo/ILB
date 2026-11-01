@@ -51,6 +51,13 @@ export function openLogicEditor(ctx, book, existing) {
 
   let flow = logic.flow ?? { nodes: [] };
   const flowHost = el('div', {});
+  const isMobile = (() => {
+    try {
+      return typeof ctx.layout === 'function' && ctx.layout() === 'mobile';
+    } catch {
+      return false;
+    }
+  })();
 
   function drawFlow() {
     flowHost.innerHTML = '';
@@ -59,6 +66,8 @@ export function openLogicEditor(ctx, book, existing) {
       entries: (book.entries ?? []).map((e) => ({ id: e.id, title: `${book.name} / ${e.title || e.id}` })),
       logics: logics.filter((l) => l.id !== logic.id).map((l) => ({ id: l.id, name: l.name || l.id })),
       ctx,
+      // 手机上默认折叠成摘要（与规则编辑器一致，§6.5）
+      defaultCollapsed: isMobile,
       onChange: (next) => { flow = next; },
     }));
   }
@@ -90,6 +99,9 @@ export function openLogicEditor(ctx, book, existing) {
     const next = normalizeLogic(draft.id ? draft : { ...draft, id: undefined, localId: undefined }, book.book_id);
     const list = logics.slice();
     const index = list.findIndex((l) => l.id === next.id);
+    // 界面排序用的时间戳（v0.22.0）
+    const prevUi = index >= 0 ? (list[index].ui ?? {}) : {};
+    next.ui = { ...prevUi, createdAt: Number(prevUi.createdAt) || Date.now(), updatedAt: Date.now() };
     if (index >= 0) list[index] = next;
     else list.push(next);
     book.logic = list;

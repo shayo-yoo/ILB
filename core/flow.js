@@ -26,6 +26,8 @@ export const FLOW_KINDS = [
   'add',
   'activate',
   'repeat',
+  'switch',
+  'list',
   'goto',
   'call',
   'ui',
@@ -49,6 +51,8 @@ export const FLOW_KIND_LABEL = {
   add: '添加',
   activate: '激活条目',
   repeat: '重复',
+  switch: '分支选择',
+  list: '列表变量',
   goto: '跳转',
   call: '调用逻辑',
   ui: '界面',
@@ -71,7 +75,9 @@ export const FLOW_KIND_HINT = {
   choose: '从几条候选里随机挑一条（可以存进变量，也可以直接追加到正文）',
   add: '往这条规则的正文后面追加一段话（可以用 {{变量名}} 插入值）',
   activate: '把另一条规则也拉进这一轮，像它自己出现一样',
-  repeat: '把里面这几步重复做 N 次（有上限，永远是有限次）',
+  repeat: '把里面这几步重复做 N 次（有上限，永远是有限次）；也可以拿一个列表，一项做一遍',
+  switch: '看一个值等于哪一条，就走那条下面的步骤；都不等于就走「否则」',
+  list: '攒一个列表变量：把一个文本按分隔符拆成列表、往列表末尾加一项、或者清空（只在这次判定里有效，不写进聊天）',
   goto: '跳到这个流程里的另一个节点，从那里继续往下（可以往回跳，次数有上限）',
   call: '调用另一条独立逻辑，把它的结果并进来',
   ui: '让界面翻页、提示、聚焦或问一句（只有「用户点了按钮去调用」时才生效；聊天里自动触发时不执行）',
@@ -133,6 +139,22 @@ export const MAX_STEPS = 200;
 export const MAX_REPEAT = 50;
 /** 「随机选择」最多几条候选。 */
 export const MAX_CANDIDATES = 20;
+/** 每一条候选的权重上限（0 = 这次绝对不选它）。 */
+export const MAX_WEIGHT = 1000;
+/** 「调用逻辑」最多带几个参数 / 收几个返回值。 */
+export const MAX_CALL_ARGS = 8;
+export const MAX_CALL_RETURNS = 8;
+/** 列表变量最多几项（与重复次数共用同一个上限思路：永远有限）。 */
+export const MAX_LIST_ITEMS = 50;
+/** 「分支选择」最多几条分支（不含「否则」）。 */
+export const MAX_SWITCH_CASES = 8;
+/** 列表能做哪些动作。 */
+export const LIST_OPS = ['set', 'append', 'clear'];
+export const LIST_OP_LABEL = {
+  set: '设为（把一段文本按分隔符拆成列表）',
+  append: '追加（把新的一项放到列表末尾）',
+  clear: '清空列表',
+};
 /** 单条候选 / 追加文本的长度上限（导入的数据一律当不可信）。 */
 export const MAX_TEXT = 2000;
 
@@ -258,16 +280,24 @@ export function makeNode(kind = 'test', overrides = {}) {
     return { ...base, target: '', min: 1, max: 6, integer: true, persist: true, ...overrides };
   }
   if (kind === 'choose') {
-    return { ...base, candidates: ['', ''], target: '', persist: true, ...overrides };
+    return { ...base, candidates: ['', ''], weights: [1, 1], target: '', persist: true, ...overrides };
   }
-  if (kind === 'repeat') return { ...base, times: 3, body: [], ...overrides };
+  if (kind === 'repeat') return { ...base, mode: 'times', times: 3, listName: '', itemName: '项', body: [], ...overrides };
+  if (kind === 'switch') {
+    return { ...base, value: operand('var', ''), cases: [{ id: newNodeId(), match: operand('text', ''), body: [] }], else: [], ...overrides };
+  }
+  if (kind === 'list') {
+    return { ...base, name: '', op: 'set', value: operand('text', ''), separator: '\n', ...overrides };
+  }
   if (kind === 'stop') return { ...base, result: 'pass', reason: '', ...overrides };
   if (kind === 'define') return { ...base, name: '', value: operand('text', ''), ...overrides };
   if (kind === 'add') return { ...base, text: '', ...overrides };
   if (kind === 'remember') return { ...base, name: '', value: operand('text', ''), ...overrides };
   if (kind === 'activate') return { ...base, entryId: '', ...overrides };
   if (kind === 'goto') return { ...base, target: '', max: 20, onLimit: 'stop', ...overrides };
-  if (kind === 'call') return { ...base, logicId: '', ...overrides };
+  if (kind === 'call') {
+    return { ...base, logicId: '', args: [], returns: [], persist: false, ...overrides };
+  }
   if (kind === 'ui') return { ...base, page: '', toast: '', select: '', askTitle: '', askText: '', askOk: '', ...overrides };
   return { ...base, ...overrides };
 }
@@ -370,14 +400,39 @@ export function normalizeNode(raw, depth) {
     node.integer = raw.integer !== false;
     node.persist = raw.persist !== false;
   } else if (kind === 'choose') {
-    // 随机选择（ILB-4.19）：候选是文本，可以带 {{变量}}；空候选直接丢掉
+    // 随机选择（ILB-4.19 / v0.18 加权）：候选是文本，可以带 {{变量}}；空候选直接丢掉
     const list = Array.isArray(raw.candidates) ? raw.candidates.slice(0, MAX_CANDIDATES) : [];
     node.candidates = list.map((c) => String(c ?? '').slice(0, MAX_TEXT));
     if (node.candidates.length === 0) node.candidates = ['', ''];
+    // 权重与候选一一对应：0 = 绝对不选；老数据没有这个字段，一律按 1（等概率）补齐
+    const weights = Array.isArray(raw.weights) ? raw.weights : [];
+    node.weights = node.candidates.map((_, i) => clampInt(weights[i], 0, MAX_WEIGHT, 1));
     node.target = String(raw.target ?? '');
     node.persist = raw.persist !== false;
   } else if (kind === 'repeat') {
+    // 重复（v0.19 列表循环）：mode=times 按次数，mode=list 拿一个列表一项做一遍
+    node.mode = raw.mode === 'list' ? 'list' : 'times';
     node.times = clampInt(raw.times, 1, MAX_REPEAT, 3);
+    node.listName = String(raw.listName ?? '');
+    node.itemName = raw.itemName === undefined ? '项' : String(raw.itemName ?? '').slice(0, 40);
+  } else if (kind === 'switch') {
+    // 分支选择（v0.19）：看一个值等于哪一条，只走命中的那条；都不等于走「否则」
+    node.value = normalizeOperand(raw.value, operand('var', ''));
+    const caseList = Array.isArray(raw.cases) ? raw.cases.slice(0, MAX_SWITCH_CASES) : [];
+    node.cases = caseList.map((c) => ({
+      id: String(c?.id ?? newNodeId()),
+      match: normalizeOperand(c?.match, operand('text', '')),
+      body: normalizeNodes(c?.body, depth + 1),
+    }));
+    if (node.cases.length === 0) {
+      node.cases = [{ id: newNodeId(), match: operand('text', ''), body: [] }];
+    }
+  } else if (kind === 'list') {
+    // 列表变量（v0.19）：只活在这一轮判定里，不写进聊天（避免把数组塞进聊天变量）
+    node.name = String(raw.name ?? '').slice(0, 40);
+    node.op = LIST_OPS.includes(raw.op) ? raw.op : 'set';
+    node.value = normalizeOperand(raw.value, operand('text', ''));
+    node.separator = raw.separator === undefined ? '\n' : String(raw.separator).slice(0, 8);
   } else if (kind === 'stop') {
     node.result = raw.result === 'fail' ? 'fail' : 'pass';
     node.reason = String(raw.reason ?? '').slice(0, 200);
@@ -397,8 +452,19 @@ export function normalizeNode(raw, depth) {
     node.max = clampInt(raw.max, 1, 1000, 20);
     node.onLimit = GOTO_ON_LIMIT.includes(raw.onLimit) ? raw.onLimit : 'stop';
   } else if (kind === 'call') {
-    // 调用逻辑（ILB-4.18）：把另一条独立逻辑当成一个子步骤跑
+    // 调用逻辑（ILB-4.18 / v0.18 参数与返回值）：参数先求值再传进去，返回值按名字取回调用方变量
     node.logicId = String(raw.logicId ?? '');
+    const argList = Array.isArray(raw.args) ? raw.args.slice(0, MAX_CALL_ARGS) : [];
+    node.args = argList.map((a) => ({
+      name: String(a?.name ?? '').slice(0, 40),
+      value: normalizeOperand(a?.value, operand('text', '')),
+    }));
+    const returnList = Array.isArray(raw.returns) ? raw.returns.slice(0, MAX_CALL_RETURNS) : [];
+    node.returns = returnList.map((r) => ({
+      name: String(r?.name ?? '').slice(0, 40),
+      target: String(r?.target ?? '').slice(0, 40),
+    }));
+    node.persist = raw.persist === true;
   } else if (kind === 'ui') {
     // 界面（ILB-4.21）：只收这五个字段，长度超了当场截断，不认识的键丢掉
     node.page = uiText(raw.page, UI_LIMIT.page);
@@ -416,6 +482,7 @@ export function normalizeNode(raw, depth) {
     node.else = normalizeNodes(raw.else, depth + 1);
   }
   if (kind === 'repeat') node.body = normalizeNodes(raw.body, depth + 1);
+  if (kind === 'switch') node.else = normalizeNodes(raw.else, depth + 1);
   return node;
 }
 
@@ -448,6 +515,7 @@ export function countFlowNodes(nodes) {
     if (Array.isArray(node?.then)) n += countFlowNodes(node.then);
     if (Array.isArray(node?.else)) n += countFlowNodes(node.else);
     if (Array.isArray(node?.body)) n += countFlowNodes(node.body);
+    for (const c of node?.cases ?? []) n += countFlowNodes(c?.body);
   }
   return n;
 }
@@ -635,11 +703,26 @@ export function describeNode(node) {
   if (node.kind === 'choose') {
     const list = Array.isArray(node.candidates) ? node.candidates.filter((c) => String(c).trim()) : [];
     const where = node.target ? `存进 ${node.target}` : '追加到正文';
-    return `随机选择：从 ${list.length} 条里挑 1 条${where}`;
+    const weights = Array.isArray(node.weights) ? node.weights : [];
+    const weighted = weights.some((w, i) => Number(w) !== 1 && String(node.candidates?.[i] ?? '').trim());
+    return `随机选择：从 ${list.length} 条里挑 1 条${weighted ? '（带权重）' : ''}${where}`;
   }
   if (node.kind === 'repeat') {
     const n = Array.isArray(node.body) ? node.body.length : 0;
+    if (node.mode === 'list') {
+      return `重复：拿列表 ${node.listName || '（未选）'} 的每一项各做一遍（${n} 步，最多 ${MAX_REPEAT} 项，当前项存进 ${node.itemName || '项'}）`;
+    }
     return `重复：把里面 ${n} 步做 ${node.times} 次`;
+  }
+  if (node.kind === 'switch') {
+    const n = Array.isArray(node.cases) ? node.cases.length : 0;
+    return `分支选择：看 ${describeOperand(node.value)} 等于哪一条（${n} 条分支${Array.isArray(node.else) && node.else.length ? '，带「否则」' : ''}）`;
+  }
+  if (node.kind === 'list') {
+    const name = node.name || '（未命名）';
+    if (node.op === 'clear') return `列表：清空 ${name}`;
+    const verb = node.op === 'append' ? '追加到' : '设为';
+    return `列表：${verb} ${name}（按分隔符 ${JSON.stringify(node.separator ?? '\n')} 拆开）`;
   }
   if (node.kind === 'stop') return `结束流程：${node.result === 'fail' ? '当作不通过' : '当作通过'}${node.reason ? `（${node.reason}）` : ''}`;
   if (node.kind === 'add') {
@@ -651,7 +734,14 @@ export function describeNode(node) {
   if (node.kind === 'goto') {
     return `跳转：→ ${node.target || '（未选）'}（最多 ${node.max} 次，超了${node.onLimit === 'continue' ? '跳过继续' : '终止'}）`;
   }
-  if (node.kind === 'call') return `调用逻辑：${node.logicId || '（未选）'}`;
+  if (node.kind === 'call') {
+    const args = Array.isArray(node.args) ? node.args.filter((a) => String(a?.name ?? '').trim()).length : 0;
+    const rets = Array.isArray(node.returns) ? node.returns.filter((r) => String(r?.name ?? '').trim()).length : 0;
+    const bits = [`调用逻辑：${node.logicId || '（未选）'}`];
+    if (args > 0) bits.push(`带 ${args} 个参数`);
+    if (rets > 0) bits.push(`取 ${rets} 个返回值`);
+    return bits.join('，');
+  }
   if (node.kind === 'ui') return `界面：${describeUi(uiCommandOf(node))}`;
   if (node.kind === 'pass') return '到此为止：这条规则出现';
   if (node.kind === 'fail') return '到此为止：这条规则不出现';
@@ -944,23 +1034,48 @@ function runNode(node, ctx, steps, depth) {
   }
 
   if (node.kind === 'choose') {
-    // 随机选择（ILB-4.19）：候选是文本，可以带 {{变量}}；同样是同一楼层结果固定
-    const list = (Array.isArray(node.candidates) ? node.candidates : []).map((c) => String(c ?? '')).filter((c) => c.trim());
+    // 随机选择（ILB-4.19 / v0.18 加权）：候选是文本，可以带 {{变量}}；同样是同一楼层结果固定。
+    // 权重跟候选一一对应，0 = 这次绝对不选；全部为 0 时退回等概率（并明说）。
+    const weights = Array.isArray(node.weights) ? node.weights : [];
+    const list = (Array.isArray(node.candidates) ? node.candidates : [])
+      .map((c, i) => ({ text: String(c ?? ''), weight: Number(weights[i]) || 0 }))
+      .filter((c) => c.text.trim());
     if (list.length === 0) {
       steps.push({ stage: 'logic', passed: false, reason: '「随机选择」一条候选都没写，这一步没执行' });
       return null;
     }
+    const total = list.reduce((sum, c) => sum + Math.max(0, c.weight), 0);
     const unit = seededUnit(`${ctx.seed ?? ''}:${node.id}`);
-    const index = Math.min(list.length - 1, Math.floor(unit * list.length));
-    const expanded = interpolate(list[index], ctx.vars);
+    let index = 0;
+    let weighted = total > 0;
+    if (weighted) {
+      let left = unit * total;
+      index = list.length - 1;
+      for (let i = 0; i < list.length; i += 1) {
+        if (list[i].weight <= 0) continue;
+        if (left < list[i].weight) {
+          index = i;
+          break;
+        }
+        left -= list[i].weight;
+      }
+      // 浮点误差兜底：落在最后一条正权重上
+      while (index > 0 && list[index].weight <= 0) index -= 1;
+    } else {
+      index = Math.min(list.length - 1, Math.floor(unit * list.length));
+    }
+    const expanded = interpolate(list[index].text, ctx.vars);
     const picked = expanded.text;
+    const weightText = weighted
+      ? `（权重 ${list[index].weight}/${total}）`
+      : '（权重全是 0，按等概率挑的）';
     if (node.target) {
       ctx.vars[node.target] = picked;
       if (node.persist) ctx.writes[node.target] = picked;
-      steps.push({ stage: 'logic', passed: true, reason: `随机选择：第 ${index + 1} 条（共 ${list.length} 条）→ ${node.target}` });
+      steps.push({ stage: 'logic', passed: true, reason: `随机选择：第 ${index + 1} 条（共 ${list.length} 条）${weightText} → ${node.target}` });
     } else {
       ctx.extra.push(picked);
-      steps.push({ stage: 'logic', passed: true, reason: `随机选择：第 ${index + 1} 条（共 ${list.length} 条），已追加到正文` });
+      steps.push({ stage: 'logic', passed: true, reason: `随机选择：第 ${index + 1} 条（共 ${list.length} 条）${weightText}，已追加到正文` });
     }
     for (const name of expanded.missing) {
       steps.push({ stage: 'logic', passed: false, reason: `挑中的那条里，变量 ${name} 还没有值` });
@@ -969,19 +1084,133 @@ function runNode(node, ctx, steps, depth) {
   }
 
   if (node.kind === 'repeat') {
-    // 重复（ILB-4.15）：次数有上限，里面只能放普通步骤，没有 while
-    const times = clampInt(node.times, 1, MAX_REPEAT, 1);
+    // 重复（ILB-4.15 / v0.19 列表循环）：次数有上限，里面只能放普通步骤，没有 while
     const body = Array.isArray(node.body) ? node.body : [];
     if (body.length === 0) {
       steps.push({ stage: 'logic', passed: true, reason: '「重复」里面没有步骤，跳过' });
       return null;
     }
+    if (node.mode === 'list') {
+      const listName = String(node.listName ?? '').trim();
+      const itemName = String(node.itemName ?? '项').trim();
+      const source = listName ? ctx.vars[listName] : undefined;
+      if (!Array.isArray(source)) {
+        steps.push({
+          stage: 'logic',
+          passed: false,
+          reason: `「重复」要用列表，但 ${listName ? `变量 ${listName}` : '没有填列表名'} 还不是列表（先用「列表变量」建一个）`,
+        });
+        return null;
+      }
+      if (source.length === 0) {
+        steps.push({ stage: 'logic', passed: true, reason: `列表 ${listName} 是空的，里面这几步一次也不做` });
+        return null;
+      }
+      const count = Math.min(source.length, MAX_REPEAT);
+      if (source.length > MAX_REPEAT) {
+        steps.push({ stage: 'logic', passed: false, reason: `列表 ${listName} 有 ${source.length} 项，只做前 ${MAX_REPEAT} 项（上限）` });
+      }
+      // 当前项借用 itemName 这个变量名；跑完还原，不污染外层（包括没命中时删掉临时名）
+      const had = Object.prototype.hasOwnProperty.call(ctx.vars, itemName);
+      const saved = ctx.vars[itemName];
+      try {
+        for (let i = 0; i < count; i += 1) {
+          if (steps.length > MAX_STEPS) return { status: 'fail', blocked: false, reason: '流程太长，停止执行' };
+          ctx.vars[itemName] = source[i];
+          steps.push({
+            stage: 'logic',
+            passed: true,
+            reason: `列表 ${listName} 第 ${i + 1}/${count} 项：${String(source[i]).slice(0, 20)}（当前项存进 ${itemName}）`,
+          });
+          const stop = runList(body, ctx, steps, depth + 1);
+          if (stop) return stop;
+        }
+      } finally {
+        if (had) ctx.vars[itemName] = saved;
+        else delete ctx.vars[itemName];
+      }
+      return null;
+    }
+    const times = clampInt(node.times, 1, MAX_REPEAT, 1);
     for (let round = 1; round <= times; round += 1) {
       if (steps.length > MAX_STEPS) return { status: 'fail', blocked: false, reason: '流程太长，停止执行' };
       steps.push({ stage: 'logic', passed: true, reason: `重复 第 ${round}/${times} 次` });
       const stop = runList(body, ctx, steps, depth + 1);
       if (stop) return stop;
     }
+    return null;
+  }
+
+  if (node.kind === 'switch') {
+    // 分支选择（v0.19）：值只求一次；按顺序比，命中第一条就走它，都不命中走「否则」
+    const value = evalOperand(node.value, ctx.vars);
+    if (!value.ok) {
+      steps.push({ stage: 'logic', passed: false, reason: `「分支选择」要比的值算不出来：${value.error ?? '未知原因'}，这一步没执行` });
+      return null;
+    }
+    const cases = Array.isArray(node.cases) ? node.cases : [];
+    let hit = -1;
+    for (let i = 0; i < cases.length; i += 1) {
+      const match = evalOperand(cases[i].match, ctx.vars);
+      if (!match.ok) {
+        steps.push({ stage: 'logic', passed: false, reason: `第 ${i + 1} 条分支的比较值算不出来：${match.error ?? '未知原因'}，跳过这条` });
+        continue;
+      }
+      if (compareValues(value.value, match.value, '==')) {
+        hit = i;
+        break;
+      }
+    }
+    const body = hit >= 0 ? (Array.isArray(cases[hit].body) ? cases[hit].body : []) : (Array.isArray(node.else) ? node.else : []);
+    const label = hit >= 0 ? `命中第 ${hit + 1} 条分支` : '没有命中任何一条，走「否则」';
+    steps.push({ stage: 'logic', passed: true, reason: `分支选择：${JSON.stringify(value.value)}，${label}` });
+    if (body.length === 0) {
+      steps.push({ stage: 'logic', passed: true, reason: '这条分支里没有步骤，跳过' });
+      return null;
+    }
+    return runList(body, ctx, steps, depth + 1);
+  }
+
+  if (node.kind === 'list') {
+    // 列表变量（v0.19）：只活在这一轮判定里，不写进聊天（避免把数组塞进聊天变量）
+    const name = String(node.name ?? '').trim();
+    if (!name) {
+      steps.push({ stage: 'logic', passed: false, reason: '「列表变量」没有写变量名，这一步没执行' });
+      return null;
+    }
+    if (node.op === 'clear') {
+      ctx.vars[name] = [];
+      steps.push({ stage: 'logic', passed: true, reason: `列表 ${name} 已清空` });
+      return null;
+    }
+    const value = evalOperand(node.value, ctx.vars);
+    if (!value.ok) {
+      steps.push({ stage: 'logic', passed: false, reason: `「列表变量」的值算不出来：${value.error ?? '未知原因'}，这一步没执行` });
+      return null;
+    }
+    const sep = node.separator ?? '\n';
+    const rawItems = (Array.isArray(value.value) ? value.value : String(value.value ?? '').split(sep))
+      .map((item) => String(item).trim())
+      .filter(Boolean);
+    if (node.op === 'append') {
+      const prev = Array.isArray(ctx.vars[name]) ? ctx.vars[name] : [];
+      const room = Math.max(0, MAX_LIST_ITEMS - prev.length);
+      const added = rawItems.slice(0, room);
+      ctx.vars[name] = prev.concat(added);
+      steps.push({
+        stage: 'logic',
+        passed: true,
+        reason: `列表 ${name} 追加了 ${added.length} 项，现在 ${ctx.vars[name].length} 项${rawItems.length > added.length ? `（超出 ${MAX_LIST_ITEMS} 项上限的部分没加）` : ''}`,
+      });
+      return null;
+    }
+    const items = rawItems.slice(0, MAX_LIST_ITEMS);
+    ctx.vars[name] = items;
+    steps.push({
+      stage: 'logic',
+      passed: true,
+      reason: `列表 ${name} 设为 ${items.length} 项${rawItems.length > items.length ? `（原来的 ${rawItems.length} 项只留前 ${MAX_LIST_ITEMS} 项）` : ''}${items.length === 0 ? '（值是空的）' : ''}`,
+    });
     return null;
   }
 
@@ -1058,7 +1287,26 @@ function runNode(node, ctx, steps, depth) {
       steps.push({ stage: 'logic', passed: false, reason: `这里不能调用逻辑（${id}），跳过` });
       return null;
     }
-    const res = ctx.callLogic(id, ctx);
+    // 参数（v0.18）：先在本层变量里求值；只要有一个算不出来就**不调用**，免得把空值传进去
+    const args = {};
+    let badArg = '';
+    for (const item of Array.isArray(node.args) ? node.args : []) {
+      const name = String(item?.name ?? '').trim();
+      if (!name) continue;
+      const ev = evalOperand(item.value, ctx.vars);
+      if (!ev.ok) {
+        badArg = `参数 ${name} 算不出来：${ev.error ?? '缺少变量'}`;
+        break;
+      }
+      args[name] = ev.value;
+    }
+    if (badArg) {
+      steps.push({ stage: 'logic', passed: false, reason: `${badArg}。这次调用没有执行，避免把空值传进去` });
+      return null;
+    }
+    // 第三个参数给"能在本层之外找逻辑"的实现用（runtime/api.js 的按钮调用），
+    // 判定流程里真正的 callLogic 不读它，保持旧签名不变。
+    const res = ctx.callLogic(id, args, ctx.vars);
     if (!res) {
       steps.push({ stage: 'logic', passed: false, reason: `找不到被调用的逻辑（${id}）` });
       return null;
@@ -1072,6 +1320,20 @@ function runNode(node, ctx, steps, depth) {
     if (res.ui && ctx.uiAllowed && !ctx.ui) ctx.ui = res.ui;
     for (const entryId of res.activations ?? []) {
       if (!ctx.activations.includes(entryId)) ctx.activations.push(entryId);
+    }
+    // 返回值（v0.18）：从被调用逻辑跑完时的变量里按名字取；取不到要报，不能悄悄给空字符串
+    for (const item of Array.isArray(node.returns) ? node.returns : []) {
+      const name = String(item?.name ?? '').trim();
+      const target = String(item?.target ?? '').trim();
+      if (!name || !target) continue;
+      if (res.locals && Object.prototype.hasOwnProperty.call(res.locals, name)) {
+        const value = res.locals[name];
+        ctx.vars[target] = value;
+        if (node.persist) ctx.writes[target] = value;
+        steps.push({ stage: 'logic', passed: true, reason: `取回返回值 ${name} → ${target}` });
+      } else {
+        steps.push({ stage: 'logic', passed: false, reason: `调用没有给出返回值 ${name}（被调用的逻辑里没有同名的变量）` });
+      }
     }
     steps.push({ stage: 'logic', passed: res.passed !== false, reason: res.reason || `调用了 ${id}` });
     if (res.passed === false) {

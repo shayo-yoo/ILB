@@ -88,14 +88,50 @@ export function closeOverlay() {
     }
   }
   if (!current) return;
+  const { overlay, onKey, onClose } = current;
+  // 先把 current 清掉：onClose 里常常会调 ctx.render() 或再关一层，
+  // 不清就会递归关到自己。
+  current = null;
   try {
-    document.removeEventListener('keydown', current.onKey);
-    current.overlay.remove();
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
     document.body.classList.remove('ilb-overlay-open');
   } catch {
     /* ignore */
   }
-  current = null;
+  if (typeof onClose === 'function') {
+    try {
+      onClose();
+    } catch (err) {
+      console.warn('[ILB] 浮层关闭后的收尾出错', err);
+    }
+  }
+}
+
+/**
+ * 「想关这一层」的统一入口：先问 onBeforeClose。
+ * 返回 false 表示有一层拦住了（比如"有未保存的修改"），调用方不要继续关。
+ */
+export function attemptCloseOverlay() {
+  if (backend) {
+    try {
+      if (typeof backend.attemptClose === 'function') return backend.attemptClose();
+    } catch (err) {
+      console.warn('[ILB] 手机浮层没能询问关闭', err);
+    }
+  }
+  if (current && typeof current.onBeforeClose === 'function') {
+    let allow = true;
+    try {
+      allow = current.onBeforeClose();
+    } catch (err) {
+      console.warn('[ILB] 关闭前检查出错，按允许关闭处理', err);
+      allow = true;
+    }
+    if (allow === false) return false;
+  }
+  closeOverlay();
+  return true;
 }
 
 /**
@@ -294,7 +330,9 @@ export function openOverlay(options = {}) {
       console.error('[ILB] 手机浮层没能打开，改用内置浮层', err);
     }
   }
-  const { title = '', nodes = [], footer = [], wide = false } = options;
+  const { title = '', nodes = [], footer = [], wide = false, onBeforeClose, onClose } = options;
+  // 这里用"强制"关闭：openOverlay 的语义是"换成这一层"，旧的那层如果还挂着
+  // beforeClose 钩子（比如编辑器），再问一次就会卡在半路。
   closeOverlay();
 
   const body = el('div', { class: 'ilb-modal-body' }, nodes);
@@ -306,7 +344,7 @@ export function openOverlay(options = {}) {
       text: '×',
       title: '关闭',
       'aria-label': '关闭',
-      onclick: () => closeOverlay(),
+      onclick: () => attemptCloseOverlay(),
     }),
   ]);
   const parts = [head, body];
@@ -315,13 +353,13 @@ export function openOverlay(options = {}) {
   const modal = el('div', { class: wide ? 'ilb-modal ilb-modal-wide' : 'ilb-modal', role: 'dialog', 'aria-modal': 'true', tabindex: '-1' }, parts);
   const overlay = el('div', { class: 'ilb-overlay' }, [modal]);
   overlay.addEventListener('click', (event) => {
-    if (event.target === overlay) closeOverlay();
+    if (event.target === overlay) attemptCloseOverlay();
   });
 
   const onKey = (event) => {
     if (event.key === 'Escape') {
       event.stopPropagation();
-      closeOverlay();
+      attemptCloseOverlay();
     }
   };
   document.addEventListener('keydown', onKey);
@@ -344,7 +382,7 @@ export function openOverlay(options = {}) {
   } catch (err) {
     console.warn('[ILB] 浮层没能挂上', err);
   }
-  current = { overlay, onKey };
+  current = { overlay, onKey, onBeforeClose, onClose };
   return closeOverlay;
 }
 

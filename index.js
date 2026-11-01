@@ -27,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.15.0';
+const VERSION = '0.22.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -148,10 +148,37 @@ async function boot() {
     }
   };
 
+  // 壳：电脑=悬浮球+可拖动浮窗，手机=悬浮球+整屏界面。挑哪套由 ui/layout.js 算，切换在 ui/shell.js。
+  // 壳不认识书架，只认识"里面装一个 panel"，所以两套壳共用同一个面板（ILB-6.1.3）。
+  let shell = null;
+
   const panel = createPanel({
     repository,
     nativeWorlds,
     pipeline,
+    // 导航要按"浮窗内部宽度"换形态，所以只能给闭包：建面板时壳还没建出来。
+    getLayout: () => {
+      try {
+        return shell ? shell.layout() : 'desktop';
+      } catch {
+        return 'desktop';
+      }
+    },
+    getDensity: () => {
+      try {
+        return shell ? shell.density() : 'standard';
+      } catch {
+        return 'standard';
+      }
+    },
+    // 手机底栏要挂在滚动区外面（v0.22.0）：面板把 nav 画到这个槽位里。
+    getNavRoot: () => {
+      try {
+        return shell?.mobile?.navRoot ?? null;
+      } catch {
+        return null;
+      }
+    },
     // 书架与诊断页要显示"为什么启用"：这里给的是实时读到的宿主上下文
     getHostContext: () => {
       try {
@@ -171,9 +198,7 @@ async function boot() {
     notify: notifyThrough,
   });
 
-  // 壳：电脑=悬浮球+可拖动浮窗，手机=悬浮球+整屏界面。挑哪套由 ui/layout.js 算，切换在 ui/shell.js。
-  // 壳不认识书架，只认识"里面装一个 panel"，所以两套壳共用同一个面板（ILB-6.1.3）。
-  const shell = createShell({
+  shell = createShell({
     repository,
     notify,
     onOpen: () => {

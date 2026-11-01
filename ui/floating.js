@@ -43,8 +43,10 @@ function readUiState(repository) {
  * @param {object} [options.repository] 用来记住"上次窗子拖到哪"（可省略）
  * @param {Function} [options.notify] 出错时跟用户说一声
  * @param {Function} [options.onOpen] 打开时回调（用来刷新数据）
+ * @param {Function} [options.onDensity] 宽度档位变化时回调（导航要跟着换形态）
+ * @param {Function} [options.onBeforeClose] 关窗前再问一声；返回 false 表示先别关
  */
-export function createFloatingWindow({ repository, notify, onOpen } = {}) {
+export function createFloatingWindow({ repository, notify, onOpen, onDensity, onBeforeClose } = {}) {
   const saved = readUiState(repository);
   const initialViewport = viewportOf();
 
@@ -225,6 +227,14 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     if (typeof win.setAttribute === 'function') win.setAttribute('data-density', next);
     win.classList.remove('ilb-density-compact', 'ilb-density-standard', 'ilb-density-wide');
     win.classList.add(`ilb-density-${next}`);
+    // 导航形态要跟着换（顶部 → 侧栏/下拉）。回调可能还没接上，所以放在最后并且包住异常。
+    if (typeof onDensity === 'function') {
+      try {
+        onDensity(next);
+      } catch (err) {
+        console.warn('[ILB] 宽度变化后的回调出错（不影响使用）', err);
+      }
+    }
     return density;
   }
 
@@ -250,8 +260,22 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     }
   }
 
-  function closeWindow() {
-    if (!open) return;
+  /**
+   * 关窗子。有没保存的修改时**不关**：先让守卫问一句。
+   * force=true 用于换壳/隐藏界面——那时窗子已经不在屏幕上，不该再弹确认。
+   */
+  function closeWindow(force = false) {
+    if (!open) return false;
+    if (!force && typeof onBeforeClose === 'function') {
+      let allow = true;
+      try {
+        allow = onBeforeClose();
+      } catch (err) {
+        console.warn('[ILB] 关闭前的检查出错，按允许关闭处理', err);
+        allow = true;
+      }
+      if (allow === false) return false;
+    }
     open = false;
     applyOpenState();
     scheduleSave();
@@ -261,6 +285,7 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
     } catch {
       /* ignore */
     }
+    return true;
   }
 
   function toggle() {
@@ -467,7 +492,8 @@ export function createFloatingWindow({ repository, notify, onOpen } = {}) {
    */
   function setVisible(next) {
     visible = Boolean(next);
-    if (!visible && open) closeWindow();
+    // 整壳让位是强制的：此时窗子已经不在屏幕上，不该再弹未保存确认
+    if (!visible && open) closeWindow(true);
     for (const node of [win, fab]) {
       if (node) node.style.display = visible ? '' : 'none';
     }

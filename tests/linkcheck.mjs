@@ -12,7 +12,9 @@ async function walk(dir, out = []) {
     if (item.isDirectory()) {
       // tests/ 是测试工具自己；lab/ 是**隔离子项目**（叙事引擎），有自己的测试命令
       // （node --test lab/tests/*.test.mjs），不参与"扩展能不能加载"这项发布前检查。
-      if (item.name === 'node_modules' || item.name === 'tests' || item.name === 'lab') continue;
+      // memory/ 是已移出扩展的旧叙事模块留档（见 docs/决策记录.md D-0044），发布时不加载；
+      // 留档里只保留了部分文件，按"扩展能不能加载"去检查它只会误报。所以不进这项检查。
+      if (item.name === 'node_modules' || item.name === 'tests' || item.name === 'lab' || item.name === 'memory') continue;
       await walk(full, out);
     } else if (item.name.endsWith('.js')) {
       out.push(full);

@@ -332,3 +332,51 @@ test('界面指令会以 ilb:change 的 ui 事件通知出去（UI 可只挂一�
   api.call('抽卡', { 次数: 1 });
   assert.deepEqual(seen, ['call', 'ui']);
 });
+
+test('按钮调用里的「调用逻辑」：参数送得进、返回值取得到（v0.20.1 修）', () => {
+  const { api, books } = buildApi({
+    specs: [
+      {
+        book_id: 'b1',
+        name: '测试书',
+        enabled: true,
+        entries: [],
+        logic: [
+          {
+            name: '被调-翻倍',
+            flow: {
+              nodes: [
+                { kind: 'set', name: '中间', op: 'set', value: { type: 'var', name: '输入' }, persist: false },
+                { kind: 'set', name: '中间', op: 'mul', value: { type: 'number', value: 2 }, persist: false },
+              ],
+            },
+          },
+          {
+            name: '调用方',
+            flow: {
+              nodes: [
+                {
+                  kind: 'call',
+                  logicId: '',
+                  args: [{ name: '输入', value: { type: 'number', value: 21 } }],
+                  returns: [{ name: '中间', target: '结果' }],
+                  persist: true,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const callee = books[0].logic.find((l) => l.name === '被调-翻倍');
+  const caller = books[0].logic.find((l) => l.name === '调用方');
+  caller.flow.nodes[0].logicId = callee.id;
+
+  const out = api.call('调用方');
+  assert.equal(out.vars.结果, 42);
+  assert.equal(out.writes.结果, 42);
+  // 参数是临时名字，不能漏进调用方的聊天变量
+  assert.equal(Object.keys(out.vars).includes('输入'), false);
+  assert.equal(Object.keys(out.vars).includes('中间'), false);
+});

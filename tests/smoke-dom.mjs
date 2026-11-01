@@ -168,6 +168,10 @@ const { createPipeline } = await import('../runtime/pipeline.js');
 const { createRegistry } = await import('../runtime/registry.js');
 const { createPanel } = await import('../ui/panel.js');
 const { openOverlay } = await import('../ui/help.js');
+// step() 是同步的：异步步骤里的断言不会被等到，所以这里先拿好模块，步骤本身写成同步的。
+const mobileModule = await import('../ui/mobile.js');
+const { renderFlowEditor } = await import('../ui/flow-editor.js');
+const { normalizeFlow, makeNode } = await import('../core/flow.js');
 
 let failures = 0;
 /** 没被接住的异步错误也算失败：浏览器里表现为"未处理的异步错误"，用户会看到红字 */
@@ -268,8 +272,10 @@ function findByText(rootEl, text) {
 }
 
 function clickText(rootEl, text) {
-  const node = findByText(rootEl, text);
-  if (!node) throw new Error(`找不到按钮：${text}`);
+  const hits = walk(rootEl).filter((n) => typeof n.textContent === 'string' && n.textContent.includes(text));
+  if (hits.length === 0) throw new Error(`找不到按钮：${text}`);
+  // 说明文字里也可能出现同样的词（例如 hint 里写了「清空」），优先点真正绑了事件的元素
+  const node = hits.find((n) => (n._listeners?.click ?? []).length > 0) ?? hits[0];
   const handlers = node._listeners?.click ?? [];
   if (handlers.length === 0) throw new Error(`「${text}」没有绑定点击事件`);
   for (const handler of handlers) {
@@ -316,9 +322,9 @@ step('流程里能加「界面」步骤，空着会当场提示', () => {
   if (!warns.some((n) => String(n.textContent ?? '').includes('这一步是空的'))) throw new Error('空着的界面步骤没有提示');
 });
 
-// 条件组：v0.15.0 的「条件组」节点（ILB-4.22）。文本语法装不下它，所以文本模式必须只读，
-// 不能让用户一收就把整棵条件组吃掉（ILB-7.16）。
-step('流程里能加条件组，文本模式不会悄悄吃掉它', () => {
+// 条件组：v0.15.0 的「条件组」节点（ILB-4.22）。v0.17 文本语法已经装得下一层条件组，
+// 所以这里断言的是「能原样带走」；嵌套组仍然只能表单编辑（下一步专门检查只读）。
+step('流程里能加条件组，文本模式能原样带走它', () => {
   clickText(body, '＋ 添加一步');
   clickText(body, '＋ 条件组');
   const groups = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-group-cond'));
@@ -329,14 +335,50 @@ step('流程里能加条件组，文本模式不会悄悄吃掉它', () => {
   clickText(body, '文本模式');
   const area = walk(body).find((n) => n.className && String(n.className).includes('ilb-flow-area'));
   if (!area) throw new Error('文本模式没有文本框');
-  if (area.readOnly !== true) throw new Error('文本模式装不下条件组，却是可写的');
-  const warns = walk(body).filter((n) => n.className && String(n.className).includes('ilb-warn'));
-  if (!warns.some((n) => String(n.textContent ?? '').includes('只读'))) throw new Error('没有说明文本模式为什么只读');
-  // 就算硬点「收下这段文本」，也不能把条件组覆盖掉
+  if (area.readOnly === true) throw new Error('一层条件组已经能写进文本，不该再只读');
+  if (!String(area.value).includes('条件组')) throw new Error('文本里没有条件组那一行');
   clickText(body, '收下这段文本');
   clickText(body, '切回表单');
   const after = walk(body).filter((n) => n.className && String(n.className).includes('ilb-flow-group-cond'));
-  if (after.length === 0) throw new Error('点了一下「收下」就把条件组丢了');
+  if (after.length === 0) throw new Error('在文本里收了一次，条件组就丢了');
+});
+
+step('嵌套条件组装不进文本：文本模式只读，硬收也不会覆盖', () => {
+  // 单独搭一棵树：组里再套组，文本语法装不下（两层以上只能表单编辑）
+  const host = makeElement('div');
+  const flow = normalizeFlow({
+    mode: 'and',
+    nodes: [{
+      ...makeNode('if'),
+      when: {
+        what: 'group',
+        op: 'and',
+        negate: false,
+        children: [
+          { what: 'contains', text: 'x', within: 3, negate: false },
+          { what: 'group', op: 'or', negate: false, children: [] },
+        ],
+      },
+    }],
+  });
+  host.appendChild(renderFlowEditor({
+    flow,
+    entries: [],
+    logics: [],
+    ctx: { toast() {}, density: () => 'standard' },
+    onChange() {},
+  }));
+  const before = walk(host).filter((n) => n.className && String(n.className).includes('ilb-flow-group-cond')).length;
+  clickText(host, '文本模式');
+  const area = walk(host).find((n) => n.className && String(n.className).includes('ilb-flow-area'));
+  if (!area) throw new Error('文本模式没有文本框');
+  if (area.readOnly !== true) throw new Error('嵌套条件组装不下，文本模式却是可写的');
+  const warns = walk(host).filter((n) => n.className && String(n.className).includes('ilb-warn'));
+  if (!warns.some((n) => String(n.textContent ?? '').includes('只读'))) throw new Error('没有说明文本模式为什么只读');
+  clickText(host, '收下这段文本');
+  clickText(host, '切回表单');
+  const after = walk(host).filter((n) => n.className && String(n.className).includes('ilb-flow-group-cond')).length;
+  if (after !== before) throw new Error(`点了一下「收下」就把嵌套条件组改坏了（${before} → ${after}）`);
 });
 
 step('文本模式里看不懂的行会当场列出来', () => {
@@ -502,6 +544,31 @@ step('外壳按布局挑一套界面，另一套让位', async () => {
   if (!d.layout) throw new Error('describe() 没报布局');
   if (!d.desktop || !d.mobile) throw new Error('describe() 没报两套壳');
 });
+
+step('手机布局：两套壳都能装，挑手机那套且不炸', async () => {
+  // 真实手机上走的就是这条分支：把视口宽度改成手机尺寸，让 layout 选 mobile。
+  // v0.20.0 前这里会调 desktop.closeForce()（浮窗根本没这个方法），整个壳都挂不上。
+  const { createShell } = await import('../ui/shell.js');
+  const savedW = globalThis.innerWidth;
+  const savedH = globalThis.innerHeight;
+  globalThis.innerWidth = 420;
+  globalThis.innerHeight = 820;
+  try {
+    const shell = createShell({ repository, notify: (t) => notes.push(`shell-m:${t}`) });
+    if (!shell.mount()) throw new Error('手机布局下 mount() 返回 false');
+    await shell.attachPanel(panel);
+    shell.open();
+    shell.close();
+    shell.setStatus('wait', '手机这一轮没内容');
+    if (shell.layout() !== 'mobile') throw new Error(`布局应为 mobile，实际 ${shell.layout()}`);
+    if (shell.density() !== 'compact') throw new Error(`手机密度应为 compact，实际 ${shell.density()}`);
+    const d = shell.describe();
+    if (d.layout !== 'mobile') throw new Error('describe() 的布局不对');
+  } finally {
+    globalThis.innerWidth = savedW;
+    globalThis.innerHeight = savedH;
+  }
+});
 step('标签栏有「使用说明」，内容能画出来', async () => {
   const { readFileSync } = await import('node:fs');
   const { primeGuide, renderGuide } = await import('../ui/guide.js');
@@ -521,6 +588,422 @@ step('标签栏有「使用说明」，内容能画出来', async () => {
   }
 });
 
+
+// ===== v0.16.0：Phase 3 的导航 / 书籍上下文 / 选择模式 / 未保存守卫 =====
+// 这一组用独立的面板实例：主面板的 deps 没有 getLayout/getDensity（默认 desktop/standard），
+// 这里换成可以随时改的假实现，专门验证"按浮窗内部宽度换导航形态"。
+
+function makePanelWith(getLayout, getDensity) {
+  const p = createPanel({
+    repository,
+    nativeWorlds,
+    pipeline,
+    notify: (t, kind) => notes.push(`${kind}:${t}`),
+    getLayout,
+    getDensity,
+  });
+  const host = makeElement('div');
+  // 不用 p.mount()：mount 是 async（要先读说明文案），同步的 step() 等不到它。
+  host.appendChild(p.element);
+  p.render();
+  return { panel: p, host };
+}
+
+step('导航按浮窗内部宽度换形态：宽屏左侧分组、标准顶部、紧凑下拉', () => {
+  let layoutNow = 'desktop';
+  let densityNow = 'wide';
+  const { panel: p, host } = makePanelWith(() => layoutNow, () => densityNow);
+  p.setTab('shelf');
+
+  const wide = walk(host);
+  if (!wide.some((n) => String(n.className ?? '').includes('ilb-nav-side'))) {
+    throw new Error('宽屏没有左侧导航');
+  }
+  const groupLabels = wide
+    .filter((n) => String(n.className ?? '').includes('ilb-nav-group-label'))
+    .map((n) => String(n.textContent ?? ''));
+  for (const must of ['内容管理', '自动化', '运行与维护']) {
+    if (!groupLabels.includes(must)) throw new Error(`左侧导航缺少分组「${must}」`);
+  }
+
+  densityNow = 'standard';
+  p.render();
+  if (!walk(host).some((n) => String(n.className ?? '').includes('ilb-nav-top'))) {
+    throw new Error('标准宽度没有顶部导航');
+  }
+  if (walk(host).some((n) => String(n.className ?? '').includes('ilb-nav-side'))) {
+    throw new Error('标准宽度还在用左侧导航');
+  }
+
+  densityNow = 'compact';
+  p.render();
+  const compact = walk(host);
+  if (!compact.some((n) => String(n.className ?? '').includes('ilb-nav-select'))) {
+    throw new Error('紧凑宽度没有换成下拉');
+  }
+  // 紧凑宽度不该再把 7 个按钮排成两行
+  const compactButtons = compact.filter((n) => String(n.className ?? '') === 'ilb-nav-btn');
+  if (compactButtons.length > 3) throw new Error(`紧凑宽度仍画了 ${compactButtons.length} 个导航按钮`);
+  // 下拉的 option 值必须是真 id：值退化成文字时，<select> 选了也切不动页面
+  const navSelect = compact.find((n) => String(n.className ?? '').includes('ilb-nav-select'));
+  const optionValues = (navSelect.children ?? []).map((n) => String(n.value ?? ''));
+  if (!optionValues.includes('logic') || !optionValues.includes('rules')) {
+    throw new Error(`导航下拉的 option 值不是页面 id：${optionValues.join(' / ')}`);
+  }
+  navSelect.value = 'logic';
+  navSelect.dispatch('change');
+  if (!String(walk(host).map((n) => String(n.textContent ?? '')).join('')).includes('逻辑')) {
+    throw new Error('在下拉里选了「逻辑」但没有切过去');
+  }
+  p.setTab('rules');
+
+  layoutNow = 'mobile';
+  p.render();
+  const mobileNav = walk(host).find((n) => String(n.className ?? '') === 'ilb-m-nav');
+  if (!mobileNav) throw new Error('手机上找不到底部四个入口');
+  const entries = mobileNav.children.map((n) => walk(n).map((x) => String(x.textContent ?? '')).join(''));
+  const must = ['书架', '规则', '逻辑', '更多'];
+  for (const label of must) {
+    if (!entries.some((e) => e.includes(label))) throw new Error(`手机底部缺少「${label}」`);
+  }
+  if (entries.length !== 4) throw new Error(`手机底部入口有 ${entries.length} 个（应为 4 个）`);
+});
+
+step('统一书籍上下文：没选书就不偷偷选第一本', () => {
+  const { panel: p, host } = makePanelWith(() => 'desktop', () => 'standard');
+  p.setTab('rules');
+  const text = walk(host).map((n) => String(n.textContent ?? '')).join(' ');
+  if (!text.includes('还没有选择书籍')) throw new Error('没选书时规则页没有给出提示');
+  if (text.includes('王城')) throw new Error('没选书却把第一本书的规则画出来了');
+
+  p.state.activeBookId = 'book-t';
+  p.render();
+  const picked = walk(host).map((n) => String(n.textContent ?? '')).join(' ');
+  if (!picked.includes('王城')) throw new Error('选了书之后规则没有画出来');
+  if (!picked.includes('2 条规则')) throw new Error('书籍上下文没有显示规则数量');
+});
+
+step('规则页：勾选框与批量栏只在选择模式出现，次要操作收进「⋯」', () => {
+  const { panel: p, host } = makePanelWith(() => 'desktop', () => 'standard');
+  p.setTab('rules');
+  p.state.activeBookId = 'book-t';
+  p.render();
+  let all = walk(host);
+  if (all.some((n) => String(n.className ?? '').includes('ilb-batchbar'))) {
+    throw new Error('没进选择模式就出现了批量栏');
+  }
+  if (!all.some((n) => String(n.className ?? '') === 'ilb-more')) {
+    throw new Error('卡片上没有「⋯」菜单');
+  }
+  // 卡片上直接可见的按钮只留「编辑」；「往前排 / 复制 / 删除」只能在「⋯」菜单里（菜单默认关闭）。
+  const actionRows = all.filter((n) => String(n.className ?? '').trim() === 'ilb-actions');
+  const visibleBtns = actionRows.flatMap((row) => walk(row).filter((n) => String(n.className ?? '').includes('ilb-btn')));
+  for (const label of ['往前排', '往后排', '复制一条', '删除']) {
+    if (visibleBtns.some((b) => b.textContent === label)) throw new Error(`「${label}」还画在卡片上，应该收进「⋯」`);
+  }
+  // v0.22.0：试一句留在卡片外面（常用），编辑也留在外面
+  for (const label of ['编辑', '试一句']) {
+    if (!visibleBtns.some((b) => b.textContent === label)) throw new Error(`卡片上应该能看到「${label}」`);
+  }
+  const menus = all.filter((n) => String(n.className ?? '') === 'ilb-menu');
+  if (menus.length === 0) throw new Error('没有「⋯」菜单');
+  if (!menus.some((m) => walk(m).some((n) => n.textContent === '删除'))) {
+    throw new Error('「⋯」菜单里没有删除');
+  }
+
+  p.state.ruleSelectMode = true;
+  p.render();
+  all = walk(host);
+  if (!all.some((n) => String(n.className ?? '').includes('ilb-batchbar'))) {
+    throw new Error('进了选择模式却没有批量栏');
+  }
+  const checks = all.filter((n) => String(n.className ?? '') === 'ilb-check');
+  if (checks.length === 0) throw new Error('选择模式下卡片上没有勾选框');
+  p.state.ruleSelectMode = false;
+  p.state.selected.clear();
+});
+
+step('未保存守卫：切页先问，选「放弃修改」才真的切', () => {
+  const { panel: p, host } = makePanelWith(() => 'desktop', () => 'standard');
+  p.setTab('rules');
+  p.state.activeBookId = 'book-t';
+  p.render();
+  const book = repository.getBook('book-t');
+  p.openEditor(book, book.entries[0]);
+
+  const editor = walk(body).find((n) => String(n.className ?? '') === 'ilb-editor');
+  if (!editor) throw new Error('编辑器没打开');
+  // 改一下就算"脏"了
+  editor.dispatch('input');
+  p.setTab('shelf');
+  if (p.state.activeTab !== 'rules') throw new Error('有未保存修改时不该直接切走');
+  const box = walk(body).find((n) => String(n.className ?? '') === 'ilb-guard');
+  if (!box) throw new Error('没有弹「有未保存的修改」');
+  const boxText = walk(box).map((n) => String(n.textContent ?? '')).join(' ');
+  for (const must of ['保存并离开', '放弃修改', '继续编辑']) {
+    if (!boxText.includes(must)) throw new Error(`确认层缺少「${must}」`);
+  }
+  // 用按钮本身点：说明文字里也含有「放弃修改」几个字，按文本找会点到段落上。
+  const giveUp = walk(box).find((n) => String(n.className ?? '').includes('ilb-btn') && n.textContent === '放弃修改');
+  if (!giveUp) throw new Error('找不到「放弃修改」按钮');
+  giveUp.dispatch('click');
+  if (p.state.activeTab !== 'shelf') throw new Error('选了「放弃修改」之后没有切页');
+  if (walk(body).some((n) => String(n.className ?? '') === 'ilb-guard')) {
+    throw new Error('选完之后确认层还挂着');
+  }
+});
+
+step('未保存守卫：点编辑器右上角 × 不会绕过确认', () => {
+  const { panel: p } = makePanelWith(() => 'desktop', () => 'standard');
+  p.setTab('rules');
+  p.state.activeBookId = 'book-t';
+  p.render();
+  const book = repository.getBook('book-t');
+  p.openEditor(book, book.entries[1]);
+  const editor = walk(body).find((n) => String(n.className ?? '') === 'ilb-editor');
+  editor.dispatch('input');
+  const x = walk(body).find((n) => String(n.className ?? '') === 'ilb-modal-x');
+  x.dispatch('click');
+  if (!walk(body).some((n) => String(n.className ?? '') === 'ilb-editor')) {
+    throw new Error('点了 × 就把编辑器关了（改动会丢）');
+  }
+  if (!walk(body).some((n) => String(n.className ?? '') === 'ilb-guard')) {
+    throw new Error('点了 × 没有问「有未保存的修改」');
+  }
+  clickText(body, '保存并离开');
+  if (walk(body).some((n) => String(n.className ?? '') === 'ilb-editor')) {
+    throw new Error('选了「保存并离开」之后编辑器还开着');
+  }
+});
+
+step('宽屏流程编辑：左大纲 / 中分支树 / 右属性，点一步就选中', () => {
+  const { panel: p } = makePanelWith(() => 'desktop', () => 'wide');
+  p.setTab('rules');
+  p.state.activeBookId = 'book-t';
+  p.render();
+  const book = repository.getBook('book-t');
+  const entry = {
+    ...JSON.parse(JSON.stringify(book.entries[0])),
+    id: 'e-wide',
+    logic: {
+      mode: 'edit',
+      nodes: [
+        { kind: 'test', id: 'n1', condition: { what: 'keyword', text: '王城' } },
+        { kind: 'compare', id: 'n2', left: { type: 'number', value: 1 }, op: '>=', right: { type: 'number', value: 1 } },
+      ],
+    },
+  };
+  const wideBook = { ...book, entries: [entry] };
+  p.openEditor(wideBook, entry);
+  const editorCols = walk(body).find((n) => String(n.className ?? '').includes('ilb-editor-cols'));
+  if (!editorCols) throw new Error('宽屏编辑规则没有分成两栏');
+  const summary = walk(editorCols).find((n) => String(n.className ?? '') === 'ilb-editor-summary');
+  const summaryText = summary ? walk(summary).map((n) => String(n.textContent ?? '')).join(' ') : '';
+  if (!summaryText.includes('这条规则的样子')) throw new Error('宽屏右侧没有摘要');
+  if (!summaryText.includes('流程：')) throw new Error('摘要里没有流程概况');
+  clickText(body, '编辑流程');
+
+  const ws = walk(body).find((n) => String(n.className ?? '').includes('ilb-flow-workspace'));
+  if (!ws) throw new Error('宽屏没有出现三栏布局');
+  const cols = ws.children.map((n) => String(n.className ?? ''));
+  for (const must of ['ilb-flow-outline', 'ilb-flow-canvas', 'ilb-flow-props']) {
+    if (!cols.some((c) => c.includes(must))) throw new Error(`三栏里缺少 ${must}`);
+  }
+  const outline = walk(ws).filter((n) => String(n.className ?? '').includes('ilb-flow-outline-item'));
+  if (outline.length < 2) throw new Error(`大纲只列出 ${outline.length} 步`);
+  const propsText = () => {
+    const props = walk(ws).filter((n) => String(n.className ?? '').includes('ilb-flow-props'));
+    return props.flatMap((n) => walk(n)).map((n) => String(n.textContent ?? '')).join(' ');
+  };
+  if (!propsText().includes('先在左边')) throw new Error('没选中时右栏没有说明');
+
+  outline[1].dispatch('click');
+  const ws2 = walk(body).find((n) => String(n.className ?? '').includes('ilb-flow-workspace'));
+  if (!walk(ws2).some((n) => String(n.className ?? '').includes('ilb-flow-node-selected'))) {
+    throw new Error('点了大纲里的步骤，中间没有选中标记');
+  }
+  const props = walk(ws2).find((n) => String(n.className ?? '') === 'ilb-flow-props');
+  const pickedText = props ? walk(props).map((n) => String(n.textContent ?? '')).join(' ') : '';
+  if (!props || !pickedText.includes('第 2 步')) {
+    throw new Error(`右栏没有显示选中步骤的属性（${pickedText.slice(0, 40)}）`);
+  }
+  // 中间的卡片在宽屏只画结构，参数表单只在右栏出现一次（避免两处同时改同一步）
+  const bodies = walk(ws2).filter((n) => String(n.className ?? '') === 'ilb-flow-body');
+  if (bodies.length !== 1) throw new Error(`宽屏里参数表单出现了 ${bodies.length} 次（应只在右栏）`);
+  clickText(body, '取消');
+  if (walk(body).some((n) => String(n.className ?? '') === 'ilb-editor')) {
+    throw new Error('取消之后编辑器还开着');
+  }
+});
+
+step('流程表单：随机选有权重、调用有参数与返回值', () => {
+  const { panel: p } = makePanelWith(() => 'desktop', () => 'standard');
+  p.setTab('rules');
+  p.state.activeBookId = 'book-t';
+  p.render();
+  const book = repository.getBook('book-t');
+  const entry = {
+    ...JSON.parse(JSON.stringify(book.entries[0])),
+    id: 'e-p4',
+    logic: {
+      mode: 'edit',
+      nodes: [
+        { kind: 'choose', id: 'c1', candidates: ['甲', '乙'], weights: [3, 1], target: '签' },
+        {
+          kind: 'call',
+          id: 'k1',
+          logicId: 'b1::L::l1',
+          args: [{ name: 'hp', value: { type: 'number', value: 5 } }],
+          returns: [{ name: 'gold', target: '钱' }],
+          persist: true,
+        },
+      ],
+    },
+  };
+  p.openEditor({ ...book, entries: [entry] }, entry);
+  clickText(body, '编辑流程');
+
+  const weightRow = walk(body).find((n) => String(n.className ?? '').includes('ilb-flow-weights'));
+  if (!weightRow) throw new Error('随机选没有权重输入');
+  const weightInputs = walk(weightRow).filter((n) => String(n.tagName ?? '').toLowerCase() === 'input');
+  if (weightInputs.length !== 2) throw new Error(`权重输入有 ${weightInputs.length} 个（应与 2 条候选一一对应）`);
+  if (weightInputs[0].value !== '3' && weightInputs[0].value !== 3) throw new Error(`第一条权重显示成了 ${weightInputs[0].value}`);
+
+  const argRows = walk(body).filter((n) => String(n.className ?? '').includes('ilb-call-arg'));
+  if (argRows.length !== 1) throw new Error(`参数行有 ${argRows.length} 行（应为 1）`);
+  const returnRows = walk(body).filter((n) => String(n.className ?? '').includes('ilb-call-return'));
+  if (returnRows.length !== 1) throw new Error(`返回值行有 ${returnRows.length} 行（应为 1）`);
+  if (!walk(body).some((n) => String(n.textContent ?? '').includes('返回值也写进这张聊天'))) {
+    throw new Error('有返回值时没有「写进聊天」的选项');
+  }
+  if (!walk(body).some((n) => String(n.textContent ?? '').includes('参数算不出来'))) {
+    throw new Error('没有说明参数算不出来会怎样');
+  }
+  clickText(body, '取消');
+});
+
+step('流程表单：列表变量、按列表循环、分支选择都能编辑', () => {
+  const { panel: p } = makePanelWith(() => 'desktop', () => 'standard');
+  p.setTab('rules');
+  p.state.activeBookId = 'book-t';
+  p.render();
+  const book = repository.getBook('book-t');
+  const entry = {
+    ...JSON.parse(JSON.stringify(book.entries[0])),
+    id: 'e-p4b',
+    logic: {
+      mode: 'edit',
+      nodes: [
+        { kind: 'list', id: 'l1', name: '名单', op: 'set', value: { type: 'text', value: 'a,b' }, separator: ',' },
+        { kind: 'repeat', id: 'r1', mode: 'list', listName: '名单', itemName: '项', body: [] },
+        {
+          kind: 'switch',
+          id: 'sw1',
+          value: { type: 'var', name: '结果' },
+          cases: [
+            { id: 'c1', match: { type: 'text', value: 'a' }, body: [] },
+            { id: 'c2', match: { type: 'text', value: 'b' }, body: [] },
+          ],
+          else: [],
+        },
+      ],
+    },
+  };
+  p.openEditor({ ...book, entries: [entry] }, entry);
+  clickText(body, '编辑流程');
+
+  const caseRows = () => walk(body).filter((n) => String(n.className ?? '').includes('ilb-flow-case'));
+  if (caseRows().length !== 2) throw new Error(`分支行有 ${caseRows().length} 条（应为 2）`);
+  if (!walk(body).some((n) => String(n.textContent ?? '').includes('按列表，每项做一遍'))) {
+    throw new Error('重复那一步没有「按列表」的选项');
+  }
+  if (!walk(body).some((n) => String(n.textContent ?? '').includes('最多 8 条分支'))) {
+    throw new Error('分支选择没有说明条数上限');
+  }
+  clickText(body, '＋ 加一条分支');
+  if (caseRows().length !== 3) throw new Error(`点「加一条分支」之后是 ${caseRows().length} 条（应为 3）`);
+  const sep = walk(body).find((n) => String(n.tagName ?? '').toLowerCase() === 'input' && String(n.value ?? '') === ',');
+  if (!sep) throw new Error('列表变量没有显示分隔符');
+  clickText(body, '取消');
+});
+
+step('手机：顶部不再显示视口尺寸，二级页关闭会先问它自己', () => {
+  const { createMobileUi } = mobileModule;
+  const ui = createMobileUi({ repository, notify: () => {} });
+  ui.mount();
+  ui.open();
+  // v0.22.0：顶部只留标题 + 关闭，副标题（含视口尺寸）整行删掉
+  const sub = walk(ui.dialog).find((n) => String(n.className ?? '') === 'ilb-m-sub');
+  if (sub) throw new Error(`顶部副标题应该删掉，却还在：${sub.textContent}`);
+  const head = walk(ui.dialog).find((n) => String(n.className ?? '') === 'ilb-m-head');
+  if (!head) throw new Error('找不到手机头部');
+  // 底栏必须在滚动区外面：nav 的祖先里不能有 .ilb-m-stage
+  const nav = walk(ui.dialog).find((n) => String(n.className ?? '').includes('ilb-m-nav'));
+  if (!nav) throw new Error('手机底栏没画出来');
+  let anc = nav.parentNode;
+  while (anc) {
+    if (String(anc.className ?? '').includes('ilb-m-stage')) throw new Error('底栏还画在滚动区里，会跟着内容上下浮');
+    anc = anc.parentNode;
+  }
+  let blocked = 0;
+  ui.openOverlay({
+    title: '有未保存修改的层',
+    nodes: [makeElement('p')],
+    onBeforeClose: () => {
+      blocked += 1;
+      return false;
+    },
+  });
+  ui.closeOverlay();
+  if (blocked !== 1) throw new Error('关二级页时没有问 onBeforeClose');
+  if (!ui.isOverlayOpen()) throw new Error('onBeforeClose 说别关，二级页却被关掉了');
+  ui.clearOverlays();
+  ui.close();
+});
+
+step('手机：顶部操作区默认收起、能展开排序；底栏挂在滚动区外；手动排序有权重输入框', () => {
+  const navHost = makeElement('div');
+  const p = createPanel({
+    repository,
+    nativeWorlds,
+    pipeline,
+    notify: (msg, kind) => notes.push(`${kind}:${msg}`),
+    getLayout: () => 'mobile',
+    getDensity: () => 'compact',
+    getNavRoot: () => navHost,
+  });
+  const host = makeElement('div');
+  host.appendChild(p.element);
+  p.state.activeTab = 'rules';
+  p.state.activeBookId = 'book-t';
+  p.render();
+
+  const cls = (n) => String(n.className ?? '');
+  let all = walk(host);
+  const top = all.find((n) => cls(n) === 'ilb-m-top');
+  if (!top) throw new Error('手机上没有顶部常驻操作区');
+  const rows = all.filter((n) => cls(n) === 'ilb-m-top-row');
+  if (rows.length < 3) throw new Error(`顶部操作区只有 ${rows.length} 组`);
+  if (rows.some((r) => r.hidden !== true)) throw new Error('顶部操作区不是默认收起');
+
+  const chip = all.find((n) => cls(n) === 'ilb-m-chip' && walk(n).some((x) => x.textContent === '排序'));
+  if (!chip) throw new Error('没有「排序」展开按钮');
+  chip.dispatch('click');
+  all = walk(host);
+  const shown = all.filter((n) => cls(n) === 'ilb-m-top-row' && n.hidden !== true);
+  if (shown.length !== 1) throw new Error(`点开排序后应该有 1 组展开，实际 ${shown.length}`);
+  if (!walk(shown[0]).some((n) => cls(n).includes('ilb-sort-key'))) throw new Error('排序组里没有排序键下拉');
+
+  // 手动排序：卡片上要出现权重输入框
+  p.state.listSort.rules = { key: 'manual', dir: 'desc' };
+  p.render();
+  const weights = walk(host).filter((n) => cls(n).includes('ilb-sort-weight'));
+  if (weights.length === 0) throw new Error('手动排序时卡片上没有排序权重输入框；inputs='+JSON.stringify(walk(host).filter(n=>String(n.tagName||'').toLowerCase()==='input').map(n=>String(n.className))));
+
+  // 底栏必须挂在 navHost（滚动区外），不在面板树里
+  if (!walk(navHost).some((n) => cls(n) === 'ilb-m-nav')) throw new Error('底栏没有挂到 navHost');
+  if (walk(host).some((n) => cls(n) === 'ilb-m-nav')) throw new Error('底栏还画在面板里');
+});
 
 console.log(`\n界面冒烟：失败 ${failures} 个；toast 记录 ${notes.length} 条`);
 if (notes.length) console.log(notes.slice(0, 8).join('\n'));

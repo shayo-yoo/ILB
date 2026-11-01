@@ -1,5 +1,10 @@
-// ui/view-rules.js —— 规则页（ILB-6.2）
+// ui/view-rules.js —— 规则页（ILB-6.2 / Phase 3 §5.4 §6.3）
 // 一条规则一张卡：卡可以上下变长，不许左右变宽。手机上不需要左右滑。
+//
+// v0.16.0 的界面取舍：
+//  - 默认卡上只留"名称 / 启用 / 触发摘要 / 少量标签"，复制、排序、删除、试一句收进「⋯」；
+//  - 勾选框只在「选择模式」出现，批量栏也跟着只在选择模式出现（不再常驻一条按钮带）；
+//  - 分组/模式这类不常改的筛选收进「筛选」抽屉，搜索始终可见。
 
 import {
   POSITIONS, ROLES,
@@ -8,7 +13,7 @@ import { validateBook, defaultEntry, normalizeEntry } from '../core/model.js';
 import { filterEntries, listGroups, describeFilter, RULE_MODES, RULE_MODE_LABEL } from '../core/search.js';
 import {
   el, option, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
-  searchInput, selectBox, actionRow, metaLine, card,
+  searchInput, selectBox, actionRow, metaLine, card, field,
 } from './widgets.js';
 
 export const POSITION_LABEL = { before_char: '角色设定之前', after_char: '角色设定之后', in_chat: '聊天记录里' };
@@ -31,31 +36,80 @@ export function describeTrigger(entry) {
   return parts.length ? parts.join('；') : '没有设置触发词（不会出现）';
 }
 
+/** 点页面别处也收菜单：整个模块只登记一次，避免每次重画都加一个监听。 */
+let outsideBound = false;
+function bindOutsideClose() {
+  if (outsideBound) return;
+  const doc = globalThis.document;
+  if (!doc?.addEventListener) return;
+  outsideBound = true;
+  doc.addEventListener('click', (event) => {
+    if (event?.target?.closest?.('.ilb-more')) return;
+    doc.querySelectorAll('.ilb-menu').forEach((node) => {
+      node.hidden = true;
+    });
+  });
+}
+
 export function renderRules(ctx) {
   const { repository, state } = ctx;
+  bindOutsideClose();
   const books = repository.listBooks();
   if (books.length === 0) return emptyText('先去书架导入或新建一本书。');
 
-  const book = books.find((b) => b.book_id === state.activeBookId) ?? books[0];
-  if (state.activeBookId !== book.book_id) {
-    state.activeBookId = book.book_id;
-    state.selected = new Set();
+  // 统一书籍上下文（§6.2）：没有当前书籍时**不**偷偷选第一本。
+  // 选错书再改规则，比多点一下选书危险得多。
+  const book = books.find((b) => b.book_id === state.activeBookId) ?? null;
+  if (!book) {
+    return el('div', { class: 'ilb-card' }, [
+      el('p', { class: 'ilb-empty-title', text: '还没有选择书籍' }),
+      hint('在上面的「当前书籍」里选一本。每本书的规则是分开的，选错了会改到别的书上。'),
+      actionRow([button('去书架', () => ctx.setTab('shelf'), { ghost: true })]),
+    ]);
   }
 
   const listHost = el('div', { class: 'ilb-rule-list' });
-  const batchHost = el('div', { class: 'ilb-batchbar' });
-  const counterLine = counter('');
-  let selectAllBox = null;
+  // 选择模式随时可能被「取消选择」关掉；一律现读 state，别在闭包里存一份旧的。
+  const selectMode = () => state.ruleSelectMode === true;
 
-  const filtered = () => filterEntries(book.entries, {
+  const filtered = () => filterEntries(ctx.sortedEntries(book), {
     q: state.ruleQuery,
     group: state.ruleGroup,
     mode: state.ruleMode,
   });
 
   function save() {
-    book.entries = book.entries.map((e, i) => ({ ...e, ui: { ...(e.ui ?? {}), order: i } }));
+    // 不重排 ui.order：它是「手动排序」的权重。只有还没填过的条目按当前位置补一个。
+    book.entries = book.entries.map((e, i) => {
+      const ui = e.ui ?? {};
+      const has = Number.isFinite(Number(ui.order)) && Number(ui.order) !== 0;
+      return { ...e, ui: { ...ui, order: has ? Number(ui.order) : i } };
+    });
     repository.saveBook(book);
+  }
+
+  function touch(entry) {
+    entry.ui = { ...(entry.ui ?? {}), updatedAt: Date.now() };
+  }
+
+  /** 「⋯」里的「设置分组」：列表页直接改，不用翻到编辑器高级设置里。 */
+  function setGroup(entry) {
+    const groups = listGroups(book.entries);
+    const input = el('input', { class: 'ilb-input', type: 'text', value: String(entry.group ?? ''), 'aria-label': '分组名' });
+    const apply = () => {
+      const value = String(input.value ?? '').trim();
+      entry.group = value || null;
+      touch(entry);
+      save();
+      ctx.closeOverlay();
+      draw();
+      ctx.toast(value ? `已放进「${value}」` : '已取消分组');
+    };
+    ctx.openOverlay({
+      title: '设置分组',
+      nodes: [field('分组', input, `留空 = 不分组。已有的分组：${groups.length ? groups.join('、') : '（还没有）'}`)],
+      footer: [button('保存', apply, { primary: true }), button('取消', () => ctx.closeOverlay(), { ghost: true })],
+    });
   }
 
   function indexOf(entry) {
@@ -77,6 +131,7 @@ export function renderRules(ctx) {
   function duplicate(entry) {
     const raw = { ...entry, id: undefined, localId: undefined, title: `${entry.title}（副本）` };
     const copy = normalizeEntry(raw, book.book_id);
+    copy.ui = { ...(copy.ui ?? {}), createdAt: Date.now(), updatedAt: Date.now(), order: 0 };
     const at = indexOf(entry);
     book.entries = [...book.entries.slice(0, at + 1), copy, ...book.entries.slice(at + 1)];
     save();
@@ -97,7 +152,10 @@ export function renderRules(ctx) {
       ctx.toast('先勾选几条规则', 'warn');
       return;
     }
-    for (const entry of targets) mutate(entry);
+    for (const entry of targets) {
+      mutate(entry);
+      touch(entry);
+    }
     save();
     ctx.toast(`已对 ${targets.length} 条执行：${label}`);
     draw();
@@ -114,6 +172,46 @@ export function renderRules(ctx) {
     draw();
   }
 
+  /** 打开一个「⋯」菜单前先把别的收起来：不然两张卡的菜单会同时摊在那儿互相压。 */
+  function hideOtherMenus(keep) {
+    const scope = keep?.ownerDocument ?? globalThis.document;
+    if (!scope?.querySelectorAll) return;
+    scope.querySelectorAll('.ilb-menu').forEach((node) => {
+      if (node !== keep) node.hidden = true;
+    });
+  }
+
+  /** 卡片右上角的「⋯」：低频操作都收在这里，危险操作（删除）排最后。 */
+  function moreMenu(entry) {
+    const menu = el('div', { class: 'ilb-menu', hidden: true }, [
+      button('设置分组', () => setGroup(entry), { ghost: true }),
+      button('往前排', () => move(entry, -1), { ghost: true }),
+      button('往后排', () => move(entry, 1), { ghost: true }),
+      button('复制一条', () => duplicate(entry), { ghost: true }),
+      button('删除', () => remove(entry), { ghost: true }),
+    ]);
+    const toggle = el('button', {
+      type: 'button',
+      class: 'ilb-icon-btn',
+      text: '⋯',
+      title: '更多操作',
+      'aria-label': '更多操作',
+      'aria-expanded': 'false',
+      onclick: (event) => {
+        event.stopPropagation();
+        const opening = menu.hidden;
+        if (opening) hideOtherMenus(menu);
+        menu.hidden = !menu.hidden;
+        toggle.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+      },
+    });
+    menu.addEventListener('click', () => {
+      menu.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+    });
+    return el('div', { class: 'ilb-more' }, [toggle, menu]);
+  }
+
   function renderCard(entry) {
     const checked = state.selected.has(entry.id);
     const badges = [];
@@ -121,79 +219,78 @@ export function renderRules(ctx) {
     if (entry.wait) badges.push(badge('等候模式', 'warn'));
     if (entry.useProbability) badges.push(badge(`${entry.probability}%`, 'warn'));
     if (entry.chain?.participate) badges.push(badge('可连锁'));
-    if (entry.enabled === false) badges.push(badge('已停用', 'warn'));
+    if (entry.group) badges.push(badge(`同组 ${entry.group}`));
     const flowNodes = Array.isArray(entry.logic?.nodes) ? entry.logic.nodes.length : 0;
     if (flowNodes > 0) badges.push(badge(entry.logic?.mode === 'only' ? '只看流程' : '有流程', 'ok'));
 
-    const weightInput = el('input', {
-      type: 'number',
-      class: 'ilb-num',
-      value: String(entry.weight ?? 100),
-      onchange: (event) => {
-        entry.weight = Number(event.target.value) || 0;
-        save();
-      },
-    });
-
-    return card([
-      el('div', { class: 'ilb-rule-head' }, [
-        checkbox(checked, (on) => {
+    const head = el('div', { class: 'ilb-rule-head' }, [
+      selectMode()
+        ? checkbox(checked, (on) => {
           if (on) state.selected.add(entry.id);
           else state.selected.delete(entry.id);
           draw();
-        }, '选择这条'),
-        el('div', { class: 'ilb-rule-titles' }, [
-          el('div', { class: 'ilb-title', text: entry.title || '未命名规则' }),
-          el('div', { class: 'ilb-sub', text: describeTrigger(entry) }),
-        ]),
-        el('div', { class: 'ilb-badges' }, badges),
+        }, '选择这条')
+        : null,
+      el('div', { class: 'ilb-rule-titles' }, [
+        el('div', { class: 'ilb-title', text: entry.title || '未命名规则' }),
+        el('div', { class: 'ilb-sub', text: describeTrigger(entry) }),
       ]),
+      el('div', { class: 'ilb-rule-side' }, [
+        el('div', { class: 'ilb-badges' }, badges),
+        moreMenu(entry),
+      ]),
+    ]);
+
+    const manual = ctx.sortOf('rules')?.key === 'manual';
+    return card([
+      head,
       metaLine([
-        el('label', { class: 'ilb-inline' }, [el('span', { class: 'ilb-sub', text: '权重' }), weightInput]),
-        el('span', { class: 'ilb-sub', text: entry.group ? `同组 ${entry.group}` : '不分组' }),
-        el('span', { class: 'ilb-sub' , text: `${POSITION_LABEL[entry.injection?.position] ?? '?'} · 深度 ${entry.injection?.depth ?? 4} · ${ROLE_LABEL[entry.injection?.role] ?? '?'}` }),
-        el('label', { class: 'ilb-inline' }, [
+        manual ? ctx.sortWeightInput(entry, () => { touch(entry); save(); draw(); }) : null,
+        el('label', { class: 'ilb-inline ilb-switch' }, [
           checkbox(entry.enabled !== false, (on) => {
             entry.enabled = on;
+            touch(entry);
             save();
             draw();
           }, '启用这条'),
-          el('span', { class: 'ilb-sub', text: '启用' }),
+          el('span', { class: 'ilb-sub', text: entry.enabled === false ? '已停用' : '已启用' }),
         ]),
+        el('span', { class: 'ilb-sub', text: `权重 ${entry.weight ?? 100}` }),
+        el('span', { class: 'ilb-sub ilb-meta-pos', text: `${POSITION_LABEL[entry.injection?.position] ?? '?'} · 深度 ${entry.injection?.depth ?? 4}` }),
       ]),
       actionRow([
         button('编辑', () => ctx.openEditor(book, entry), { ghost: true }),
-        button('↑', () => move(entry, -1), { ghost: true, title: '往前排' }),
-        button('↓', () => move(entry, 1), { ghost: true, title: '往后排' }),
-        button('复制', () => duplicate(entry), { ghost: true }),
-        button('试一句', () => ctx.openPreview(book, entry), { ghost: true, title: '看看哪句话会让它出现' }),
-        button('删除', () => remove(entry), { ghost: true }),
+        button('试一句', () => ctx.openPreview(book, entry), { ghost: true }),
       ]),
-    ], entry.enabled === false ? 'ilb-card-off' : '');
+    ], `ilb-rule-card ${entry.enabled === false ? 'ilb-card-off' : ''} ${selectMode() && checked ? 'ilb-card-selected' : ''}`.trim());
   }
 
-  function drawBatch(rows) {
-    batchHost.innerHTML = '';
+  function drawBatchBar(rows) {
+    if (!selectMode()) return null;
     const count = state.selected.size;
-    batchHost.appendChild(el('span', {
-      class: 'ilb-counter',
-      text: count ? `已选 ${count} 条` : '批量操作',
-    }));
-    batchHost.appendChild(button('全选当前结果', () => {
-      for (const entry of rows) state.selected.add(entry.id);
-      draw();
-    }, { ghost: true }));
-    batchHost.appendChild(button('清空选择', () => {
-      state.selected.clear();
-      draw();
-    }, { ghost: true }));
-    if (count === 0) return;
-    batchHost.appendChild(button('启用', () => applyBatch((e) => { e.enabled = true; }, '启用'), { ghost: true }));
-    batchHost.appendChild(button('停用', () => applyBatch((e) => { e.enabled = false; }, '停用'), { ghost: true }));
-    batchHost.appendChild(button('设为常驻', () => applyBatch((e) => { e.always = true; }, '设为常驻'), { ghost: true }));
-    batchHost.appendChild(button('取消常驻', () => applyBatch((e) => { e.always = false; }, '取消常驻'), { ghost: true }));
-    batchHost.appendChild(button('删除', batchDelete, { ghost: true }));
+    return el('div', { class: 'ilb-batchbar' }, [
+      el('span', { class: 'ilb-counter', text: count ? `已选 ${count} 条` : '选择模式' }),
+      button('全选当前结果', () => {
+        for (const entry of rows) state.selected.add(entry.id);
+        draw();
+      }, { ghost: true }),
+      button('取消选择', () => {
+        state.ruleSelectMode = false;
+        state.selected.clear();
+        ctx.render();
+      }, { ghost: true }),
+      button('启用', () => applyBatch((e) => { e.enabled = true; }, '启用'), { ghost: true }),
+      button('停用', () => applyBatch((e) => { e.enabled = false; }, '停用'), { ghost: true }),
+      button('设为常驻', () => applyBatch((e) => { e.always = true; }, '设为常驻'), { ghost: true }),
+      button('取消常驻', () => applyBatch((e) => { e.always = false; }, '取消常驻'), { ghost: true }),
+      button('删除', batchDelete, { ghost: true }),
+    ]);
   }
+
+  // 页面骨架只建一次；draw() 之后只重画列表区和批量栏，输入焦点/滚动不会被整页重建打断。
+  const batchHost = el('div', { class: 'ilb-batch-host' });
+  const counterLine = counter('');
+  const filterExtra = el('div', { class: 'ilb-filter-extra', hidden: state.rulesFilterOpen !== true });
 
   function draw() {
     const rows = filtered();
@@ -216,61 +313,64 @@ export function renderRules(ctx) {
       book.entries.length,
     );
 
-    if (selectAllBox) {
-      const all = rows.length > 0 && rows.every((e) => state.selected.has(e.id));
-      selectAllBox.checked = all;
-      selectAllBox.indeterminate = !all && rows.some((e) => state.selected.has(e.id));
-    }
-    drawBatch(rows);
+    batchHost.innerHTML = '';
+    const bar = drawBatchBar(rows);
+    if (bar) batchHost.appendChild(bar);
   }
 
   const groups = listGroups(book.entries);
   const problems = validateBook(book);
 
-  selectAllBox = checkbox(false, (on) => {
-    const rows = filtered();
-    if (on) for (const entry of rows) state.selected.add(entry.id);
-    else state.selected.clear();
-    draw();
-  }, '全选当前结果');
-
+  const mobile = ctx.layout?.() === 'mobile';
   const view = el('div', {}, [
-    toolbar([
-      selectBox(book.book_id, books.map((b) => ({ value: b.book_id, label: b.name })), (value) => {
-        state.activeBookId = value;
-        state.selected = new Set();
-        ctx.render();
-      }),
+    mobile ? null : toolbar([
       button('新增规则', () => ctx.openEditor(book, null)),
+      button(selectMode() ? '退出选择' : '选择', () => {
+        state.ruleSelectMode = !selectMode();
+        if (!state.ruleSelectMode) state.selected.clear();
+        ctx.render();
+      }, { ghost: true, title: '进入选择模式后可以批量启用/停用/删除' }),
       problems.length
         ? badge(`${problems.length} 处需要检查`, 'warn')
         : badge('结构正常', 'ok'),
       button('?', () => ctx.showHelp('rules'), { ghost: true, title: '这一页怎么用' }),
     ]),
-    filterBar([
+    mobile ? null : filterBar([
       searchInput(state.ruleQuery, '搜标题、正文、触发词…', (value) => {
         state.ruleQuery = value;
         draw();
       }),
-      selectBox(state.ruleGroup, [
-        { value: '', label: '全部分组' },
-        ...groups.map((g) => ({ value: g, label: `同组 ${g}` })),
-      ], (value) => {
-        state.ruleGroup = value;
-        draw();
-      }),
-      selectBox(state.ruleMode, RULE_MODES.map((m) => ({ value: m, label: RULE_MODE_LABEL[m] })), (value) => {
-        state.ruleMode = value;
-        draw();
-      }),
-      el('label', { class: 'ilb-inline' }, [selectAllBox, el('span', { class: 'ilb-sub', text: '全选' })]),
+      button(state.rulesFilterOpen ? '筛选 ▴' : '筛选 ▾', () => {
+        state.rulesFilterOpen = !state.rulesFilterOpen;
+        ctx.render();
+      }, { ghost: true }),
       counterLine,
     ]),
+    mobile ? null : el('div', { class: 'ilb-filter-extra-wrap' }, [filterExtra]),
+    mobile ? null : ctx.sortBar?.('rules'),
     batchHost,
-    hint('「全选当前结果」只选搜索/筛选之后看得到的那些；批量操作也一样，不会波及被筛掉的规则。'),
+    mobile ? counterLine : hint('搜索/筛选只影响看得到的列表；「全选当前结果」也只选这些，不会波及被筛掉的规则。'),
     listHost,
-    hint('独立逻辑已经挪到「逻辑」页——在那边新建、编辑、导入导出。'),
+    mobile ? null : hint('独立逻辑在「逻辑」页——在那边新建、编辑、导入导出。'),
   ]);
+
+  filterExtra.appendChild(selectBox(state.ruleGroup, [
+    { value: '', label: '全部分组' },
+    ...groups.map((g) => ({ value: g, label: `同组 ${g}` })),
+  ], (value) => {
+    state.ruleGroup = value;
+    draw();
+  }));
+  filterExtra.appendChild(selectBox(state.ruleMode, RULE_MODES.map((m) => ({ value: m, label: RULE_MODE_LABEL[m] })), (value) => {
+    state.ruleMode = value;
+    draw();
+  }));
+  filterExtra.appendChild(button('清空筛选', () => {
+    state.ruleGroup = '';
+    state.ruleMode = 'all';
+    state.ruleQuery = '';
+    ctx.render();
+  }, { ghost: true }));
 
   draw();
   return view;

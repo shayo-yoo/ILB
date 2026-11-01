@@ -152,7 +152,7 @@ export function renderSettings(ctx) {
           { value: 'skip', label: '跳过 ILB 这边的副本' },
         ],
         (value) => save({ doubleInjectPolicy: value }),
-      ), 'ILB 导入的副本和原生世界书可能同时进上下文（同源双重注入）。默认只提醒。'),
+      ), 'ILB 导入的副本和原生世界书可能同时进上下文（同源双重注入）。默认只提醒；选「跳过 ILB 这边的副本」后，跟着原生书启用的那本书这一轮不注入，原生书仍由酒馆注入——诊断页会写清楚跳过了哪本。'),
       el('p', { class: 'ilb-sub', text: `存档格式：v${repository.getDataVersion ? repository.getDataVersion() : '?'}${migrationLine()}` }),
       hint('迁移会在第一次打开时自动做一次，做之前会先存一份「迁移前」快照，失败不会覆盖原数据。'),
     ]),

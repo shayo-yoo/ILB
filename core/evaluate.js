@@ -291,6 +291,8 @@ export function evaluate(request = {}, options = {}) {
   // —— 独立逻辑（ILB-4.14）：书里的逻辑可以有自己的触发词，跑完写变量 / 激活条目 / 出正文 ——
   const logics = Array.isArray(options.logics) ? options.logics.filter((l) => l && l.id && l.enabled !== false) : [];
   const logicMap = new Map(logics.map((l) => [l.id, l]));
+  // 本轮跑通的逻辑（只用于界面统计「触发次数」，不参与判定）
+  const logicPassedIds = new Set();
   const ranLogics = new Set();
   let logicBudget = Math.max(0, Math.trunc(num(settings.logicMaxPerTurn, 20)));
   const logicRecords = [];
@@ -317,7 +319,7 @@ export function evaluate(request = {}, options = {}) {
    * 跑一条独立逻辑。mode：auto = 自己检测触发词；call = 被流程「调用逻辑」叫来；
    * forced = 被「激活条目」点名。只有 auto 看触发词。
    */
-  function runLogicEntity(logic, depth = 0, mode = 'auto') {
+  function runLogicEntity(logic, depth = 0, mode = 'auto', args = null) {
     if (!logic || logic.enabled === false) return null;
     if (mode === 'auto' && settings.logicEnabled === false) return null;
     if (ranLogics.has(logic.id)) {
@@ -366,16 +368,33 @@ export function evaluate(request = {}, options = {}) {
       return mode === 'auto' ? null : { passed: false, reason: when.reason, writes: {}, extra: [], activations: [] };
     }
 
-    const flow = evaluateFlow(logic.flow, {
-      text,
-      messages,
-      userInput,
-      messageCount: msgCount,
-      seed,
-      vars: effVars,
-      activated,
-      callLogic: (nextId) => runLogicById(nextId, depth + 1),
-    });
+    // 参数绑定（v0.18）：先存旧值，跑完原样还回去——参数是"临时名字"，不写进聊天状态
+    const savedArgs = new Map();
+    if (args && typeof args === 'object') {
+      for (const [key, value] of Object.entries(args)) {
+        if (!key) continue;
+        savedArgs.set(key, Object.prototype.hasOwnProperty.call(effVars, key) ? effVars[key] : undefined);
+        effVars[key] = value;
+      }
+    }
+    let flow;
+    try {
+      flow = evaluateFlow(logic.flow, {
+        text,
+        messages,
+        userInput,
+        messageCount: msgCount,
+        seed,
+        vars: effVars,
+        activated,
+        callLogic: (nextId, nextArgs) => runLogicById(nextId, depth + 1, nextArgs),
+      });
+    } finally {
+      for (const [key, value] of savedArgs.entries()) {
+        if (value === undefined) delete effVars[key];
+        else effVars[key] = value;
+      }
+    }
     if (!flow.passed) {
       diagnostics.push({ entryId: logic.id, passed: false, stage: 'logic', reason: flow.reason });
       return mode === 'auto' ? null : { passed: false, reason: flow.reason, writes: {}, extra: [], activations: [] };
@@ -388,6 +407,7 @@ export function evaluate(request = {}, options = {}) {
         logicRecords.push(rec);
       }
     }
+    logicPassedIds.add(logic.id);
     diagnostics.push({
       entryId: logic.id,
       passed: true,
@@ -400,14 +420,16 @@ export function evaluate(request = {}, options = {}) {
       writes: flow.writes ?? {},
       extra: mode === 'call' ? [String(logic.output?.text ?? ''), ...flow.extra].filter(Boolean) : flow.extra,
       activations: flow.activations ?? [],
+      // 返回值（v0.18）：被调用逻辑跑完时的变量表，只有流程「调用逻辑」会拿它按名字取
+      locals: flow.vars ?? {},
     };
   }
 
-  function runLogicById(id, depth = 0) {
+  function runLogicById(id, depth = 0, args = null) {
     const logic = logicMap.get(String(id));
     if (!logic) return null;
     try {
-      return runLogicEntity(logic, depth, 'call');
+      return runLogicEntity(logic, depth, 'call', args);
     } catch (err) {
       return { passed: false, reason: `逻辑执行出错：${err?.message ?? err}`, writes: {}, extra: [], activations: [] };
     }
@@ -538,7 +560,7 @@ export function evaluate(request = {}, options = {}) {
       seed,
       vars: effVars,
       activated,
-      callLogic: (id) => runLogicById(id),
+      callLogic: (id, nextArgs) => runLogicById(id, 0, nextArgs),
     });
     if (!flow.passed) {
       diagnostics.push({ entryId: rec.entry.id, passed: false, stage: 'logic', reason: flow.reason });
@@ -616,7 +638,7 @@ export function evaluate(request = {}, options = {}) {
       seed,
       vars: effVars,
       activated,
-      callLogic: (id2) => runLogicById(id2),
+      callLogic: (id2, nextArgs) => runLogicById(id2, 0, nextArgs),
     });
     if (!flow.passed) {
       // 点名本身已让它出现（和"正文标记"一样，出现的原因不是判定），但它的写入与后续点名不生效。
@@ -671,7 +693,7 @@ export function evaluate(request = {}, options = {}) {
           seed,
           vars: effVars,
           activated,
-          callLogic: (id) => runLogicById(id),
+          callLogic: (id, nextArgs) => runLogicById(id, 0, nextArgs),
         });
         if (!flow.passed) {
           diagnostics.push({ entryId: entry.id, passed: false, stage: 'logic', reason: `连锁第 ${depth} 层：${flow.reason}` });
@@ -801,6 +823,8 @@ export function evaluate(request = {}, options = {}) {
       hostContext: resolved.hostContext ?? null,
     },
     poolSize: pool.length,
+    /** 这一轮跑通的逻辑 id（界面统计用；老调用方不看这个字段也没关系） */
+    logicPassed: [...logicPassedIds],
   };
 }
 

@@ -3,7 +3,7 @@
 // 和规则页分开：规则是"条目什么时候出现"，逻辑是"不用条目也能跑的一段判定"。
 // 两边的编辑方式不一样，混在一页里容易看糊涂。
 
-import { el, button, badge, hint, actionRow, downloadJson } from './widgets.js';
+import { el, button, badge, hint, actionRow, downloadJson, metaLine } from './widgets.js';
 import { openLogicEditor } from './logic-editor.js';
 import { countFlowNodes } from '../core/flow.js';
 import { normalizeLogic, META_LABEL } from '../core/model.js';
@@ -13,8 +13,15 @@ export function renderLogicView(ctx) {
   const books = repository.listBooks();
   if (books.length === 0) return el('div', { class: 'ilb-empty' }, ['先去书架导入或新建一本书。']);
 
-  const book = books.find((b) => b.book_id === state.activeBookId) ?? books[0];
-  if (state.activeBookId !== book.book_id) state.activeBookId = book.book_id;
+  // 与规则页同一套书籍上下文（Phase 3 §6.2）：没选书就明说，不替用户挑第一本。
+  const book = books.find((b) => b.book_id === state.activeBookId) ?? null;
+  if (!book) {
+    return el('div', { class: 'ilb-card' }, [
+      el('p', { class: 'ilb-empty-title', text: '还没有选择书籍' }),
+      hint('在上面的「当前书籍」里选一本。独立逻辑存在每本书里，选错了会改到别的书上。'),
+      actionRow([button('去书架', () => ctx.setTab('shelf'), { ghost: true })]),
+    ]);
+  }
 
   const listHost = el('div', { class: 'ilb-logic-list' });
 
@@ -102,14 +109,17 @@ export function renderLogicView(ctx) {
     picker.click();
   }
 
+  const mobile = ctx.layout?.() === 'mobile';
+
   function draw() {
     listHost.innerHTML = '';
-    const items = Array.isArray(book.logic) ? book.logic : [];
+    const all = Array.isArray(book.logic) ? book.logic : [];
+    const items = ctx.sortedLogics(book);
     listHost.appendChild(
       el('div', { class: 'ilb-logic-head' }, [
-        el('h5', { class: 'ilb-section-title', text: `独立逻辑（不靠条目也能运行，共 ${items.length} 条）` }),
-        button('新增逻辑', () => openLogicEditor(ctx, book, null), { ghost: true }),
-        button('导出逻辑', () => {
+        el('h5', { class: 'ilb-section-title', text: `独立逻辑（不靠条目也能运行，共 ${all.length} 条）` }),
+        mobile ? null : button('新增逻辑', () => openLogicEditor(ctx, book, null), { ghost: true }),
+        mobile ? null : button('导出逻辑', () => {
           if (items.length === 0) {
             ctx.toast('这本书还没有逻辑可导出', 'warn');
             return;
@@ -117,7 +127,7 @@ export function renderLogicView(ctx) {
           downloadJson(`ilb-logic-${Date.now()}.json`, { kind: 'ilb-logic', version: 1, book: book.name, logics: items });
           ctx.toast(`已导出 ${items.length} 条逻辑`);
         }, { ghost: true }),
-        button('导入逻辑', () => importLogic(), { ghost: true }),
+        mobile ? null : button('导入逻辑', () => importLogic(), { ghost: true }),
       ]),
     );
     if (items.length === 0) {
@@ -129,13 +139,45 @@ export function renderLogicView(ctx) {
       if (logic.enabled === false) badges.push(badge('已停用', 'warn'));
       if (logic.call?.exposed) badges.push(badge('AI 可调用', 'ok'));
       if (logic.output?.text) badges.push(badge('有正文'));
-      const cardEl = el('div', { class: `ilb-card ilb-logic-card${logic.enabled === false ? ' ilb-card-off' : ''}` }, [
+      const menu = el('div', { class: 'ilb-menu', hidden: true }, [
+        button(logic.enabled === false ? '启用' : '停用', () => {
+          logic.enabled = logic.enabled === false;
+          logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
+          saveBook();
+        }, { ghost: true }),
+        button('导出', () => {
+          downloadJson(`ilb-logic-${(logic.name || 'logic').replace(/[\\/:*?"<>|]/g, '_')}.json`, {
+            kind: 'ilb-logic', version: 1, book: book.name, logics: [logic],
+          });
+        }, { ghost: true }),
+        button('删除', () => removeLogic(logic), { ghost: true }),
+      ]);
+      const toggle = el('button', {
+        type: 'button', class: 'ilb-icon-btn', text: '⋯', title: '更多操作', 'aria-label': '更多操作',
+        'aria-expanded': 'false',
+        onclick: (event) => {
+          event.stopPropagation();
+          menu.hidden = !menu.hidden;
+          toggle.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+        },
+      });
+      menu.addEventListener('click', () => { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); });
+      const cardEl = el('div', { class: `ilb-card ilb-rule-card ilb-logic-card${logic.enabled === false ? ' ilb-card-off' : ''}` }, [
         el('div', { class: 'ilb-rule-head' }, [
           el('div', { class: 'ilb-rule-titles' }, [
             el('div', { class: 'ilb-title', text: logic.name || '未命名逻辑' }),
             el('div', { class: 'ilb-sub', text: describeLogic(logic) }),
           ]),
-          el('div', { class: 'ilb-badges' }, badges),
+          el('div', { class: 'ilb-rule-side' }, [
+            el('div', { class: 'ilb-badges' }, badges),
+            el('div', { class: 'ilb-more' }, [toggle, menu]),
+          ]),
+        ]),
+        metaLine([
+          ctx.sortOf('logic')?.key === 'manual'
+            ? ctx.sortWeightInput(logic, () => { logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() }; saveBook(); })
+            : null,
+          el('span', { class: 'ilb-sub', text: logic.enabled === false ? '已停用' : '已启用' }),
         ]),
         actionRow([
           button('编辑', () => openLogicEditor(ctx, book, logic), { ghost: true }),
@@ -148,16 +190,6 @@ export function renderLogicView(ctx) {
               wait: false,
             });
           }, { ghost: true }),
-          button(logic.enabled === false ? '启用' : '停用', () => {
-            logic.enabled = logic.enabled === false;
-            saveBook();
-          }, { ghost: true }),
-          button('导出', () => {
-            downloadJson(`ilb-logic-${(logic.name || 'logic').replace(/[\\/:*?"<>|]/g, '_')}.json`, {
-              kind: 'ilb-logic', version: 1, book: book.name, logics: [logic],
-            });
-          }, { ghost: true }),
-          button('删除', () => removeLogic(logic), { ghost: true }),
         ]),
       ]);
       listHost.appendChild(cardEl);
@@ -166,9 +198,10 @@ export function renderLogicView(ctx) {
 
   draw();
   return el('div', {}, [
-    el('div', { class: 'ilb-card' }, [
+    mobile ? null : el('div', { class: 'ilb-card' }, [
       hint('逻辑也可以完全不用条目：自己看触发词、每轮都跑、或在 AI 说到某个词时运行。它们和规则共用同一套变量与流程节点。'),
     ]),
+    mobile ? null : ctx.sortBar?.('logic'),
     listHost,
   ]);
 }

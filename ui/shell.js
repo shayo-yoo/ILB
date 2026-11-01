@@ -14,6 +14,7 @@ import { createFloatingWindow } from './floating.js';
 import { createMobileUi } from './mobile.js';
 import { setOverlayBackend, closeOverlay } from './help.js';
 import { pickLayout, viewportOf, describeLayout } from './layout.js';
+import * as guard from './guard.js';
 
 const RESIZE_DELAY = 150;
 
@@ -25,8 +26,27 @@ const RESIZE_DELAY = 150;
  * @param {Function} [options.status] 读当前聊天变量的函数（手机状态坞用；电脑不需要）
  * @param {Function} [options.openState] 打开「状态」页（手机坞里的按钮用）
  */
-export function createShell({ repository, notify, onOpen, status, openState } = {}) {
-  const desktop = createFloatingWindow({ repository, notify, onOpen });
+export function createShell({ repository, notify, onOpen, status, openState, onDensity } = {}) {
+  const desktop = createFloatingWindow({
+    repository,
+    notify,
+    onOpen,
+    // 有未保存的修改时，点 × / Esc 不直接关窗：守卫问完，用户选"保存并离开"再关。
+    onBeforeClose: () => {
+      if (!guard.hasEditor()) return true;
+      return guard.allowLeave(() => desktop.close(true));
+    },
+    // 窗子被拖宽/拉窄时，导航要从"顶部"换成"侧栏"或"下拉"。
+    // 这里不直接重画面板，只把信号转给 shell —— 面板可能还没创建（index.js 里先建 shell 再建 panel）。
+    onDensity: (next) => {
+      try {
+        if (typeof onDensity === 'function') onDensity(next);
+        if (panel && typeof panel.onLayoutChange === 'function') panel.onLayoutChange();
+      } catch (err) {
+        console.warn('[ILB] 按宽度调整导航失败', err);
+      }
+    },
+  });
   const mobile = createMobileUi({ repository, notify, onOpen, status, openState });
 
   let layout = pickLayout(viewportOf());
@@ -67,11 +87,12 @@ export function createShell({ repository, notify, onOpen, status, openState } = 
 
   function applyVisibility() {
     if (layout === 'mobile') {
-      desktop.close();
+      // floating 暴露的是 close(force)，没有 closeForce —— 先关再藏，避免手机布局下整个壳挂不上。
+      desktop.close(true);
       desktop.setVisible(false);
       mobile.setVisible(true);
     } else {
-      mobile.close();
+      mobile.close(true);
       mobile.setVisible(false);
       desktop.setVisible(true);
     }
@@ -149,12 +170,31 @@ export function createShell({ repository, notify, onOpen, status, openState } = 
     return layout === 'mobile' ? mobile.open() : desktop.open();
   }
 
+  /**
+   * 关掉当前这套壳。有未保存的修改时**不关**，交给那套壳里的守卫去问
+   * （电脑浮窗的 × 走 floating 自己的 closeWindow，手机走 closeUi，两边都会先问）。
+   */
   function close() {
     return layout === 'mobile' ? mobile.close() : desktop.close();
   }
 
+  /** 强制关掉（换壳、隐藏界面时用）：不弹未保存确认。 */
+  function closeForce() {
+    return layout === 'mobile' ? mobile.close(true) : desktop.close(true);
+  }
+
   function toggle() {
     return layout === 'mobile' ? mobile.toggle() : desktop.toggle();
+  }
+
+  /** 当前壳的宽度档位（电脑看浮窗内部宽度，手机固定 compact）。 */
+  function density() {
+    if (layout === 'mobile') return 'compact';
+    try {
+      return desktop.density();
+    } catch {
+      return 'standard';
+    }
   }
 
   /** 状态点在两套壳上都有，一起更新，免得换壳后圆点颜色不对。 */
@@ -202,9 +242,11 @@ export function createShell({ repository, notify, onOpen, status, openState } = 
     attachPanel,
     open,
     close,
+    closeForce,
     toggle,
     isOpen: () => current().isOpen(),
     layout: () => layout,
+    density,
     label: () => describeLayout(layout),
     setStatus,
     refresh,
@@ -219,6 +261,7 @@ export function createShell({ repository, notify, onOpen, status, openState } = 
     describe: () => ({
       layout,
       label: describeLayout(layout),
+      density: density(),
       desktop: desktop.describe(),
       mobile: mobile.describe(),
     }),

@@ -70,7 +70,6 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     'aria-expanded': 'false',
   }, [el('span', { 'aria-hidden': 'true', text: '书' }), fabDot]);
 
-  const subNode = el('p', { class: 'ilb-m-sub', text: '手机界面 · 整屏' });
   const titleNode = el('h2', { class: 'ilb-m-title', text: '世界书 · ILB' });
   const closeBtn = el('button', {
     type: 'button',
@@ -80,7 +79,7 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     'aria-label': '关闭',
   });
   const head = el('div', { class: 'ilb-m-head' }, [
-    el('div', { class: 'ilb-m-head-text' }, [titleNode, subNode]),
+    el('div', { class: 'ilb-m-head-text' }, [titleNode]),
     closeBtn,
   ]);
 
@@ -97,8 +96,10 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
   const panelHost = el('div', { class: 'ilb-m-panel' });
   const sheetsLayer = el('div', { class: 'ilb-m-sheets', 'data-open': '0' });
   const stage = el('div', { class: 'ilb-m-stage' }, [panelHost, sheetsLayer]);
+  // 底部导航由 panel 画、挂在这里：在滚动区外面，内容再短也不会往上浮。
+  const navRoot = el('div', { class: 'ilb-m-nav-slot' });
   const toasts = el('div', { class: 'ilb-m-toasts', role: 'status', 'aria-live': 'polite' });
-  const dialog = el('dialog', { class: 'ilb-m', 'aria-label': '世界书 ILB 控制器' }, [head, dock, stage, toasts]);
+  const dialog = el('dialog', { class: 'ilb-m', 'aria-label': '世界书 ILB 控制器' }, [head, stage, navRoot, dock, toasts]);
 
   // "绝不失效"的那几条用内联钉住（ILB-6.17.7 / D-0035）：
   // 位置、铺满、层级、底色、不滚动。其余观感交给 mobile-skin.js。
@@ -123,7 +124,8 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     color: '#eaeaea',
     zIndex: '2147483000',
   });
-  Object.assign(panelHost.style, { flex: '1 1 auto', minHeight: '0', overflowY: 'auto' });
+  Object.assign(stage.style, { flex: '1 1 auto', minHeight: '0', overflowY: 'auto', overscrollBehavior: 'contain' });
+  Object.assign(panelHost.style, { minHeight: '0' });
   fab.style.bottom = `calc(${FAB_BOTTOM}px + env(safe-area-inset-bottom))`;
 
   // ---- 视口 ----
@@ -131,16 +133,14 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
   function syncViewport() {
     try {
       if (typeof window === 'undefined') return;
-      const vv = window.visualViewport;
-      const height = vv && vv.height ? Math.round(vv.height) : Math.round(window.innerHeight || 0);
-      const top = vv && typeof vv.offsetTop === 'number' ? Math.round(vv.offsetTop) : 0;
+      // 刻意不用 visualViewport.height：键盘弹出时它会缩，底栏就跟着往上跳。
+      // 这里按“键盘没弹”的布局高度锁住，键盘盖住底栏可以接受，位置不能变（v0.22.0）。
+      const height = Math.round(window.innerHeight || document.documentElement?.clientHeight || 0);
       if (height > 0) {
-        dialog.style.top = `${top}px`;
+        dialog.style.top = '0px';
         dialog.style.height = `${height}px`;
         dialog.style.bottom = 'auto';
       }
-      const width = vv && vv.width ? Math.round(vv.width) : Math.round(window.innerWidth || 0);
-      subNode.textContent = `${describeLayout('mobile')} · ${width}×${height}`;
     } catch {
       /* 量不到就用 CSS 的 100% 顶着 */
     }
@@ -262,8 +262,10 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     return true;
   }
 
-  function closeUi() {
-    if (!open) return;
+  function closeUi(force = false) {
+    if (!open) return false;
+    // 有没保存的修改时，先经过那一层的 onBeforeClose（编辑器会在里面弹三选一）。
+    if (!force && sheets.length > 0 && !askClose(sheets[sheets.length - 1])) return false;
     clearSheets();
     open = false;
     try {
@@ -289,6 +291,7 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
       /* ignore */
     }
     console.info('[ILB] 手机界面已关闭');
+    return true;
   }
 
   function toggle() {
@@ -323,23 +326,57 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     }
   }
 
-  function popSheet() {
+  /** 关这一层之前先问它自己（编辑器靠这个拦住"未保存就退出"）。 */
+  function askClose(entry) {
+    if (!entry || typeof entry.onBeforeClose !== 'function') return true;
+    try {
+      return entry.onBeforeClose() !== false;
+    } catch (err) {
+      console.warn('[ILB] 手机浮层关闭前检查出错，按允许关闭处理', err);
+      return true;
+    }
+  }
+
+  /** 真的移除一层，并跑它的收尾（解绑快捷键、注销守卫）。 */
+  function removeEntryAt(index) {
+    const entry = sheets[index];
+    if (!entry) return;
+    removeAt(index);
+    if (typeof entry.onClose === 'function') {
+      try {
+        entry.onClose();
+      } catch (err) {
+        console.warn('[ILB] 手机浮层收尾出错', err);
+      }
+    }
+  }
+
+  function popSheet(force = false) {
     if (sheets.length === 0) return false;
-    removeAt(sheets.length - 1);
+    if (!force && !askClose(sheets[sheets.length - 1])) return false;
+    removeEntryAt(sheets.length - 1);
     syncSheetChrome();
     return sheets.length > 0;
   }
 
   function closeSheet(node) {
     const index = sheets.findIndex((entry) => entry.node === node);
-    if (index < 0) return;
-    while (sheets.length > index) removeAt(sheets.length - 1);
+    if (index < 0) return false;
+    if (!askClose(sheets[index])) return false;
+    while (sheets.length > index) removeEntryAt(sheets.length - 1);
     syncSheetChrome();
+    return true;
   }
 
   function clearSheets() {
-    while (sheets.length > 0) removeAt(sheets.length - 1);
+    while (sheets.length > 0) removeEntryAt(sheets.length - 1);
     sheetsLayer.setAttribute('data-open', '0');
+  }
+
+  /** 「返回/关闭」的统一入口：先弹当前最上层，没有浮层就退出整屏界面。 */
+  function attemptClose() {
+    if (sheets.length > 0) return popSheet();
+    return closeUi();
   }
 
   /** 自愈：浮层开出来了但看不见时，把关键几条内联顶上去。 */
@@ -380,11 +417,13 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
    * 开一层浮层。签名与 ui/help.js 的 openOverlay 一致，所以两边可以直接互换。
    * @param {{title?:string, nodes?:Array, footer?:Array, wide?:boolean, key?:string}} options
    */
-  function pushSheet({ title = '', nodes = [], footer = [], wide = false, key = null } = {}) {
+  function pushSheet({
+    title = '', nodes = [], footer = [], wide = false, key = null, onBeforeClose, onClose,
+  } = {}) {
     if (!open) openUi();
     if (key) {
       for (let i = sheets.length - 1; i >= 0; i -= 1) {
-        if (sheets[i].key === key) removeAt(i);
+        if (sheets[i].key === key) removeEntryAt(i);
       }
     }
     const body = el('div', { class: 'ilb-m-sheet-body' }, nodes);
@@ -403,7 +442,6 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
       else closeSheet(node);
     });
     on(x, 'click', () => closeSheet(node));
-
     if (!body.childElementCount) {
       body.appendChild(el('p', {
         class: 'ilb-empty',
@@ -413,7 +451,7 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     }
 
     sheetsLayer.appendChild(node);
-    sheets.push({ node, key, title: title || '说明' });
+    sheets.push({ node, key, title: title || '说明', onBeforeClose, onClose });
     syncSheetChrome();
     console.info(`[ILB] 浮层已打开：${title || '(无标题)'}（手机）`);
     auditSheet(sheets[sheets.length - 1]);
@@ -486,7 +524,8 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
   function refreshStatus() {
     const vars = statusData();
     const names = vars ? Object.keys(vars) : [];
-    dock.hidden = names.length === 0;
+    // v0.22.0：变量条不再常驻（顶部「变量」按钮里看），这里只更新文案给浮层用
+    dock.hidden = true;
     if (names.length === 0) {
       dockText.textContent = '';
       return;
@@ -561,13 +600,12 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
       }
     });
     on(dialog, 'cancel', (event) => {
-      // Esc / 安卓返回键：有浮层先退浮层，没有就关整屏。
+      // Esc / 安卓返回键：有浮层先退浮层，没有就关整屏。都要经过未保存守卫。
       event.preventDefault();
-      if (sheets.length > 0) popSheet();
-      else closeUi();
+      attemptClose();
     });
     on(dialog, 'close', () => {
-      if (open) closeUi();
+      if (open) closeUi(true);
     });
     on(dialog, 'click', (event) => {
       // 点 ::backdrop（顶层里它算 dialog 自己）时先退浮层，不直接关整屏。
@@ -624,7 +662,8 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
 
   function setVisible(visible) {
     fab.hidden = !visible;
-    if (!visible) closeUi();
+    // 整屏被切走是"强制"的：此时不该再弹未保存确认（它已经不在屏幕上了）
+    if (!visible) closeUi(true);
   }
 
   function refresh() {
@@ -670,10 +709,12 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     // 给 ui/help.js 当"浮层出口"用（签名与 openOverlay 一致）
     openOverlay: pushSheet,
     closeOverlay: popSheet,
+    attemptClose,
     isOverlayOpen: () => sheets.length > 0,
     clearOverlays: clearSheets,
     toast,
     body: panelHost,
+    navRoot,
     dialog,
     fab,
     setStatus,

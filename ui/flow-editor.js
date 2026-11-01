@@ -21,12 +21,20 @@ import {
   BRANCHING_KINDS,
   MAX_REPEAT,
   MAX_CANDIDATES,
+  MAX_WEIGHT,
+  MAX_CALL_ARGS,
+  MAX_CALL_RETURNS,
+  MAX_LIST_ITEMS,
+  MAX_SWITCH_CASES,
+  LIST_OPS,
+  LIST_OP_LABEL,
   makeNode,
   makeCondition,
   normalizeFlow,
   countFlowNodes,
   describeNode,
   describeCondition,
+  describeOperand,
   checkUiNode,
 } from '../core/flow.js';
 import { validateFlow, summarizeProblems } from '../core/validate.js';
@@ -56,6 +64,7 @@ const ACTION_GROUPS = [
       { kind: 'define', keywords: '定义 赋值 初始值 新建变量' },
       { kind: 'remember', keywords: '记住 存下来 记成 持久' },
       { kind: 'calc', keywords: '计算 加减乘除 求和 平均值 最大 最小' },
+      { kind: 'list', keywords: '列表 拆开 分组 数组 一项一项 分隔符' },
     ],
   },
   {
@@ -85,7 +94,8 @@ const ACTION_GROUPS = [
     key: 'flow',
     label: '流程',
     items: [
-      { kind: 'repeat', keywords: '重复 循环 做几次 重复 3 次' },
+      { kind: 'repeat', keywords: '重复 循环 做几次 重复 3 次 列表循环 每项' },
+      { kind: 'switch', keywords: '分支 选择 多路 等于哪条 按值 否则' },
       { kind: 'stop', keywords: '结束 提前结束 中断 返回 停止' },
       { kind: 'call', keywords: '调用 子逻辑 复用 函数' },
     ],
@@ -131,8 +141,26 @@ export function renderFlowEditor(options = {}) {
   let copied = null;
   /** 折叠起来的节点 id（只影响看起来，不影响数据） */
   const collapsed = new Set();
+  // 手机上的流程是独立子页（§6.5）：默认全部折叠成一行摘要，点哪步再展开哪步。
+  // 不折叠的话，一条十几步的流程要划很久才能找到"添加"。
+  if (options.defaultCollapsed) {
+    for (const item of flattenNodes(model.nodes)) collapsed.add(item.id);
+  }
+  /** 宽屏三栏里"右边正在改哪一步"（Phase 3 §5.5） */
+  let selectedId = null;
+  /** 中间那栏是否是"精简卡片"（只画结构，参数放到右栏） */
+  let canvasCompact = false;
   /** 表单 / 文本两种写法，改的是同一个 model（ILB-4.20） */
   let textMode = false;
+
+  /** 窗子够不够宽：够宽才值得并排三栏，窄了宁可一列到底。 */
+  function isWide() {
+    try {
+      return typeof ctx?.density === 'function' && ctx.density() === 'wide';
+    } catch {
+      return false;
+    }
+  }
 
   function newId() {
     return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -159,24 +187,46 @@ export function renderFlowEditor(options = {}) {
   }
 
   /** 文本语法目前只认这些节点（其余一律只读，见 textUnsupported） */
-  const TEXT_KINDS = new Set(['test', 'judge', 'compare', 'define', 'calc', 'random', 'add', 'remember', 'activate', 'goto', 'call', 'ui', 'pass', 'fail']);
+  const TEXT_KINDS = new Set([
+    'test', 'judge', 'compare', 'if', 'chance', 'set', 'calc', 'random', 'choose',
+    'define', 'add', 'remember', 'activate', 'repeat', 'list', 'switch', 'goto', 'call', 'ui', 'stop', 'pass', 'fail',
+  ]);
+
+  /** 条件组只有「一层、不带否、里面没有组」时文本才装得下（见 flow-text.js 的 条件组 写法） */
+  function textFlatGroup(cond) {
+    return Boolean(cond)
+      && cond.what === 'group'
+      && cond.negate !== true
+      && Array.isArray(cond.children)
+      && cond.children.every((child) => child && child.what !== 'group');
+  }
 
   /** 文本语法装不下的节点类型（ILB-7.16：宁可只读，也不静默丢字段） */
   function textUnsupported(nodes, out = new Set()) {
-    const walkCond = (c) => {
-      if (!c || typeof c !== 'object') return;
-      if (c.what === 'group') out.add('条件组');
-      (c.children ?? []).forEach(walkCond);
-    };
     const walk = (list) => {
       for (const n of Array.isArray(list) ? list : []) {
         if (!TEXT_KINDS.has(n.kind) || n.unknown) out.add(FLOW_KIND_LABEL[n.kind] ?? n.kind);
-        if (n.condition) walkCond(n.condition);
-        if (n.when) walkCond(n.when);
-        (n.conditions ?? []).forEach(walkCond);
+        if (n.condition?.what === 'group') out.add('条件组');
+        (n.conditions ?? []).forEach((cond) => {
+          if (cond?.what === 'group') out.add('条件组');
+        });
+        if (n.when && !textFlatGroup(n.when)) out.add('条件组');
+        // v0.18：权重和调用参数/返回值还没有文本写法——宁可只读，也不让它们被静默丢掉
+        if (n.kind === 'choose') {
+          const weighted = (n.weights ?? []).some((w, i) => Number(w) !== 1 && String(n.candidates?.[i] ?? '').trim());
+          if (weighted) out.add('随机选择（带权重）');
+        }
+        if (n.kind === 'call') {
+          const hasArgs = (n.args ?? []).some((a) => String(a?.name ?? '').trim());
+          const hasReturns = (n.returns ?? []).some((r) => String(r?.name ?? '').trim());
+          if (hasArgs || hasReturns) out.add('调用逻辑（带参数/返回值）');
+        }
+        // 只有「自定义分隔符的列表」装不进文本——其余列表与分支选择都有写法（见 flow-text.js）
+        if (n.kind === 'list' && (n.separator ?? '\n') !== '\n') out.add('列表变量（自定义分隔符）');
         walk(n.then);
         walk(n.else);
         walk(n.body);
+        for (const c of n.cases ?? []) walk(c?.body);
       }
     };
     walk(nodes);
@@ -219,22 +269,141 @@ export function renderFlowEditor(options = {}) {
     }
     root.appendChild(head);
 
-    root.appendChild(renderValidation());
-
     if (textMode) {
+      root.appendChild(renderValidation());
       root.appendChild(renderTextMode());
+      canvasCompact = false;
       return;
     }
 
-    root.appendChild(
-      el('p', {
-        class: 'ilb-hint',
-        text: '从上往下执行。判断节点不成立时，走进「不成立时」那一块；那里没放东西，这条规则就不出现。一个节点都不放，这条规则就完全按关键词和注入参数工作（跟原生世界书一样）。',
-      }),
-    );
+    const FLOW_HINT = '从上往下执行。判断节点不成立时，走进「不成立时」那一块；那里没放东西，这条规则就不出现。一个节点都不放，这条规则就完全按关键词和注入参数工作（跟原生世界书一样）。';
 
-    root.appendChild(renderNodes(model.nodes, 0));
-    root.appendChild(addRow(model.nodes));
+    // 窄窗 / 普通窗：一列到底，参数就在卡片里（手机上不横滑）。
+    if (!isWide()) {
+      root.appendChild(renderValidation());
+      root.appendChild(el('p', { class: 'ilb-hint', text: FLOW_HINT }));
+      canvasCompact = false;
+      root.appendChild(renderNodes(model.nodes, 0));
+      root.appendChild(addRow(model.nodes));
+      return;
+    }
+
+    // 宽屏：左大纲 / 中分支树 / 右节点属性，运行反馈收在底部的折叠块里。
+    const workspace = el('div', { class: 'ilb-flow-workspace' });
+    workspace.appendChild(renderOutline());
+
+    const canvas = el('div', { class: 'ilb-flow-canvas' });
+    canvas.appendChild(el('p', {
+      class: 'ilb-hint',
+      text: '点中间或左边的任意一步，在右边改它的参数。分支照常从卡片下面长出来。',
+    }));
+    canvasCompact = true;
+    canvas.appendChild(renderNodes(model.nodes, 0));
+    canvas.appendChild(addRow(model.nodes));
+    canvasCompact = false;
+    workspace.appendChild(canvas);
+    workspace.appendChild(renderProps());
+    root.appendChild(workspace);
+
+    const validationBox = renderValidation();
+    const bad = String(validationBox.className ?? '').includes('bad');
+    root.appendChild(el('details', { class: 'ilb-flow-feedback', ...(bad ? { open: true } : {}) }, [
+      el('summary', { class: 'ilb-details-summary', text: `运行反馈${bad ? '（有问题需要看）' : '（没发现问题）'}` }),
+      validationBox,
+      el('p', { class: 'ilb-hint', text: FLOW_HINT }),
+    ]));
+  }
+
+  /** 左栏大纲：把整棵树按顺序拍平，缩进表示层级；点一条就选中它。 */
+  function outlineRows(list, depth, out) {
+    for (const node of Array.isArray(list) ? list : []) {
+      out.push({ node, depth });
+      outlineRows(node.then, depth + 1, out);
+      outlineRows(node.else, depth + 1, out);
+      outlineRows(node.body, depth + 1, out);
+      for (const c of node.cases ?? []) outlineRows(c?.body, depth + 1, out);
+    }
+    return out;
+  }
+
+  function renderOutline() {
+    const rows = outlineRows(model.nodes, 0, []);
+    const box = el('div', { class: 'ilb-flow-outline' });
+    box.appendChild(el('div', { class: 'ilb-flow-outline-title', text: `大纲（${rows.length} 步）` }));
+    if (rows.length === 0) {
+      box.appendChild(el('p', { class: 'ilb-hint', text: '还没有步骤：在中间点「添加一步」。' }));
+      return box;
+    }
+    for (const row of rows) {
+      const label = FLOW_KIND_LABEL[row.node.kind] ?? row.node.kind;
+      box.appendChild(el('button', {
+        type: 'button',
+        class: `ilb-flow-outline-item${selectedId === row.node.id ? ' ilb-flow-outline-active' : ''}`.trim(),
+        style: { paddingLeft: `${4 + row.depth * 12}px` },
+        title: `${label} · ${describeNode(row.node)}`,
+        onclick: () => {
+          selectedId = row.node.id;
+          redraw();
+        },
+      }, [
+        el('span', { class: 'ilb-flow-outline-kind', text: label }),
+        el('span', { class: 'ilb-flow-outline-text', text: describeNode(row.node) }),
+      ]));
+    }
+    return box;
+  }
+
+  /** 在整棵树里找一条步骤（连同它所在的数组和下标，移动/删除要用）。 */
+  function findNodeById(list, id) {
+    const items = Array.isArray(list) ? list : [];
+    for (let index = 0; index < items.length; index += 1) {
+      const node = items[index];
+      if (node.id === id) return { list: items, node, index };
+      for (const child of [node.then, node.else, node.body]) {
+        const found = findNodeById(child, id);
+        if (found) return found;
+      }
+      for (const c of node.cases ?? []) {
+        const found = findNodeById(c?.body, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  /** 右栏：选中那一步的参数表单。没选中就直说，不要假装有一堆可改的东西。 */
+  function renderProps() {
+    const box = el('div', { class: 'ilb-flow-props' });
+    const found = selectedId ? findNodeById(model.nodes, selectedId) : null;
+    if (!found) {
+      box.appendChild(el('div', { class: 'ilb-flow-props-title', text: '步骤属性' }));
+      box.appendChild(el('p', { class: 'ilb-hint', text: '先在左边或中间点一步；选中的步骤会在这里显示参数。' }));
+      return box;
+    }
+    const { node, list, index } = found;
+    box.appendChild(el('div', {
+      class: 'ilb-flow-props-title',
+      text: `${FLOW_KIND_LABEL[node.kind] ?? node.kind} · 第 ${index + 1} 步`,
+    }));
+    box.appendChild(el('p', { class: 'ilb-sub', text: describeNode(node) }));
+    if (node.unknown) {
+      box.appendChild(hint('这一步是更新版本才有的节点：参数原样保留，这里不能改。'));
+      return box;
+    }
+    box.appendChild(renderBody(node));
+    box.appendChild(el('div', { class: 'ilb-actions' }, [
+      button('上移', () => move(list, index, -1), { ghost: true, disabled: index === 0 }),
+      button('下移', () => move(list, index, 1), { ghost: true, disabled: index === list.length - 1 }),
+      button('复制', () => {
+        copied = JSON.parse(JSON.stringify(node));
+        redraw();
+      }, { ghost: true }),
+      button('删除这一步', () => {
+        selectedId = null;
+        remove(list, index);
+      }, { ghost: true }),
+    ]));
+    return box;
   }
 
   /** 静态检查（ILB-7.17）：只看结构，不跑流程；没问题时只留一行很轻的字 */
@@ -488,8 +657,11 @@ export function renderFlowEditor(options = {}) {
 
   function renderNode(list, node, index) {
     const isCollapsed = collapsed.has(node.id);
+    const isSelected = selectedId === node.id;
     const kindLabel = node.unknown ? '不支持编辑的节点' : (FLOW_KIND_LABEL[node.kind] ?? node.kind);
-    const card = el('div', { class: `ilb-flow-node ilb-flow-${node.kind}${node.unknown ? ' ilb-flow-unknown' : ''}` });
+    const card = el('div', {
+      class: `ilb-flow-node ilb-flow-${node.kind}${node.unknown ? ' ilb-flow-unknown' : ''}${isSelected ? ' ilb-flow-node-selected' : ''}`.trim(),
+    });
     const head = el('div', { class: 'ilb-flow-node-head' }, [
       el('button', {
         type: 'button',
@@ -505,6 +677,18 @@ export function renderFlowEditor(options = {}) {
       el('span', { class: 'ilb-flow-kind', text: kindLabel }),
       el('span', { class: 'ilb-hint', text: describeNode(node) }),
     ]);
+
+    // 宽屏三栏时，点卡片头 = 选中它，参数在右栏改；点到按钮（折叠/更多）不算选中。
+    if (canvasCompact) {
+      head.addEventListener('click', (event) => {
+        const target = event.target;
+        if (typeof target?.closest === 'function' && (target.closest('.ilb-actions') || target.closest('.ilb-flow-toggle'))) return;
+        if (selectedId === node.id) return;
+        selectedId = node.id;
+        redraw();
+      });
+      head.style.cursor = 'pointer';
+    }
 
     // 一个节点只常驻一个「更多」，不再摆五六个按钮（ILB-3.10）
     const menu = el('div', { class: 'ilb-flow-more-menu' });
@@ -539,18 +723,46 @@ export function renderFlowEditor(options = {}) {
       return card;
     }
 
+    // 宽屏三栏：中间只画结构，参数在右栏；分支还是要长出来，否则看不到树。
+    if (canvasCompact) {
+      if (BRANCH_KINDS.includes(node.kind)) {
+        card.appendChild(renderBranch('✓ 成立时', node.then, '成立时没有后续，就继续往下走', 'then'));
+        card.appendChild(renderBranch('✗ 不成立时', node.else, '不成立时留空，这条规则就不出现', 'else'));
+      }
+      if (node.kind === 'switch') card.appendChild(renderSwitchBranches(node));
+      return card;
+    }
+
     card.appendChild(renderBody(node));
 
     if (BRANCH_KINDS.includes(node.kind)) {
       card.appendChild(renderBranch('✓ 成立时', node.then, '成立时没有后续，就继续往下走', 'then'));
       card.appendChild(renderBranch('✗ 不成立时', node.else, '不成立时留空，这条规则就不出现', 'else'));
     }
+    if (node.kind === 'switch') card.appendChild(renderSwitchBranches(node));
     return card;
+  }
+
+  /** 分支选择：一条一条列出来，命中谁就只走谁 */
+  function renderSwitchBranches(node) {
+    const wrap = el('div', { class: 'ilb-flow-switch' });
+    (node.cases ?? []).forEach((c, i) => {
+      wrap.appendChild(renderBranch(`＝ ${describeOperand(c?.match)}（第 ${i + 1} 条）`, c.body, '这条分支是空的：命中后什么也不做', 'then'));
+    });
+    wrap.appendChild(renderBranch('否则（都不等于）', node.else, '没写「否则」：都不命中时这一步什么也不做', 'else'));
+    return wrap;
   }
 
   /** 收起时也要看得出下面挂了多少东西 */
   function branchSummary(node) {
     const parts = [];
+    if (node.kind === 'switch') {
+      const cases = (node.cases ?? []).length;
+      const steps = (node.cases ?? []).reduce((sum, c) => sum + (c?.body?.length ?? 0), 0);
+      parts.push(`${cases} 条分支共 ${steps} 步`);
+      if ((node.else ?? []).length) parts.push(`否则 ${node.else.length} 步`);
+      return parts.length ? `（${parts.join(' · ')}）` : '';
+    }
     if ((node.then ?? []).length) parts.push(`成立时 ${node.then.length} 步`);
     if ((node.else ?? []).length) parts.push(`不成立时 ${node.else.length} 步`);
     if ((node.body ?? []).length) parts.push(`循环体 ${node.body.length} 步`);
@@ -839,6 +1051,84 @@ export function renderFlowEditor(options = {}) {
         );
       }
       body.appendChild(el('p', { class: 'ilb-hint', text: '把另一条独立逻辑当成这一步来跑：它写的变量、加的正文、点名的条目都会并进来；它不通过，这一步也不通过。' }));
+
+      // 参数（v0.18）：值在这一层求好再传进去；同名变量在被调用逻辑里临时可用，跑完还原
+      const args = Array.isArray(node.args) ? node.args : (node.args = []);
+      body.appendChild(el('p', { class: 'ilb-sub', text: '传进去的参数（名字 = 值）' }));
+      args.forEach((arg, index) => {
+        const row = el('div', { class: 'ilb-inline ilb-call-arg' }, [
+          input(arg.name, (value) => {
+            arg.name = value;
+            notify();
+          }, { placeholder: '参数名' }),
+          renderOperand(arg.value, (next) => {
+            arg.value = next;
+            notify();
+          }),
+        ]);
+        row.appendChild(
+          button('移除', () => {
+            args.splice(index, 1);
+            notify();
+            redraw();
+          }, { ghost: true }),
+        );
+        body.appendChild(row);
+      });
+      if (args.length < MAX_CALL_ARGS) {
+        body.appendChild(
+          button('加一个参数', () => {
+            args.push({ name: '', value: { type: 'text', value: '' } });
+            notify();
+            redraw();
+          }, { ghost: true }),
+        );
+      }
+
+      // 返回值（v0.18）：从被调用逻辑跑完时的变量里按名字取回来
+      const returns = Array.isArray(node.returns) ? node.returns : (node.returns = []);
+      body.appendChild(el('p', { class: 'ilb-sub', text: '取回的返回值（对方变量名 → 这里的变量名）' }));
+      returns.forEach((item, index) => {
+        const row = el('div', { class: 'ilb-inline ilb-call-return' }, [
+          input(item.name, (value) => {
+            item.name = value;
+            notify();
+          }, { placeholder: '对方变量名' }),
+          el('span', { class: 'ilb-sub', text: '→' }),
+          input(item.target, (value) => {
+            item.target = value;
+            notify();
+          }, { placeholder: '这里的变量名' }),
+        ]);
+        row.appendChild(
+          button('移除', () => {
+            returns.splice(index, 1);
+            notify();
+            redraw();
+          }, { ghost: true }),
+        );
+        body.appendChild(row);
+      });
+      if (returns.length < MAX_CALL_RETURNS) {
+        body.appendChild(
+          button('加一个返回值', () => {
+            returns.push({ name: '', target: '' });
+            notify();
+            redraw();
+          }, { ghost: true }),
+        );
+      }
+      if (returns.length > 0) {
+        body.appendChild(
+          el('div', { class: 'ilb-inline ilb-flow-persist' }, [
+            checkbox(node.persist === true, (checked) => {
+              node.persist = checked;
+              notify();
+            }, '返回值也写进这张聊天'),
+          ]),
+        );
+      }
+      body.appendChild(hint('参数算不出来（变量还不存在 / 表达式报错）时这一步不执行，并在运行反馈里说明——不会把空值传进去。取不到的返回值同样会报出来。'));
       return body;
     }
 
@@ -987,11 +1277,38 @@ export function renderFlowEditor(options = {}) {
         placeholder: '一行一个候选，例如：\n你捡到一枚铜币。\n你什么也没找到。',
         oninput: (event) => {
           node.candidates = event.target.value.split('\n').slice(0, MAX_CANDIDATES);
+          // 权重跟候选一一对应：加行补 1、删行截断，别让权重错位到别的候选上
+          node.weights = Array.isArray(node.weights) ? node.weights : [];
+          while (node.weights.length < node.candidates.length) node.weights.push(1);
+          node.weights.length = node.candidates.length;
           notify();
         },
       });
       area.value = (node.candidates ?? []).join('\n');
       body.appendChild(area);
+
+      // 权重（v0.18）：每条候选一个数字，0 = 这次绝对不选
+      const count = (node.candidates ?? []).length;
+      node.weights = Array.isArray(node.weights) ? node.weights : [];
+      while (node.weights.length < count) node.weights.push(1);
+      if (node.weights.length > count) node.weights.length = count;
+      if (count > 0) {
+        const row = el('div', { class: 'ilb-inline ilb-flow-weights' }, [el('span', { class: 'ilb-sub', text: '权重' })]);
+        for (let i = 0; i < count; i += 1) {
+          row.appendChild(
+            el('label', { class: 'ilb-inline' }, [
+              el('span', { class: 'ilb-sub', text: `第 ${i + 1} 条` }),
+              input(node.weights[i] ?? 1, (value) => {
+                const n = Number(value);
+                node.weights[i] = value === '' || !Number.isFinite(n) ? 1 : Math.max(0, Math.min(MAX_WEIGHT, Math.trunc(n)));
+                notify();
+              }, { type: 'number', placeholder: '1' }),
+            ]),
+          );
+        }
+        body.appendChild(row);
+      }
+
       body.appendChild(
         el('div', { class: 'ilb-inline ilb-flow-expr' }, [
           el('span', { class: 'ilb-sub', text: '结果存到（留空就只追加到正文）' }),
@@ -1011,7 +1328,7 @@ export function renderFlowEditor(options = {}) {
           ]),
         );
       }
-      body.appendChild(hint(`最多 ${MAX_CANDIDATES} 条候选。同一楼层结果固定（重画不会换一条）；候选里可以写 {{变量}}。`));
+      body.appendChild(hint(`最多 ${MAX_CANDIDATES} 条候选。权重越大越容易被挑中，0 = 这次绝对不选；全为 0 时按等概率。同一楼层结果固定（重画不会换一条）；候选里可以写 {{变量}}。`));
       return body;
     }
 
@@ -1019,16 +1336,132 @@ export function renderFlowEditor(options = {}) {
       body.appendChild(
         el('div', { class: 'ilb-inline ilb-flow-expr' }, [
           el('span', { class: 'ilb-sub', text: '重复' }),
-          input(String(node.times ?? 3), (value) => {
-            const n = Math.trunc(Number(value) || 1);
-            node.times = Math.max(1, Math.min(MAX_REPEAT, n));
+          selectBox(node.mode ?? 'times', [
+            { value: 'times', label: '按次数' },
+            { value: 'list', label: '按列表，每项做一遍' },
+          ], (value) => {
+            node.mode = value;
             notify();
-          }, { type: 'number' }),
-          el('span', { class: 'ilb-sub', text: `次（最多 ${MAX_REPEAT} 次）` }),
+            redraw();
+          }, 'ilb-select'),
         ]),
       );
+      if (node.mode === 'list') {
+        body.appendChild(
+          el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+            el('span', { class: 'ilb-sub', text: '列表变量' }),
+            input(node.listName, (value) => {
+              node.listName = value;
+              notify();
+            }, { placeholder: '例如 候选名单' }),
+            el('span', { class: 'ilb-sub', text: '当前项存进' }),
+            input(node.itemName, (value) => {
+              node.itemName = value;
+              notify();
+            }, { placeholder: '例如 项' }),
+          ]),
+        );
+      } else {
+        body.appendChild(
+          el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+            el('span', { class: 'ilb-sub', text: '重复' }),
+            input(String(node.times ?? 3), (value) => {
+              const n = Math.trunc(Number(value) || 1);
+              node.times = Math.max(1, Math.min(MAX_REPEAT, n));
+              notify();
+            }, { type: 'number' }),
+            el('span', { class: 'ilb-sub', text: `次（最多 ${MAX_REPEAT} 次）` }),
+          ]),
+        );
+      }
       body.appendChild(renderBranch('循环体', node.body, '循环体是空的：这一步什么也不做', 'body'));
-      body.appendChild(hint('循环次数是写死的有限值，不会无限跑；循环体里可以用「结束流程」提前跳出来。'));
+      body.appendChild(hint(node.mode === 'list'
+        ? `必须是一个已经用「列表变量」建好的列表；每一项都会写进「当前项存进」那个变量，跑完还原。最多做 ${MAX_REPEAT} 项，不会无限跑。`
+        : '循环次数是写死的有限值，不会无限跑；循环体里可以用「结束流程」提前跳出来。'));
+      return body;
+    }
+
+    if (node.kind === 'switch') {
+      body.appendChild(
+        el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+          el('span', { class: 'ilb-sub', text: '看' }),
+          renderOperand(node.value, (next) => {
+            node.value = next;
+            notify();
+            redraw();
+          }),
+          el('span', { class: 'ilb-sub', text: '等于哪一条' }),
+        ]),
+      );
+      (node.cases ?? []).forEach((c, i) => {
+        const row = el('div', { class: 'ilb-inline ilb-flow-case' }, [
+          el('span', { class: 'ilb-sub', text: `第 ${i + 1} 条：` }),
+          renderOperand(c.match, (next) => {
+            c.match = next;
+            notify();
+            redraw();
+          }),
+        ]);
+        row.appendChild(button('移除', () => {
+          node.cases.splice(i, 1);
+          if (node.cases.length === 0) node.cases.push({ id: newId(), match: { type: 'text', value: '' }, body: [] });
+          notify();
+          redraw();
+        }, { ghost: true, disabled: node.cases.length <= 1 }));
+        body.appendChild(row);
+      });
+      body.appendChild(button('＋ 加一条分支', () => {
+        if (node.cases.length >= MAX_SWITCH_CASES) return;
+        node.cases.push({ id: newId(), match: { type: 'text', value: '' }, body: [] });
+        notify();
+        redraw();
+      }, { ghost: true, disabled: node.cases.length >= MAX_SWITCH_CASES }));
+      body.appendChild(hint(`按顺序比，命中第一条就走它，都不等于就走「否则」。最多 ${MAX_SWITCH_CASES} 条分支；数字和文本都能比（两边都能当数字时按数字比）。`));
+      return body;
+    }
+
+    if (node.kind === 'list') {
+      body.appendChild(
+        el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+          el('span', { class: 'ilb-sub', text: '列表变量' }),
+          input(node.name, (value) => {
+            node.name = value;
+            notify();
+          }, { placeholder: '例如 候选名单' }),
+        ]),
+      );
+      body.appendChild(
+        el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+          el('span', { class: 'ilb-sub', text: '动作' }),
+          selectBox(node.op ?? 'set', LIST_OPS.map((op) => ({ value: op, label: LIST_OP_LABEL[op] })), (value) => {
+            node.op = value;
+            notify();
+            redraw();
+          }, 'ilb-select'),
+        ]),
+      );
+      if (node.op !== 'clear') {
+        body.appendChild(
+          el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+            el('span', { class: 'ilb-sub', text: '值' }),
+            renderOperand(node.value, (next) => {
+              node.value = next;
+              notify();
+              redraw();
+            }),
+          ]),
+        );
+        body.appendChild(
+          el('div', { class: 'ilb-inline ilb-flow-expr' }, [
+            el('span', { class: 'ilb-sub', text: '分隔符' }),
+            input(node.separator, (value) => {
+              node.separator = value.slice(0, 8);
+              notify();
+            }, { placeholder: '换行、逗号或者 |' }),
+          ]),
+        );
+      }
+      body.appendChild(hint(`列表只活在这一轮判定里（不写进聊天），最多 ${MAX_LIST_ITEMS} 项。设为/追加时，值会按分隔符拆成一项一项；分隔符写「\\n」表示换行。`));
       return body;
     }
 
@@ -1272,6 +1705,10 @@ export function renderFlowEditor(options = {}) {
       out.push({ id: n.id, kind: n.kind, path: `第 ${label} 步` });
       flattenNodes(n.then ?? [], `${label}✓`, out);
       flattenNodes(n.else ?? [], `${label}✗`, out);
+      flattenNodes(n.body ?? [], `${label}↻`, out);
+      (n.cases ?? []).forEach((c, ci) => {
+        flattenNodes(c?.body ?? [], `${label}=${ci + 1}`, out);
+      });
     });
     return out;
   }

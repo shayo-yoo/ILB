@@ -16,8 +16,22 @@ function safeClone(v, fallback) {
   }
 }
 
+function emptyStats() {
+  return { entries: {}, logics: {} };
+}
+
 function emptyState() {
-  return { settings: {}, books: [], manualState: {}, chatStates: {}, importLog: [], ui: {}, snapshots: [] };
+  return {
+    settings: {},
+    books: [],
+    manualState: {},
+    chatStates: {},
+    importLog: [],
+    ui: {},
+    snapshots: [],
+    // 触发次数（v0.22.0）：只做界面排序用，不参与判定。老存档里没有这个键，读的时候补空。
+    stats: emptyStats(),
+  };
 }
 
 /**
@@ -60,6 +74,9 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     b.importLog = Array.isArray(b.importLog) ? b.importLog : [];
     b.ui = b.ui && typeof b.ui === 'object' ? b.ui : {};
     b.snapshots = Array.isArray(b.snapshots) ? b.snapshots : [];
+    b.stats = b.stats && typeof b.stats === 'object' ? b.stats : emptyStats();
+    b.stats.entries = b.stats.entries && typeof b.stats.entries === 'object' ? b.stats.entries : {};
+    b.stats.logics = b.stats.logics && typeof b.stats.logics === 'object' ? b.stats.logics : {};
     migrateIfNeeded(b);
     cache = b;
     return b;
@@ -126,6 +143,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
 
   function saveBook(raw) {
     const book = normalizeBook(raw);
+    // 任何一次保存都算"改过"：排序里的「上次修改」看这个时间。
+    book.updated_at = Date.now();
     const b = bucket();
     const idx = b.books.findIndex((x) => x && x.book_id === book.book_id);
     if (idx >= 0) b.books[idx] = book;
@@ -328,6 +347,44 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     return true;
   }
 
+  /**
+   * 记一次触发（条目真正出现 / 日志流程跑通）。只做排序统计，不参与任何判定。
+   * chats 最多留 40 个聊天，避免一个用了两年的存档被统计表撑大。
+   */
+  function recordTrigger(kind, id, chatId) {
+    const bucketName = kind === 'logics' ? 'logics' : 'entries';
+    if (!id) return false;
+    const b = bucket();
+    const table = b.stats[bucketName];
+    const key = String(id);
+    const cur = table[key] && typeof table[key] === 'object' ? table[key] : { total: 0, chats: {} };
+    cur.total = Math.max(0, Math.trunc(Number(cur.total) || 0)) + 1;
+    if (chatId) {
+      const cid = String(chatId);
+      cur.chats = cur.chats && typeof cur.chats === 'object' ? cur.chats : {};
+      cur.chats[cid] = Math.max(0, Math.trunc(Number(cur.chats[cid]) || 0)) + 1;
+      const keys = Object.keys(cur.chats);
+      if (keys.length > 40) {
+        keys
+          .sort((a, c) => (Number(cur.chats[a]) || 0) - (Number(cur.chats[c]) || 0))
+          .slice(0, keys.length - 40)
+          .forEach((k) => delete cur.chats[k]);
+      }
+    }
+    table[key] = cur;
+    commit();
+    return true;
+  }
+
+  function getTriggerStats() {
+    try {
+      const b = bucket();
+      return safeClone(b.stats, emptyStats());
+    } catch {
+      return emptyStats();
+    }
+  }
+
   function exportAll() {
     const b = bucket();
     return safeClone(
@@ -341,6 +398,7 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
         importLog: b.importLog,
         ui: b.ui,
         snapshots: b.snapshots,
+        stats: b.stats,
       },
       {},
     );
@@ -363,6 +421,9 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     if (source.manualState && typeof source.manualState === 'object') b.manualState = source.manualState;
     if (source.importLog && Array.isArray(source.importLog)) b.importLog = source.importLog.slice(-IMPORT_LOG_LIMIT);
     if (source.ui && typeof source.ui === 'object') b.ui = source.ui;
+    if (source.stats && typeof source.stats === 'object') {
+      b.stats = { entries: source.stats.entries ?? {}, logics: source.stats.logics ?? {} };
+    }
     if (Array.isArray(source.snapshots)) b.snapshots = evictSnapshots(source.snapshots);
     // 导入的是"一整套存档"：版本号跟着走，下次打开不会再迁一遍
     b.version = DATA_VERSION;
@@ -389,6 +450,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     appendImportLog,
     getUiState,
     saveUiState,
+    recordTrigger,
+    getTriggerStats,
     listSnapshots,
     getSnapshot,
     saveSnapshot,

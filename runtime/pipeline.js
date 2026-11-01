@@ -4,6 +4,7 @@
 
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
+import { applyDoubleInjectPolicy } from '../core/double-inject.js';
 import { summarizeHostContext } from '../core/host-context.js';
 import { expandMacros, normalizeVars, resolveChatId } from '../core/vars.js';
 import { notifyObservers } from './registry.js';
@@ -175,6 +176,18 @@ export function createPipeline(deps) {
       return false;
     }
 
+    // 同源双重注入（ILB-4.10 / ILB-4.23.11）：`skip` 时把"跟着原生书启用的 ILB 副本"摘掉，
+    // 只让酒馆那本注入；`warn` / `allow` 原样放行（默认仍是 v0.15 的提醒行为）。
+    const doublePolicy = settings.doubleInjectPolicy ?? 'warn';
+    let doubleInject;
+    try {
+      doubleInject = applyDoubleInjectPolicy(resolved, books, doublePolicy);
+      resolved = doubleInject.resolved;
+    } catch (err) {
+      doubleInject = { duplicates: [], skipped: [], policy: doublePolicy };
+      log.warn(`同源注入策略没算出来（这一轮按原样注入）: ${err?.message ?? err}`);
+    }
+
     let result;
     try {
       // 独立逻辑（ILB-4.14）：只取"启用的书"里的逻辑，和条目的激活范围保持一致。
@@ -190,6 +203,28 @@ export function createPipeline(deps) {
         /* 清不掉就算了，下一轮会覆盖 */
       }
       return false;
+    }
+
+    // 诊断页要能说出"这轮为什么少了哪本书"（ILB-4.10）。
+    if (result && result.books) {
+      result.books.doubleInject = {
+        policy: doubleInject.policy,
+        duplicates: doubleInject.duplicates,
+        skipped: doubleInject.skipped,
+      };
+    }
+
+    // 触发次数统计（v0.22.0）：只记"真的出现了"的条目和"真的跑通了"的逻辑，
+    // 给界面排序用；统计写盘失败不影响这一轮注入。
+    try {
+      for (const item of result?.activated ?? []) {
+        if (item?.entryId) repository.recordTrigger?.('entries', item.entryId, currentChatId);
+      }
+      for (const id of result?.logicPassed ?? []) {
+        repository.recordTrigger?.('logics', id, currentChatId);
+      }
+    } catch (err) {
+      log.warn(`记录触发次数失败（不影响这一轮）: ${err?.message ?? err}`);
     }
 
     // 宏在这里展开：条目正文里的 {{ILB:chat.名字}} 用当前聊天的变量表替换。

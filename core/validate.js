@@ -16,6 +16,12 @@ import {
   MAX_DEPTH,
   MAX_NODES,
   MAX_REPEAT,
+  MAX_WEIGHT,
+  MAX_CALL_ARGS,
+  MAX_CALL_RETURNS,
+  MAX_LIST_ITEMS,
+  MAX_SWITCH_CASES,
+  LIST_OPS,
   OPERAND_TYPES,
   SET_OPS,
   countFlowNodes,
@@ -32,9 +38,11 @@ export function collectVarWrites(nodes, out = new Set()) {
     if (node.kind === 'calc' && node.target) out.add(String(node.target));
     if (node.kind === 'random' && node.target) out.add(String(node.target));
     if (node.kind === 'choose' && node.target) out.add(String(node.target));
+    if (node.kind === 'list' && node.name) out.add(String(node.name));
     collectVarWrites(node.then, out);
     collectVarWrites(node.else, out);
     collectVarWrites(node.body, out);
+    for (const c of Array.isArray(node.cases) ? node.cases : []) collectVarWrites(c?.body, out);
   }
   return out;
 }
@@ -90,6 +98,12 @@ export function validateFlow(flow, options = {}) {
         if (Array.isArray(node.else) && node.else.length) walk(node.else, [...here, '不成立时']);
       }
       if (node.kind === 'repeat' && Array.isArray(node.body)) walk(node.body, [...here, '里面']);
+      if (node.kind === 'switch') {
+        (Array.isArray(node.cases) ? node.cases : []).forEach((c, i) => {
+          if (Array.isArray(c?.body) && c.body.length) walk(c.body, [...here, `第 ${i + 1} 条分支`]);
+        });
+        if (Array.isArray(node.else) && node.else.length) walk(node.else, [...here, '否则']);
+      }
     });
   }
 
@@ -131,10 +145,42 @@ export function validateFlow(flow, options = {}) {
       const list = (Array.isArray(node.candidates) ? node.candidates : []).filter((c) => String(c ?? '').trim());
       if (list.length === 0) problems.push(mk('empty-choose', 'error', node.id, where, '「随机选择」一条候选都没写'));
       if (list.length === 1) problems.push(mk('single-choose', 'warn', node.id, where, '「随机选择」只有一条候选，其实等于固定输出'));
+      // v0.18：权重与候选一一对应；全 0 / 负数都说明"这条根本选不出来"
+      const weights = Array.isArray(node.weights) ? node.weights : [];
+      if (weights.some((w) => Number(w) < 0)) {
+        problems.push(mk('bad-weight', 'error', node.id, where, '「随机选择」的权重不能是负数'));
+      }
+      if (list.length > 0 && weights.length >= list.length && weights.slice(0, list.length).every((w) => Number(w) === 0)) {
+        problems.push(mk('zero-weights', 'warn', node.id, where, '「随机选择」的权重全是 0，运行时会退回等概率'));
+      }
     }
     if (node.kind === 'repeat') {
       if (Array.isArray(node.body) && node.body.length === 0) problems.push(mk('empty-repeat', 'warn', node.id, where, '「重复」里面没有步骤'));
       if (Number(node.times) > MAX_REPEAT) problems.push(mk('too-many-repeat', 'error', node.id, where, `重复次数超过上限 ${MAX_REPEAT}`));
+      if (node.mode === 'list') {
+        const listName = String(node.listName ?? '').trim();
+        if (!listName) problems.push(mk('no-list', 'error', node.id, where, '「重复」选了按列表循环，但没有填列表变量名'));
+        else if (!knownVars.has(listName)) problems.push(mk('undefined-list', 'warn', node.id, where, `列表变量「${listName}」在这条流程里没有建过，运行时会被当成"不是列表"`));
+        if (!String(node.itemName ?? '').trim()) problems.push(mk('no-list-item', 'warn', node.id, where, '「重复」没有写当前项存到哪个变量，里面读不到这一项'));
+      }
+    }
+    if (node.kind === 'switch') {
+      const cases = Array.isArray(node.cases) ? node.cases : [];
+      if (cases.length === 0) problems.push(mk('empty-switch', 'error', node.id, where, '「分支选择」一条分支都没有'));
+      if (cases.length > MAX_SWITCH_CASES) problems.push(mk('too-many-cases', 'error', node.id, where, `分支超过上限 ${MAX_SWITCH_CASES} 条`));
+      checkOperand(node.value, path, node, '要比的值');
+      cases.forEach((c, i) => {
+        if (!Array.isArray(c?.body) || c.body.length === 0) problems.push(mk('empty-case', 'warn', node.id, where, `第 ${i + 1} 条分支是空的，命中后什么也不做`));
+        checkOperand(c?.match, [...path, `第 ${i + 1} 条分支`], node, '比较值');
+      });
+      if (!Array.isArray(node.else) || node.else.length === 0) problems.push(mk('no-switch-else', 'warn', node.id, where, '没有写「否则」：一条都不命中时这一步什么也不做'));
+    }
+    if (node.kind === 'list') {
+      const name = String(node.name ?? '').trim();
+      if (!name) problems.push(mk('no-target', 'error', node.id, where, '「列表变量」没有写要操作哪个列表'));
+      if (!LIST_OPS.includes(node.op)) problems.push(mk('bad-op', 'error', node.id, where, `不认识的列表动作「${node.op}」`));
+      if (node.op !== 'clear') checkOperand(node.value, path, node, '值');
+      if (node.separator === '') problems.push(mk('empty-separator', 'warn', node.id, where, '列表的分隔符是空的，会按"每个字符"拆开'));
     }
     if (node.kind === 'chance') {
       const p = Number(node.percent);
@@ -150,6 +196,33 @@ export function validateFlow(flow, options = {}) {
       const id = String(node.logicId ?? '');
       if (!id) problems.push(mk('no-target', 'error', node.id, where, '「调用逻辑」没有选要调用哪条逻辑'));
       else if (logicIds.size && !logicIds.has(id)) problems.push(mk('missing-logic', 'error', node.id, where, '要调用的逻辑已经不在了'));
+      // v0.18：参数靠"名字"传进去，空名/重名都会让后一个悄悄盖掉前一个
+      const args = Array.isArray(node.args) ? node.args : [];
+      const argNames = new Map();
+      args.forEach((arg, index) => {
+        const name = String(arg?.name ?? '').trim();
+        if (!name) {
+          problems.push(mk('bad-call-arg', 'error', node.id, where, `第 ${index + 1} 个参数没有写名字`));
+          return;
+        }
+        if (argNames.has(name)) problems.push(mk('dup-call-arg', 'warn', node.id, where, `参数「${name}」写了两次，只算最后一个`));
+        argNames.set(name, index);
+        checkOperand(arg?.value, path, node, `参数「${name}」`);
+      });
+      if (args.length > MAX_CALL_ARGS) {
+        problems.push(mk('too-many-args', 'error', node.id, where, `参数超过上限 ${MAX_CALL_ARGS} 个`));
+      }
+      // 返回值：对方变量名 → 这里的变量名，两边都得有
+      const returns = Array.isArray(node.returns) ? node.returns : [];
+      returns.forEach((item, index) => {
+        const name = String(item?.name ?? '').trim();
+        const target = String(item?.target ?? '').trim();
+        if (!name) problems.push(mk('bad-call-return', 'error', node.id, where, `第 ${index + 1} 个返回值没有写对方变量名`));
+        if (!target) problems.push(mk('bad-call-return', 'error', node.id, where, `第 ${index + 1} 个返回值没有写存到哪个变量`));
+      });
+      if (returns.length > MAX_CALL_RETURNS) {
+        problems.push(mk('too-many-returns', 'error', node.id, where, `返回值超过上限 ${MAX_CALL_RETURNS} 个`));
+      }
     }
     if (node.kind === 'activate') {
       const id = String(node.entryId ?? '');

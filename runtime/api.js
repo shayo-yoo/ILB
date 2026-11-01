@@ -184,23 +184,28 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
   }
 
   function callLogicResolver(seed, depth = 0) {
-    return (id, parentCtx) => {
+    return (id, args, callerVars) => {
       if (depth >= CALL_DEPTH_MAX) return null;
       const found = findLogic(String(id ?? '').trim());
       if (!found.logic) return null;
       try {
-        return evaluateFlow(found.logic.flow, {
+        // 参数与返回值（v0.18）：和被调用逻辑在聊天里跑时一样——
+        // 参数临时盖在调用方的变量上（不落盘），跑完的变量表当 locals 交回去。
+        const bound = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+        const base = callerVars && typeof callerVars === 'object' ? callerVars : {};
+        const flow = evaluateFlow(found.logic.flow, {
           text: '',
           messages: [],
           userInput: '',
           messageCount: tick(),
           seed: `${seed}:${found.logic.id}`,
-          vars: {},
+          vars: { ...base, ...bound },
           activated: new Set(),
           // 「界面」指令要从被调用的逻辑里冒出来，所以这里跟着外层走
-          uiAllowed: parentCtx?.uiAllowed === true,
+          uiAllowed: true,
           callLogic: callLogicResolver(`${seed}:${found.logic.id}`, depth + 1),
         });
+        return { ...flow, locals: flow.vars ?? {} };
       } catch {
         return null;
       }

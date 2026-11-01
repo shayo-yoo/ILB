@@ -104,7 +104,8 @@ export function defaultEntry(overrides = {}) {
     injection: { position: 'after_char', depth: 4, role: 'system' },
     _source: { book_file: null, uid: null, unknown: {}, content_hash: null },
     // 界面用的排序位次（ILB-4.2.1 第 8 步的第二级），不参与任何判定
-    ui: { order: 0 },
+    // order = 手动排序权重（越大越靠前）；createdAt/updatedAt = 界面排序用的时间戳（老数据为 0）
+    ui: { order: 0, createdAt: 0, updatedAt: 0 },
     ...overrides,
   };
 }
@@ -192,7 +193,7 @@ export function normalizeEntry(raw, bookId) {
     unknown: src._source?.unknown && typeof src._source.unknown === 'object' ? { ...src._source.unknown } : {},
     content_hash: src._source?.content_hash ?? null,
   };
-  out.ui = { order: num(src.ui?.order, 0) };
+  out.ui = { order: num(src.ui?.order, 0), createdAt: num(src.ui?.createdAt, 0), updatedAt: num(src.ui?.updatedAt, 0) };
   return out;
 }
 
@@ -211,7 +212,7 @@ export function defaultLogic(overrides = {}) {
     output: { text: '', position: 'after_char', depth: 4, role: 'system', weight: 100 },
     // AI 通过正文宏指令调用它（ILB-4.16）：默认不暴露
     call: { exposed: false, params: [] },
-    ui: { order: 0 },
+    ui: { order: 0, createdAt: 0, updatedAt: 0 },
     ...overrides,
   };
 }
@@ -243,7 +244,7 @@ export function normalizeLogic(raw, bookId) {
     exposed: src.call?.exposed === true,
     params: asArray(src.call?.params).map((p) => str(p)).filter(Boolean),
   };
-  out.ui = { order: num(src.ui?.order, 0) };
+  out.ui = { order: num(src.ui?.order, 0), createdAt: num(src.ui?.createdAt, 0), updatedAt: num(src.ui?.updatedAt, 0) };
   return out;
 }
 
