@@ -5,6 +5,8 @@
 // 书里的逻辑仍然留在书里（老数据不动），页面上单列一段，可以搬进逻辑组或从组里搬回书。
 
 import { el, button, badge, hint, actionRow, downloadJson, metaLine, selectBox, card } from './widgets.js';
+import { pickerButton } from './picker.js';
+import { describeBookContext } from './nav.js';
 import { openLogicEditor } from './logic-editor.js';
 import { countFlowNodes } from '../core/flow.js';
 import { normalizeLogic, META_LABEL } from '../core/model.js';
@@ -304,10 +306,20 @@ export function renderLogicView(ctx) {
     const groupBar = el('div', { class: 'ilb-plus-bar' }, [
       el('span', { class: 'ilb-sub', text: '逻辑组' }),
       list.length > 0
-        ? selectBox(group?.id ?? '', list.map((g) => ({ value: g.id, label: `${g.name}${g.enabled === false ? '（已停用）' : ''}` })), (value) => {
-          state.logicGroupId = value;
-          draw();
-        }, 'ilb-select ilb-group-select')
+        ? pickerButton(group?.name ?? '', () => ctx.openPicker?.({
+          title: '选择逻辑组',
+          value: group?.id ?? '',
+          hint: '组多的时候直接搜名字；括号里是这个组有几条逻辑。',
+          items: list.map((g) => ({
+            value: g.id,
+            label: `${g.name}${g.enabled === false ? '（已停用）' : ''}`,
+            detail: `${standaloneOf(g).length} 条逻辑`,
+          })),
+          onPick: (value) => {
+            state.logicGroupId = value;
+            draw();
+          },
+        }), { className: 'ilb-group-select', placeholder: '选择组' })
         : hint('还没有逻辑组。'),
       button('新建组', () => newGroup(), { ghost: true }),
       group ? button('改名', () => renameGroup(group), { ghost: true }) : null,
@@ -317,10 +329,9 @@ export function renderLogicView(ctx) {
     listHost.appendChild(groupBar);
 
     if (group) {
-      const follow = [
-        { value: '', label: '不跟随任何书（独立运行）' },
-        ...books.map((b) => ({ value: b.book_id, label: `《${b.name}》启用时才跑` })),
-      ];
+      const followLabel = group.followBookId
+        ? `《${books.find((b) => b.book_id === group.followBookId)?.name ?? group.followBookId}》启用时才跑`
+        : '不跟随任何书（独立运行）';
       listHost.appendChild(el('div', { class: 'ilb-card ilb-logic-groupcard' }, [
         el('div', { class: 'ilb-inline-list' }, [
           el('label', { class: 'ilb-inline' }, [
@@ -333,7 +344,16 @@ export function renderLogicView(ctx) {
             el('span', { class: 'ilb-sub', text: '这个组启用' }),
           ]),
           el('span', { class: 'ilb-sub', text: '跟着哪本书' }),
-          selectBox(group.followBookId ?? '', follow, (value) => setFollow(group, value), 'ilb-select ilb-follow-book'),
+          pickerButton(followLabel, () => ctx.openPicker?.({
+            title: '这组跟着哪本书',
+            value: group.followBookId ?? '',
+            hint: '书多时可搜书名；选「不跟随」= 这组不管书开没开都按自己的触发词跑。',
+            items: [
+              { value: '', label: '不跟随任何书（独立运行）' },
+              ...books.map((b) => ({ value: b.book_id, label: `《${b.name}》启用时才跑`, detail: describeBookContext(b) })),
+            ],
+            onPick: (value) => setFollow(group, value),
+          }), { className: 'ilb-follow-book', placeholder: '选择书' }),
         ]),
         hint('「不跟随任何书」= 不管书架里哪本书开着，这组都按自己的触发词跑；也可以选了某本书，只在它启用时跑。'),
       ]));

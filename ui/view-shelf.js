@@ -142,7 +142,7 @@ export function renderShelf(ctx) {
     const manual = repository.getManualState();
     // 宿主上下文每次重画都重新读：切了角色就该看到新的"为什么"
     const host = normalizeHostContext(readHost());
-    const shown = ctx.sortedBooks(filterBooks(all, ctx.state.bookQuery));
+    const shown = ctx.sortedBooks(filterBooks(all, ctx.state.bookQuery, ctx.state.searchScope?.books ?? 'book'));
     const visible = new Set(shown.map((b) => b.book_id));
     for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
     for (const id of [...expanded]) if (!visible.has(id)) expanded.delete(id);
@@ -292,8 +292,8 @@ export function renderShelf(ctx) {
       ]),
       // 摘要标签
       el('div', { class: 'ilb-book-summary' }, tags),
-      // 一行说明 + 打开规则入口；点书体进规则页
-      el('div', { class: 'ilb-book-line' }, [
+      // 一行说明 + 打开规则入口；点书体进规则页。紧凑模式只留原因，舒适模式多一行酒馆关联。
+      el('div', { class: 'ilb-book-line ilb-book-hostline' }, [
         el('span', { class: 'ilb-sub ilb-book-reason ' + (reason.on === true ? 'ilb-reason-on' : reason.on === false ? 'ilb-reason-off' : ''), text: reason.text }),
         el('span', { class: 'ilb-sub', text: `酒馆关联：${hostNames ? hostNames.join('、') : (host.contextAvailable ? '没有' : '未同步')}` }),
       ]),
@@ -301,7 +301,7 @@ export function renderShelf(ctx) {
         button('打开规则', () => openRules(book), { ghost: true }),
         button(isOpen ? '收起详情 ▴' : '展开详情 ▾', () => toggleExpanded(book), { ghost: true, title: isOpen ? '收起详情' : '展开详情' }),
         el('span', { class: 'ilb-spacer' }),
-        el('span', { class: 'ilb-sub', text: `约 ${bookTokenEstimate(book, estimateTokens)} 词` }),
+        el('span', { class: 'ilb-sub ilb-book-comfort-only', text: `约 ${bookTokenEstimate(book, estimateTokens)} 词` }),
       ]),
       isOpen ? el('div', { class: 'ilb-book-detail' }, [
         hostRowNode,
@@ -350,14 +350,7 @@ export function renderShelf(ctx) {
           source.imported_at
             ? el('span', { class: 'ilb-sub', text: `上次导入：${formatTime(source.imported_at)}` })
             : null,
-        ]),
-        actionRow([
-          button('导出', () => exportBook(book), { ghost: true }),
-          source.book_file
-            ? button('重新导入', () => openImportDialog(ctx, { preselect: [source.book_file], title: `重新导入 ${source.book_file}` }), { ghost: true })
-            : null,
-          button('复制一本', () => copyBook(book), { ghost: true }),
-          button('删除', () => removeBook(book), { ghost: true }),
+          count > 1 ? el('span', { class: 'ilb-sub', text: `导入 ${count} 次` }) : null,
         ]),
       ]) : null,
     ]);
@@ -496,10 +489,11 @@ export function renderShelf(ctx) {
       button('?', () => ctx.showHelp('shelf'), { ghost: true, title: '这一页怎么用' }),
     ]),
     mobile ? null : filterBar([
-      searchInput(ctx.state.bookQuery, '搜书名、来源文件、条目标题…', (value) => {
+      searchInput(ctx.state.bookQuery, '搜书名、来源文件…', (value) => {
         ctx.state.bookQuery = value;
         draw();
       }),
+      ctx.searchScopeSelect?.('books'),
       counterLine,
       modeBar,
     ]),

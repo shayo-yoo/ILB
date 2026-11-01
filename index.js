@@ -27,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.23.0';
+const VERSION = '0.24.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -177,6 +177,21 @@ async function boot() {
         return shell?.mobile?.navRoot ?? null;
       } catch {
         return null;
+      }
+    },
+    // 手机标题栏的折叠条槽位 + 折叠状态回写（v0.24.0）。
+    getHeaderRoot: () => {
+      try {
+        return shell?.mobile?.headSlot ?? null;
+      } catch {
+        return null;
+      }
+    },
+    setHeaderFolded: (folded) => {
+      try {
+        shell?.mobile?.setFolded(folded === true);
+      } catch {
+        /* 没手机壳就忽略 */
       }
     },
     // 书架与诊断页要显示"为什么启用"：这里给的是实时读到的宿主上下文

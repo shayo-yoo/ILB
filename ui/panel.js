@@ -28,7 +28,8 @@ import {
 } from './nav.js';
 import { SORT_KEYS, SORT_LABEL, SORT_HINT, SECOND_NONE, defaultDir, defaultSorts, normalizeSorts, normalizeSort, sortList } from '../core/sort.js';
 import { makeEmptyBook, validateBook, normalizeEntry } from '../core/model.js';
-import { filterEntries, listGroups, describeFilter, RULE_MODES, RULE_MODE_LABEL } from '../core/search.js';
+import { filterEntries, listGroups, describeFilter, RULE_MODES, RULE_MODE_LABEL, SEARCH_SCOPES, SEARCH_SCOPE_LABEL, BOOK_SEARCH_SCOPES, BOOK_SEARCH_SCOPE_LABEL } from '../core/search.js';
+import { openPicker, pickerButton } from './picker.js';
 import { renderShelf } from './view-shelf.js';
 import { renderRules } from './view-rules.js';
 import { renderLogicView } from './view-logic.js';
@@ -60,7 +61,7 @@ const BOOK_TABS = new Set(['rules', 'logic']);
 const SORT_LISTS = { shelf: 'shelf', rules: 'rules', logic: 'logic' };
 
 export function createPanel(deps) {
-  const { repository, nativeWorlds, pipeline, notify, getChatId, getLayout, getDensity, getNavRoot } = deps;
+  const { repository, nativeWorlds, pipeline, notify, getChatId, getLayout, getDensity, getNavRoot, getHeaderRoot, setHeaderFolded } = deps;
   const { getHostContext, describeHost } = deps;
 
   const VIEWS = {
@@ -100,6 +101,13 @@ export function createPanel(deps) {
     shelfMode: uiState.shelfMode === 'comfort' ? 'comfort' : 'compact',
     // 逻辑页当前选中的逻辑组
     logicGroupId: null,
+    // 搜索范围（v0.24.0）：书架默认只搜书名/来源；规则默认搜全部字段
+    searchScope: {
+      books: uiState.searchScope?.books === 'entries' ? 'entries' : 'book',
+      rules: uiState.searchScope?.rules === 'title' ? 'title' : 'all',
+    },
+    // 手机顶部折叠条整体收起（v0.24.0），存 uiState
+    topFolded: uiState.topFolded === true,
   };
 
   const root = el('div', { class: 'ilb-root' });
@@ -371,6 +379,10 @@ export function createPanel(deps) {
     currentBook,
     layout,
     density,
+    // v0.24.0：搜索范围与可搜索选择器
+    searchScopeSelect,
+    bookPickerButton,
+    openPicker: (options) => openPicker(ctx, options),
     openEditor: (book, entry) => openEditor(ctx, book, entry),
     openPreview: (book, entry) => openPreview(ctx, book, entry),
     // v0.22.0：排序与统计
@@ -492,7 +504,7 @@ export function createPanel(deps) {
   // ---- 手机：顶部常驻操作区 ----
 
   /** 顶部操作区：按功能分开的展开按钮；列表滚到哪都在。 */
-  function mobileTop() {
+  function mobileTopParts() {
     if (!topOutsideBound && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
       topOutsideBound = true;
       document.addEventListener('click', onTopOutsideClick);
@@ -563,7 +575,20 @@ export function createPanel(deps) {
       if (caret) caret.textContent = isOn ? '▴' : '▾';
     }
 
-    return el('div', { class: 'ilb-m-top' }, [chips, body]);
+    return { chips, body };
+  }
+
+  /** 收起/展开整个顶部操作区：状态存 uiState，按钮在手机标题栏最右侧。 */
+  function toggleTopFold(next) {
+    state.topFolded = typeof next === 'boolean' ? next : !state.topFolded;
+    state.topOpen = null;
+    persistUi({ topFolded: state.topFolded });
+    try {
+      setHeaderFolded?.(state.topFolded);
+    } catch {
+      /* 没有手机壳就只影响面板自己 */
+    }
+    render();
   }
 
   function canFilter() {
@@ -575,23 +600,8 @@ export function createPanel(deps) {
       const books = repository.listBooks();
       if (books.length === 0) return hint('还没有书籍：去「新建」里建一本，或从书架导入。');
       const book = currentBook();
-      const select = selectBox(
-        book ? book.book_id : '',
-        [{ value: '', label: '选择一本书…' }, ...books.map((b) => ({ value: b.book_id, label: bookOptionLabel(b) }))],
-        (value) => {
-          const apply = () => {
-            state.activeBookId = value || null;
-            state.selected = new Set();
-            state.ruleQuery = '';
-            render();
-          };
-          if (guard.allowLeave(apply)) apply();
-        },
-        'ilb-select ilb-book-select',
-      );
-      select.setAttribute('aria-label', '当前书籍');
-      return el('div', {}, [
-        select,
+      return el('div', { class: 'ilb-m-bookrow' }, [
+        bookPickerButton('ilb-book-select'),
         el('div', { class: 'ilb-sub', text: book ? describeBookContext(book) : '还没选书' }),
       ]);
     }
@@ -620,6 +630,7 @@ export function createPanel(deps) {
             state.ruleQuery = value;
             render();
           }),
+          searchScopeSelect('rules'),
           selectBox(state.ruleGroup, [{ value: '', label: '全部分组' }, ...groups.map((g) => ({ value: g, label: `同组 ${g}` }))], (value) => {
             state.ruleGroup = value;
             render();
@@ -636,10 +647,13 @@ export function createPanel(deps) {
           }, { ghost: true }),
         ]);
       }
-      return searchInput(state.bookQuery, '搜书名、来源文件、条目标题…', (value) => {
-        state.bookQuery = value;
-        render();
-      });
+      return el('div', { class: 'ilb-m-filter' }, [
+        searchInput(state.bookQuery, '搜书名、来源文件、条目标题…', (value) => {
+          state.bookQuery = value;
+          render();
+        }),
+        searchScopeSelect('books'),
+      ]);
     }
     if (id === 'vars') return varsRow();
     return null;
@@ -683,6 +697,62 @@ export function createPanel(deps) {
 
   // ---- 桌面：当前书籍栏 ----
 
+  function persistUi(patch = {}) {
+    try {
+      repository.saveUiState(patch);
+    } catch {
+      /* 存不下就只在这次会话里生效 */
+    }
+  }
+
+  function applyBook(value) {
+    const apply = () => {
+      state.activeBookId = value || null;
+      state.selected = new Set();
+      state.ruleQuery = '';
+      render();
+    };
+    if (guard.allowLeave(apply)) apply();
+  }
+
+  /** 书籍选择器：可搜索、显示条目/逻辑数量（书籍多、名字长时原生下拉没法搜）。 */
+  function bookPickerButton(extraClass = '') {
+    const books = repository.listBooks();
+    const book = currentBook();
+    return pickerButton(book ? book.name : '', () => openPicker(ctx, {
+      title: '选择当前书籍',
+      value: book?.book_id ?? '',
+      hint: '书名和「N 条规则 · M 条逻辑」都能搜；手机上也一样。',
+      placeholder: '搜书名…',
+      items: books.map((b) => ({ value: b.book_id, label: b.name, detail: describeBookContext(b) })),
+      empty: '没有匹配的书。',
+      onPick: (value) => applyBook(value),
+    }), {
+      prefix: '当前书籍：',
+      placeholder: '选择一本书…',
+      className: `ilb-book-picker ${extraClass}`.trim(),
+    });
+  }
+
+  function setSearchScope(kind, value) {
+    state.searchScope = { ...state.searchScope, [kind]: value };
+    persistUi({ searchScope: state.searchScope });
+    render();
+  }
+
+  /** 搜索范围：明确告诉用户搜的是标题还是内部字段。 */
+  function searchScopeSelect(kind) {
+    const isBook = kind === 'books';
+    const keys = isBook ? BOOK_SEARCH_SCOPES : SEARCH_SCOPES;
+    const labels = isBook ? BOOK_SEARCH_SCOPE_LABEL : SEARCH_SCOPE_LABEL;
+    return selectBox(
+      state.searchScope[kind],
+      keys.map((key) => ({ value: key, label: labels[key] })),
+      (value) => setSearchScope(kind, value),
+      'ilb-select ilb-search-scope',
+    );
+  }
+
   function bookBar() {
     if (!BOOK_TABS.has(state.activeTab)) return null;
     const books = repository.listBooks();
@@ -693,24 +763,9 @@ export function createPanel(deps) {
       ]);
     }
     const book = currentBook();
-    const select = selectBox(
-      book ? book.book_id : '',
-      [{ value: '', label: '选择一本书…' }, ...books.map((b) => ({ value: b.book_id, label: bookOptionLabel(b) }))],
-      (value) => {
-        const apply = () => {
-          state.activeBookId = value || null;
-          state.selected = new Set();
-          state.ruleQuery = '';
-          render();
-        };
-        if (guard.allowLeave(apply)) apply();
-      },
-      'ilb-select ilb-book-select',
-    );
-    select.setAttribute('aria-label', '当前书籍');
     return el('div', { class: 'ilb-bookbar' }, [
       el('span', { class: 'ilb-bookbar-label', text: '当前书籍' }),
-      select,
+      bookPickerButton('ilb-book-select'),
       el('span', { class: 'ilb-bookbar-note', text: book ? describeBookContext(book) : '还没选书' }),
     ]);
   }
@@ -754,7 +809,20 @@ export function createPanel(deps) {
       const main = el('div', { class: 'ilb-main' });
 
       if (currentLayout === 'mobile') {
-        root.appendChild(mobileTop());
+        const parts = mobileTopParts();
+        try {
+          setHeaderFolded?.(state.topFolded);
+        } catch {
+          /* 没接手机壳就跳过 */
+        }
+        const headerHost = typeof getHeaderRoot === 'function' ? getHeaderRoot() : null;
+        if (headerHost) {
+          headerHost.innerHTML = '';
+          if (!state.topFolded) headerHost.appendChild(parts.chips);
+        } else if (!state.topFolded) {
+          root.appendChild(parts.chips);
+        }
+        if (!state.topFolded) root.appendChild(parts.body);
         main.appendChild(drawView());
         root.appendChild(main);
         // 底栏由 ui/mobile.js 挂在滚动区外面；拿不到挂载点时退回旧行为（画在面板里）
@@ -814,6 +882,7 @@ export function createPanel(deps) {
     state,
     onLayoutChange,
     currentBook,
+    toggleTopFold,
     openEditor: (book, entry) => openEditor(ctx, book, entry),
     openPreview: (book, entry) => openPreview(ctx, book, entry),
   };

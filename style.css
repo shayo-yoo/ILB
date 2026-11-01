@@ -2454,3 +2454,241 @@ body.ilb-overlay-open .ilb-fab {
   overflow-wrap: anywhere;
 }
 
+/* ---- v0.24.0 手机标题栏：折叠条是标题栏的附属，不再浮在内容上 ---- */
+.ilb-m .ilb-m-head {
+  padding: 2px 10px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.ilb-m-head-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+}
+.ilb-m-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ilb-m-fold,
+.ilb-m-x {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+.ilb-m-head-slot:empty {
+  display: none;
+}
+.ilb-m .ilb-m-fold,
+.ilb-m .ilb-m-x {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 16px;
+  flex: none;
+}
+
+.ilb-m-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 1px 0 1px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+.ilb-m-chips::-webkit-scrollbar {
+  display: none;
+}
+.ilb-m .ilb-m-chip {
+  flex: none;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+  line-height: 28px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  min-width: 0;
+}
+.ilb-m .ilb-m-chip.ilb-m-chip-on {
+  border-color: rgba(108, 140, 255, 0.7);
+  background: rgba(108, 140, 255, 0.12);
+}
+.ilb-m-chip.ilb-m-chip-on {
+  border-color: rgba(108, 140, 255, 0.7);
+  background: rgba(108, 140, 255, 0.12);
+}
+.ilb-m-head-folded .ilb-m-head-slot {
+  display: none;
+}
+.ilb-m-top-body {
+  border-bottom: 1px solid rgba(127, 127, 140, 0.18);
+}
+.ilb-m-top-row {
+  padding: 6px 10px 8px;
+}
+.ilb-m-top-row + .ilb-m-top-row {
+  border-top: 1px dashed rgba(127, 127, 140, 0.16);
+}
+.ilb-m-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ilb-m-filter > .ilb-search {
+  flex: 1 1 100%;
+}
+
+/* ---- v0.24.0 可搜索选择器 ---- */
+.ilb-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 34px;
+}
+.ilb-picker-btn-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 34ch;
+}
+.ilb-picker-btn-caret {
+  opacity: 0.6;
+  font-size: 11px;
+}
+.ilb-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.ilb-picker-query {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ilb-picker-search {
+  flex: 1 1 auto;
+}
+.ilb-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.ilb-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  text-align: left;
+  background: transparent;
+}
+.ilb-picker-item:hover,
+.ilb-picker-item:focus-visible {
+  background: rgba(127, 127, 140, 0.12);
+}
+.ilb-picker-item-on {
+  border-color: rgba(108, 140, 255, 0.6);
+}
+.ilb-picker-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ilb-picker-detail {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  opacity: 0.72;
+}
+.ilb-picker-check {
+  flex: none;
+  color: #5b7cff;
+}
+.ilb-picker-group {
+  font-size: 11px;
+  opacity: 0.65;
+  padding: 4px 4px 2px;
+}
+.ilb-search-scope {
+  max-width: 150px;
+}
+
+/* ---- v0.24.0 卡片：紧凑/舒适真的不一样；展开详情压紧 ---- */
+.ilb-book-card-compact {
+  padding: 7px 9px;
+  gap: 3px;
+}
+.ilb-book-card-compact .ilb-book-hostline,
+.ilb-book-card-compact .ilb-book-comfort-only {
+  display: none;
+}
+.ilb-book-card-comfort {
+  padding: 12px 14px;
+  gap: 8px;
+}
+.ilb-book-comfort-only {
+  display: none;
+}
+.ilb-book-card-comfort .ilb-book-comfort-only {
+  display: inline;
+}
+.ilb-book-detail {
+  gap: 4px;
+  font-size: 12px;
+}
+.ilb-book-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  align-items: center;
+}
+.ilb-book-controls .ilb-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+.ilb-book-controls .ilb-inline > .ilb-sub {
+  flex: none;
+  min-width: 56px;
+}
+.ilb-book-controls select,
+.ilb-book-controls input {
+  height: 28px;
+  font-size: 12px;
+  padding: 2px 6px;
+  min-width: 0;
+}
+.ilb-book-detail .ilb-meta,
+.ilb-book-detail .ilb-inline-list {
+  font-size: 11px;
+}
+.ilb-m .ilb-book-controls {
+  grid-template-columns: 1fr;
+}
+.ilb-m .ilb-m-head-slot {
+  margin: 0 -10px;
+  padding: 0 10px;
+}
+

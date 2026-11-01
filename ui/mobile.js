@@ -78,10 +78,50 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     title: '关闭',
     'aria-label': '关闭',
   });
+  // 顶部折叠条整体收起/展开：按钮放在标题栏最右侧，收起后只剩标题这一行。
+  let onFoldToggle = null;
+  let folded = false;
+  const foldBtn = el('button', {
+    type: 'button',
+    class: 'ilb-m-fold',
+    text: '▾',
+    title: '收起顶部操作',
+    'aria-label': '收起顶部操作',
+    'aria-expanded': 'true',
+  });
+  // 面板把「书籍 / 新建 / 排序 / 筛选 / 变量」画在这里：它是标题栏的附属，不是浮层。
+  const headSlot = el('div', { class: 'ilb-m-head-slot' });
   const head = el('div', { class: 'ilb-m-head' }, [
-    el('div', { class: 'ilb-m-head-text' }, [titleNode]),
-    closeBtn,
+    el('div', { class: 'ilb-m-head-row' }, [
+      el('div', { class: 'ilb-m-head-text' }, [titleNode]),
+      foldBtn,
+      closeBtn,
+    ]),
+    headSlot,
   ]);
+
+  function applyFold() {
+    head.classList.toggle('ilb-m-head-folded', folded);
+    foldBtn.textContent = folded ? '▸' : '▾';
+    foldBtn.title = folded ? '展开顶部操作' : '收起顶部操作';
+    foldBtn.setAttribute('aria-label', foldBtn.title);
+    foldBtn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  }
+
+  function setFolded(next) {
+    folded = next === true;
+    applyFold();
+  }
+
+  function setFoldHandler(fn) {
+    onFoldToggle = typeof fn === 'function' ? fn : null;
+  }
+
+  foldBtn.addEventListener('click', () => {
+    folded = !folded;
+    applyFold();
+    if (onFoldToggle) onFoldToggle(folded);
+  });
 
   // 变量状态坞：只读的一行摘要，点开才看全部。没有变量时整条隐藏，
   // 这样没建变量的手机上界面与 v0.5.0 长得一模一样。
@@ -715,6 +755,9 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     toast,
     body: panelHost,
     navRoot,
+    headSlot,
+    setFolded,
+    setFoldHandler,
     dialog,
     fab,
     setStatus,

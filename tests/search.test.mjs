@@ -79,16 +79,30 @@ test('filterEntries：搜索与筛选是"并且"关系', () => {
   assert.equal(filterEntries(list, { q: '夜巡', group: '荒野' }).length, 1);
 });
 
-test('filterBooks：能按书名、来源文件、条目标题搜到', () => {
+test('filterBooks：默认只搜书名/来源；scope=entries 才搜内部条目标题', () => {
   const books = [
     { book_id: 'b1', name: '王城设定', _source: { book_file: 'wong.json' }, entries: [{ title: '夜巡' }] },
     { book_id: 'b2', name: '荒野设定', _source: {}, entries: [{ title: '沙暴' }] },
   ];
   assert.equal(filterBooks(books, '王城').length, 1);
   assert.equal(filterBooks(books, 'wong').length, 1);
-  assert.equal(filterBooks(books, '沙暴').length, 1);
+  // 书名/来源里没有「沙暴」：默认搜不到，选了「含内部条目标题」才搜得到
+  assert.equal(filterBooks(books, '沙暴').length, 0);
+  assert.equal(filterBooks(books, '沙暴', 'entries').length, 1);
+  assert.equal(filterBooks(books, '夜巡', 'entries').length, 1);
   assert.equal(filterBooks(books, '').length, 2);
   assert.equal(filterBooks(books, '不存在').length, 0);
+});
+
+test('规则搜索范围：只搜标题时，正文/触发词/分组都不命中', () => {
+  const list = [
+    { id: 'e1', title: '王城', content: '钟声', group: 'A', trigger: { any: ['夜巡'] } },
+  ];
+  assert.equal(filterEntries(list, { q: '钟声' }).length, 1);
+  assert.equal(filterEntries(list, { q: '钟声', scope: 'title' }).length, 0);
+  assert.equal(filterEntries(list, { q: '夜巡', scope: 'title' }).length, 0);
+  assert.equal(filterEntries(list, { q: '王城', scope: 'title' }).length, 1);
+  assert.ok(describeFilter({ q: '王城', scope: 'title' }, 1, 3).includes('只搜标题'));
 });
 
 test('describeFilter：没筛选时说总数，有筛选时说命中比例', () => {

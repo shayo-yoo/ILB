@@ -1030,7 +1030,7 @@ step('手机：顶部操作区默认收起、能展开排序；底栏挂在滚�
 
   const cls = (n) => String(n.className ?? '');
   let all = walk(host);
-  const top = all.find((n) => cls(n) === 'ilb-m-top');
+  const top = all.find((n) => cls(n) === 'ilb-m-chips');
   if (!top) throw new Error('手机上没有顶部常驻操作区');
   const rows = all.filter((n) => cls(n) === 'ilb-m-top-row');
   if (rows.length < 3) throw new Error(`顶部操作区只有 ${rows.length} 组`);
@@ -1068,6 +1068,13 @@ step('手机：顶部操作区默认收起、能展开排序；底栏挂在滚�
   // 底栏必须挂在 navHost（滚动区外），不在面板树里
   if (!walk(navHost).some((n) => cls(n) === 'ilb-m-nav')) throw new Error('底栏没有挂到 navHost');
   if (walk(host).some((n) => cls(n) === 'ilb-m-nav')) throw new Error('底栏还画在面板里');
+
+  // 顶部折叠条整体收起（v0.24.0）：chips 消失、再展开回来
+  p.toggleTopFold(true);
+  if (walk(host).some((n) => cls(n) === 'ilb-m-chips')) throw new Error('收起后折叠条还在');
+  if (walk(host).some((n) => cls(n) === 'ilb-m-top-row' && n.hidden !== true)) throw new Error('收起后还有展开的行');
+  p.toggleTopFold(false);
+  if (!walk(host).some((n) => cls(n) === 'ilb-m-chips')) throw new Error('再展开后折叠条没回来');
 });
 
 console.log(`\n界面冒烟：失败 ${failures} 个；toast 记录 ${notes.length} 条`);

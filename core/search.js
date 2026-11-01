@@ -15,33 +15,40 @@ export function splitQuery(query) {
 }
 
 /** 一条规则里所有"能被搜到"的文字：标题、正文、触发词、分组 */
-export function entryHaystack(entry) {
+export function entryHaystack(entry, scope = 'all') {
   if (!entry || typeof entry !== 'object') return '';
   const trigger = entry.trigger ?? {};
-  const parts = [
-    entry.title,
-    entry.content,
-    entry.group,
-    ...(Array.isArray(trigger.any) ? trigger.any : []),
-    ...(Array.isArray(trigger.all) ? trigger.all : []),
-    // 正则在存储里是 {source, flags}，直接 join 会变成 "[object Object]"
-    ...(Array.isArray(trigger.regex)
-      ? trigger.regex.map((r) => (typeof r === 'string' ? r : r?.source ?? ''))
-      : []),
-  ];
+  const parts = scope === 'title'
+    ? [entry.title]
+    : [
+      entry.title,
+      entry.content,
+      entry.group,
+      ...(Array.isArray(trigger.any) ? trigger.any : []),
+      ...(Array.isArray(trigger.all) ? trigger.all : []),
+      // 正则在存储里是 {source, flags}，直接 join 会变成 "[object Object]"
+      ...(Array.isArray(trigger.regex)
+        ? trigger.regex.map((r) => (typeof r === 'string' ? r : r?.source ?? ''))
+        : []),
+    ];
   return lower(parts.filter(Boolean).join(' \u0001 '));
 }
 
 /**
  * 关键词全部命中才算命中（AND）。这样"王城 夜巡"能缩小范围，而不是越搜越多。
- * 空关键词视为命中。
+ * 空关键词视为命中。scope='title' 只搜标题，'all' 搜正文/触发词/分组/字段。
  */
-export function matchesQuery(entry, query) {
+export function matchesQuery(entry, query, scope = 'all') {
   const words = splitQuery(query);
   if (words.length === 0) return true;
-  const hay = entryHaystack(entry);
+  const hay = entryHaystack(entry, scope);
   return words.every((w) => hay.includes(w));
 }
+
+export const SEARCH_SCOPES = ['all', 'title'];
+export const SEARCH_SCOPE_LABEL = { all: '全部字段', title: '只搜标题' };
+export const BOOK_SEARCH_SCOPES = ['book', 'entries'];
+export const BOOK_SEARCH_SCOPE_LABEL = { book: '只搜书名/来源', entries: '含内部条目标题' };
 
 export function listGroups(entries) {
   const seen = new Set();
@@ -88,25 +95,24 @@ export function filterEntries(entries, filters = {}) {
   const q = filters.q ?? '';
   const group = filters.group ?? '';
   const mode = filters.mode ?? 'all';
+  const scope = filters.scope === 'title' ? 'title' : 'all';
   const list = Array.isArray(entries) ? entries : [];
   return list.filter((entry) => {
     if (group && String(entry?.group ?? '') !== group) return false;
     if (!matchMode(entry, mode)) return false;
-    return matchesQuery(entry, q);
+    return matchesQuery(entry, q, scope);
   });
 }
 
-/** 书架上按书名 + 来源文件 + 条目标题搜 */
-export function filterBooks(books, query) {
+/** 书架上按书名 + 来源文件搜；scope='entries' 时也搜内部条目标题 */
+export function filterBooks(books, query, scope = 'book') {
   const words = splitQuery(query);
   const list = Array.isArray(books) ? books : [];
   if (words.length === 0) return list;
   return list.filter((book) => {
-    const hay = lower([
-      book?.name,
-      book?._source?.book_file,
-      ...(book?.entries ?? []).map((e) => e?.title),
-    ].filter(Boolean).join(' \u0001 '));
+    const parts = [book?.name, book?._source?.book_file];
+    if (scope !== 'book') parts.push(...(book?.entries ?? []).map((e) => e?.title));
+    const hay = lower(parts.filter(Boolean).join(' \u0001 '));
     return words.every((w) => hay.includes(w));
   });
 }
@@ -117,6 +123,7 @@ export function describeFilter(filters = {}, shown = 0, total = 0) {
   if (splitQuery(filters.q ?? '').length) bits.push('关键词');
   if (filters.group) bits.push(`分组 ${filters.group}`);
   if ((filters.mode ?? 'all') !== 'all') bits.push(RULE_MODE_LABEL[filters.mode] ?? filters.mode);
+  if ((filters.scope ?? 'all') === 'title') bits.push('只搜标题');
   if (bits.length === 0) return `共 ${total} 条`;
   return `${bits.join(' · ')}：${shown} / ${total} 条`;
 }

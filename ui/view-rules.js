@@ -15,6 +15,7 @@ import {
   el, option, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
   searchInput, selectBox, actionRow, metaLine, card, field,
 } from './widgets.js';
+import { pickerButton } from './picker.js';
 
 export const POSITION_LABEL = { before_char: '角色设定之前', after_char: '角色设定之后', in_chat: '聊天记录里' };
 export const ROLE_LABEL = { system: '系统', user: '用户', assistant: '角色' };
@@ -76,6 +77,7 @@ export function renderRules(ctx) {
     q: state.ruleQuery,
     group: state.ruleGroup,
     mode: state.ruleMode,
+    scope: ctx.state.searchScope?.rules === 'title' ? 'title' : 'all',
   });
 
   function save() {
@@ -340,6 +342,7 @@ export function renderRules(ctx) {
         state.ruleQuery = value;
         draw();
       }),
+      ctx.searchScopeSelect?.('rules'),
       button(state.rulesFilterOpen ? '筛选 ▴' : '筛选 ▾', () => {
         state.rulesFilterOpen = !state.rulesFilterOpen;
         ctx.render();
@@ -354,13 +357,20 @@ export function renderRules(ctx) {
     mobile ? null : hint('独立逻辑在「逻辑」页——在那边新建、编辑、导入导出。'),
   ]);
 
-  filterExtra.appendChild(selectBox(state.ruleGroup, [
-    { value: '', label: '全部分组' },
-    ...groups.map((g) => ({ value: g, label: `同组 ${g}` })),
-  ], (value) => {
-    state.ruleGroup = value;
-    draw();
-  }));
+  filterExtra.appendChild(pickerButton(state.ruleGroup ? `同组 ${state.ruleGroup}` : '全部分组', () => ctx.openPicker?.({
+    title: '按分组筛选',
+    value: state.ruleGroup,
+    hint: '分组多的时候直接搜名字；选「全部分组」清掉这一项。',
+    placeholder: '搜分组名…',
+    items: [
+      { value: '', label: '全部分组' },
+      ...groups.map((g) => ({ value: g, label: `同组 ${g}` })),
+    ],
+    onPick: (value) => {
+      state.ruleGroup = value;
+      draw();
+    },
+  }), { placeholder: '全部分组', title: '选择分组（可搜索）' }));
   filterExtra.appendChild(selectBox(state.ruleMode, RULE_MODES.map((m) => ({ value: m, label: RULE_MODE_LABEL[m] })), (value) => {
     state.ruleMode = value;
     draw();

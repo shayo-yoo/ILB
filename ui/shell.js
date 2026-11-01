@@ -158,6 +158,12 @@ export function createShell({ repository, notify, onOpen, status, openState, onD
   async function attachPanel(nextPanel) {
     if (!nextPanel || typeof nextPanel.mount !== 'function') return false;
     panel = nextPanel;
+    // 手机标题栏最右侧的折叠按钮：交给面板统一改状态并重画。
+    try {
+      mobile.setFoldHandler((folded) => nextPanel.toggleTopFold?.(folded));
+    } catch {
+      /* 老面板没有这个入口就算了 */
+    }
     try {
       return await current().attachPanel(nextPanel);
     } catch (err) {
