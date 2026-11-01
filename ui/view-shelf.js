@@ -15,6 +15,7 @@ import {
   searchInput, selectBox, actionRow, metaLine, downloadJson,
 } from './widgets.js';
 import { openImportDialog } from './importer.js';
+import { settingRow } from './card-kit.js';
 
 // 说明"这本书现在为什么开 / 为什么关"：策略 + 强制覆盖 + 宿主关联，三者合成一句话（ILB-4.6）。
 // 这里只做展示用的推算；真正判定在 core/resolve-books.js，两边规则一致。
@@ -258,13 +259,6 @@ export function renderShelf(ctx) {
     ctx.openOverlay(`《${book.name || book.book_id}》的完整元数据`, [
       hint('这是这本书在存档里的原始形状。只读，改这里的文字不会改数据。'),
       el('pre', { class: 'ilb-pre ilb-book-meta', text }),
-    ]);
-  }
-
-  function settingRow(label, control) {
-    return el('div', { class: 'ilb-set-row' }, [
-      el('span', { class: 'ilb-set-label', text: label }),
-      el('span', { class: 'ilb-set-control' }, [control]),
     ]);
   }
 

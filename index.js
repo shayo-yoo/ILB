@@ -27,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.24.2';
+const VERSION = '0.25.0';
 
 function notify(message, kind = 'info') {
   try {

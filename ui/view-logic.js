@@ -4,7 +4,11 @@
 // 组可以独立启停，也可以选「某本书启用时我才跑」。
 // 书里的逻辑仍然留在书里（老数据不动），页面上单列一段，可以搬进逻辑组或从组里搬回书。
 
-import { el, button, badge, hint, actionRow, downloadJson, metaLine, selectBox, card } from './widgets.js';
+import { el, button, badge, hint, actionRow, downloadJson, metaLine, selectBox, card, checkbox } from './widgets.js';
+import { settingsGrid, metaLineText, inlineSwitch } from './card-kit.js';
+
+// 桌面卡片内展开的详情；手机一律走底部抽屉。
+const expandedLogic = new Set();
 import { pickerButton } from './picker.js';
 import { describeBookContext } from './nav.js';
 import { openLogicEditor } from './logic-editor.js';
@@ -255,6 +259,8 @@ export function renderLogicView(ctx) {
   }
 
   function renderCard(logic, opts) {
+    const isMobile = ctx.layout?.() === 'mobile';
+    const expanded = expandedLogic.has(logic.id);
     const badges = [];
     if (logic.enabled === false) badges.push(badge('已停用', 'warn'));
     if (logic.call?.exposed) badges.push(badge('AI 可调用', 'ok'));
@@ -263,19 +269,19 @@ export function renderLogicView(ctx) {
       el('div', { class: 'ilb-rule-head' }, [
         el('div', { class: 'ilb-rule-titles' }, [
           el('div', { class: 'ilb-title', text: logic.name || '未命名逻辑' }),
-          el('div', { class: 'ilb-sub', text: describeLogic(logic) }),
         ]),
-        el('div', { class: 'ilb-rule-side' }, [
-          el('div', { class: 'ilb-badges' }, badges),
-          menuFor(logic, opts),
-        ]),
+        inlineSwitch(logic.enabled !== false, (on) => {
+          logic.enabled = on;
+          logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
+          saveBook();
+          draw();
+        }, '启用这条逻辑'),
+        menuFor(logic, opts),
       ]),
-      metaLine([
-        opts.fromBook && ctx.sortOf?.('logic')?.key === 'manual'
-          ? ctx.sortWeightInput(logic, () => { logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() }; saveBook(); })
-          : null,
-        el('span', { class: 'ilb-sub', text: logic.enabled === false ? '已停用' : '已启用' }),
-      ]),
+      el('div', { class: 'ilb-rule-meta' }, [
+        el('span', { class: 'ilb-sub ilb-rule-trigger', text: describeLogic(logic), title: describeLogic(logic) }),
+        badges.length ? el('div', { class: 'ilb-badges' }, badges) : null,
+      ].filter(Boolean)),
       actionRow([
         button('编辑', () => openLogicEditor(ctx, opts.target, logic), { ghost: true }),
         button('试一句', () => {
@@ -288,8 +294,66 @@ export function renderLogicView(ctx) {
             wait: false,
           });
         }, { ghost: true }),
+        isMobile
+          ? button('详情', () => openLogicSettings(logic, opts), { ghost: true })
+          : button(expanded ? '收起详情 ▴' : '详情 ▾', () => {
+            if (expanded) expandedLogic.delete(logic.id);
+            else expandedLogic.add(logic.id);
+            draw();
+          }, { ghost: true }),
       ]),
+      !isMobile && expanded ? logicSettingsGrid(logic, opts) : null,
+    ].filter(Boolean));
+  }
+
+  /** 逻辑详情里的快捷设置：改完立即保存；复杂项仍然进编辑器。 */
+  function logicSettingsGrid(logic, opts) {
+    // 和规则抽屉一样：每次从存档里找"当前那一条"，别改闭包里的旧对象。
+    const persist = (mutate) => {
+      let target = null;
+      if (opts.fromBook) {
+        const fresh = repository.listBooks().find((b) => b.book_id === book.book_id);
+        target = fresh?.logic?.find((l) => l.id === logic.id) ?? null;
+        if (target) {
+          mutate(target);
+          target.ui = { ...(target.ui ?? {}), updatedAt: Date.now() };
+          repository.saveBook(fresh);
+        }
+      } else {
+        target = repository.listStandaloneLogics().find((l) => l.id === logic.id) ?? null;
+        if (target) {
+          mutate(target);
+          target.ui = { ...(target.ui ?? {}), updatedAt: Date.now() };
+          repository.saveStandaloneLogic(target);
+        }
+      }
+      draw();
+    };
+    const nodes = Array.isArray(logic.logic?.nodes) ? logic.logic.nodes.length : 0;
+    const params = Array.isArray(logic.call?.params) ? logic.call.params.length : 0;
+    return settingsGrid([
+      ['启用', inlineSwitch(logic.enabled !== false, (on) => persist((l) => { l.enabled = on; }), '启用这条逻辑')],
+      ['AI 可调用', checkbox(logic.call?.exposed === true, (on) => {
+        persist((l) => { l.call = { ...(l.call ?? {}), exposed: on }; });
+      }, '允许按钮调用')],
+      ['参数', el('span', { class: 'ilb-sub', text: params ? `${params} 个` : '没有参数' })],
+      ['流程', el('span', { class: 'ilb-sub', text: nodes ? `${nodes} 步` : '没有流程（只输出正文）' })],
+      ['排序权重', opts.fromBook && ctx.sortWeightInput
+        ? ctx.sortWeightInput(logic, () => persist(() => {}))
+        : el('span', { class: 'ilb-sub', text: '只在书内逻辑里可调' })],
     ]);
+  }
+
+  function openLogicSettings(logic, opts) {
+    ctx.openOverlay({
+      title: `逻辑设置 · ${logic.name || '未命名逻辑'}`,
+      nodes: [
+        hint('点一下就保存；参数和流程请进「编辑」。'),
+        logicSettingsGrid(logic, opts),
+        metaLineText(describeLogic(logic)),
+      ],
+      onClose: () => draw(),
+    });
   }
 
   // ---- 页面 ----

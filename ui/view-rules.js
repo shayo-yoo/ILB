@@ -16,6 +16,10 @@ import {
   searchInput, selectBox, actionRow, metaLine, card, field,
 } from './widgets.js';
 import { pickerButton } from './picker.js';
+import { settingsGrid, metaLineText, inlineSwitch } from './card-kit.js';
+
+// 桌面「详情」是卡片内展开；手机点「详情」开底部抽屉。展开状态只在本次会话里记。
+const expandedRules = new Set();
 
 export const POSITION_LABEL = { before_char: '角色设定之前', after_char: '角色设定之后', in_chat: '聊天记录里' };
 export const ROLE_LABEL = { system: '系统', user: '用户', assistant: '角色' };
@@ -214,9 +218,80 @@ export function renderRules(ctx) {
     return el('div', { class: 'ilb-more' }, [toggle, menu]);
   }
 
+  /** 详情里的快捷设置：规则页最常改的几项，改完立即保存。 */
+  function quickSettings(entry) {
+    // 抽屉可能开很久，期间卡片可能被重画：每次都从存档里按 id 找"当前那一条"，
+    // 不在闭包里改旧对象，否则改完一保存就被旧副本盖回去。
+    const persist = (mutate) => {
+      const fresh = repository.listBooks().find((b) => b.book_id === book.book_id);
+      const target = fresh?.entries?.find((e) => e.id === entry.id);
+      if (!target) return;
+      mutate(target);
+      target.ui = { ...(target.ui ?? {}), updatedAt: Date.now() };
+      repository.saveBook(fresh);
+      draw();
+    };
+    const numberBox = (value, onInput, { min = 0, max = 9999 } = {}) => {
+      const input = el('input', {
+        class: 'ilb-input ilb-num', type: 'number', value: String(value ?? 0), min: String(min), max: String(max),
+      });
+      input.addEventListener('change', () => {
+        const next = Math.max(min, Math.min(max, Number(input.value) || 0));
+        input.value = String(next);
+        persist(onInput(next));
+      });
+      return input;
+    };
+    const probabilityCell = el('span', { class: 'ilb-set-inline' }, [
+      checkbox(entry.useProbability === true, (on) => {
+        persist((e) => {
+          e.useProbability = on;
+          if (on && !e.probability) e.probability = 50;
+        });
+      }, '按概率出现'),
+      entry.useProbability
+        ? numberBox(entry.probability ?? 50, (value) => (e) => { e.probability = Math.min(100, value); }, { max: 100 })
+        : null,
+    ]);
+    const groupInput = el('input', {
+      class: 'ilb-input', type: 'text', value: String(entry.group ?? ''), placeholder: '不分组', 'aria-label': '分组',
+    });
+    groupInput.addEventListener('change', () => {
+      persist((e) => { e.group = String(groupInput.value ?? '').trim() || null; });
+    });
+
+    return settingsGrid([
+      ['启用', inlineSwitch(entry.enabled !== false, (on) => persist((e) => { e.enabled = on; }), '启用这条')],
+      ['权重', numberBox(entry.weight ?? 100, (value) => (e) => { e.weight = value; })],
+      ['概率', probabilityCell],
+      ['分组', groupInput],
+      ['注入位置', selectBox(entry.injection?.position ?? 'after_char', POSITIONS.map((p) => ({ value: p, label: POSITION_LABEL[p] })), (value) => {
+        persist((e) => { e.injection = { ...(e.injection ?? {}), position: value }; });
+      })],
+      ['深度', numberBox(entry.injection?.depth ?? 4, (value) => (e) => { e.injection = { ...(e.injection ?? {}), depth: value }; }, { min: 0, max: 999 })],
+      ['常驻', checkbox(entry.always === true, (on) => persist((e) => { e.always = on; }), '常驻')],
+    ]);
+  }
+
+  /** 手机：详情走底部抽屉，卡片本身不长高；桌面：卡片内展开。 */
+  function openRuleSettings(entry) {
+    ctx.openOverlay({
+      title: `规则设置 · ${entry.title || '未命名规则'}`,
+      nodes: [
+        hint('点一下就保存；改完关掉这层即可。'),
+        quickSettings(entry),
+        metaLineText(describeTrigger(entry)),
+      ],
+      onClose: () => draw(),
+    });
+  }
+
   function renderCard(entry) {
     const checked = state.selected.has(entry.id);
+    const isMobile = ctx.layout?.() === 'mobile';
+    const expanded = expandedRules.has(entry.id);
     const badges = [];
+    if (entry.enabled === false) badges.push(badge('已停用', 'warn'));
     if (entry.always) badges.push(badge('常驻', 'ok'));
     if (entry.wait) badges.push(badge('等候模式', 'warn'));
     if (entry.useProbability) badges.push(badge(`${entry.probability}%`, 'warn'));
@@ -235,36 +310,46 @@ export function renderRules(ctx) {
         : null,
       el('div', { class: 'ilb-rule-titles' }, [
         el('div', { class: 'ilb-title', text: entry.title || '未命名规则' }),
-        el('div', { class: 'ilb-sub', text: describeTrigger(entry) }),
       ]),
-      el('div', { class: 'ilb-rule-side' }, [
-        el('div', { class: 'ilb-badges' }, badges),
-        moreMenu(entry),
-      ]),
+      inlineSwitch(entry.enabled !== false, (on) => {
+        entry.enabled = on;
+        touch(entry);
+        save();
+        draw();
+      }, '启用这条'),
+      moreMenu(entry),
     ]);
 
+    badges.push(badge(`权重 ${entry.weight ?? 100}`));
     const manual = ctx.sortOf('rules')?.key === 'manual';
+    // 卡上只放少量标签：手动排序时把位置让给权重输入框，停用状态单独留一个。
+    const shownBadges = manual
+      ? (entry.enabled === false ? [badge('已停用', 'warn')] : [])
+      : badges.slice(0, 3);
+    if (!manual && badges.length > shownBadges.length) shownBadges.push(badge(`+${badges.length - shownBadges.length}`));
+    const meta = el('div', { class: 'ilb-rule-meta' }, [
+      el('span', { class: 'ilb-sub ilb-rule-trigger', text: describeTrigger(entry), title: describeTrigger(entry) }),
+      shownBadges.length ? el('div', { class: 'ilb-badges' }, shownBadges) : null,
+      // 手动排序时把权重输入留在卡上：改完立刻能看见顺序变化，不用再开抽屉。
+      manual ? ctx.sortWeightInput(entry, () => { touch(entry); save(); draw(); }) : null,
+    ].filter(Boolean));
+
     return card([
       head,
-      metaLine([
-        manual ? ctx.sortWeightInput(entry, () => { touch(entry); save(); draw(); }) : null,
-        el('label', { class: 'ilb-inline ilb-switch' }, [
-          checkbox(entry.enabled !== false, (on) => {
-            entry.enabled = on;
-            touch(entry);
-            save();
-            draw();
-          }, '启用这条'),
-          el('span', { class: 'ilb-sub', text: entry.enabled === false ? '已停用' : '已启用' }),
-        ]),
-        el('span', { class: 'ilb-sub', text: `权重 ${entry.weight ?? 100}` }),
-        el('span', { class: 'ilb-sub ilb-meta-pos', text: `${POSITION_LABEL[entry.injection?.position] ?? '?'} · 深度 ${entry.injection?.depth ?? 4}` }),
-      ]),
+      meta,
       actionRow([
         button('编辑', () => ctx.openEditor(book, entry), { ghost: true }),
         button('试一句', () => ctx.openPreview(book, entry), { ghost: true }),
+        isMobile
+          ? button('详情', () => openRuleSettings(entry), { ghost: true })
+          : button(expanded ? '收起详情 ▴' : '详情 ▾', () => {
+            if (expanded) expandedRules.delete(entry.id);
+            else expandedRules.add(entry.id);
+            draw();
+          }, { ghost: true }),
       ]),
-    ], `ilb-rule-card ${entry.enabled === false ? 'ilb-card-off' : ''} ${selectMode() && checked ? 'ilb-card-selected' : ''}`.trim());
+      !isMobile && expanded ? quickSettings(entry) : null,
+    ].filter(Boolean), `ilb-rule-card ${entry.enabled === false ? 'ilb-card-off' : ''} ${selectMode() && checked ? 'ilb-card-selected' : ''}`.trim());
   }
 
   function drawBatchBar(rows) {

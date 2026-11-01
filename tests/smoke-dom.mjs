@@ -763,6 +763,22 @@ step('规则页：勾选框与批量栏只在选择模式出现，次要操作�
   if (!menus.some((m) => walk(m).some((n) => n.textContent === '删除'))) {
     throw new Error('「⋯」菜单里没有删除');
   }
+  // v0.25.0：卡片三行（标题 / 摘要与标签 / 操作），桌面的「详情」在卡内展开成两列网格
+  const detailBtn = visibleBtns.find((b) => b.textContent === '详情 ▾');
+  if (!detailBtn) throw new Error('卡片上应该有「详情 ▾」');
+  const fire = (node) => {
+    const handlers = node._listeners?.click ?? [];
+    if (typeof node.onclick === 'function') node.onclick({ type: 'click', target: node, currentTarget: node, preventDefault() {}, stopPropagation() {} });
+    for (const handler of handlers) handler({ type: 'click', target: node, currentTarget: node, preventDefault() {}, stopPropagation() {} });
+  };
+  fire(detailBtn);
+  all = walk(host);
+  const grid = all.find((n) => String(n.className ?? '').includes('ilb-set-grid'));
+  if (!grid) throw new Error('点「详情」后没有出现设置网格');
+  const gridText = walk(grid).map((n) => n.textContent).join(' ');
+  for (const label of ['启用', '权重', '概率', '分组', '注入位置', '常驻']) {
+    if (!gridText.includes(label)) throw new Error(`设置网格里缺少「${label}」`);
+  }
 
   p.state.ruleSelectMode = true;
   p.render();

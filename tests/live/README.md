@@ -71,3 +71,12 @@ node tests/live/st-v24b-check.mjs
 - 真实**生成**：需要模型接口。脚本只验加载与界面，不验"模型会不会照着写事实、逻辑有没有按预期跑完"。
 - 手机真机（SillyDroid 之类 WebView）：只用 Chrome 的设备模拟过，`navigator.clipboard` 在真 WebView 里可能被拒（代码里有 `execCommand` 兜底，但没实测）。
 - 主题：用浅色主题的实例验了对比度，深色主题靠改内联颜色模拟，没在真深色主题里点过。
+
+## st-v25-check.mjs
+
+```powershell
+$env:ST_DIR='D:\1\APP\SillyTavern'
+node tests/live/st-v25-check.mjs
+```
+
+规则/逻辑卡片：手机 390×844 下量卡片高度、点「详情」开抽屉、改「启用」写回、关抽屉高度不变；桌面 1360×900 点「详情 ▾」在卡内展开并量高度。
