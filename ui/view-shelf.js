@@ -247,19 +247,107 @@ export function renderShelf(ctx) {
     ]);
   }
 
+  function settingRow(label, control) {
+    return el('div', { class: 'ilb-set-row' }, [
+      el('span', { class: 'ilb-set-label', text: label }),
+      el('span', { class: 'ilb-set-control' }, [control]),
+    ]);
+  }
+
+  function settingsGrid(book, host) {
+    const strategy = strategyOf(book.activation);
+    const override = book.activation?.override ?? 'auto';
+    const manual = repository.getManualState();
+    const on = Object.prototype.hasOwnProperty.call(manual, book.book_id)
+      ? manual[book.book_id] !== false
+      : book.activation?.manual !== false;
+    const names = book.host?.nativeNames ?? [];
+    const save = () => {
+      repository.saveBook(book);
+      draw();
+    };
+    const hostControl = el('span', { class: 'ilb-set-inline' }, [
+      el('span', { class: 'ilb-sub', text: names.length ? names.join('、') : '未关联' }),
+      button('选择…', () => pickHostBook(book, host), { ghost: true, title: '手动关联到酒馆里的书' }),
+      names.length
+        ? button('解除', () => {
+          book.host = { ...(book.host ?? {}), nativeNames: [], lastMatchedAt: 0 };
+          repository.saveBook(book);
+          ctx.toast('已解除 ILB 映射；酒馆自己的世界书绑定没有动');
+          draw();
+        }, { ghost: true })
+        : null,
+    ]);
+    return el('div', { class: 'ilb-set-grid' }, [
+      settingRow('酒馆关联', hostControl),
+      settingRow('启用策略', selectBox(strategy, Object.entries(STRATEGY_LABEL).map(([value, label]) => ({ value, label })), (value) => {
+        // mode 是 v0.14 的老字段：保留并同步，老版本读到它时行为尽量一致
+        const mode = value === 'auto' ? 'character' : value;
+        book.activation = { ...(book.activation ?? {}), strategy: value, mode };
+        save();
+      })),
+      settingRow('强制覆盖', selectBox(override, Object.entries(OVERRIDE_LABEL).map(([value, label]) => ({ value, label })), (value) => {
+        book.activation = { ...(book.activation ?? {}), override: value };
+        save();
+      })),
+      settingRow('手动开关', checkbox(on, (checked) => {
+        repository.setManualState(book.book_id, checked);
+        draw();
+      })),
+      settingRow('进总条目池', checkbox(book.pool?.share === true, (checked) => {
+        book.pool = { ...(book.pool ?? {}), share: checked };
+        save();
+      })),
+    ]);
+  }
+
+  function bookMeta(book) {
+    const source = book._source ?? {};
+    const count = Number(source.import_count) || 1;
+    return el('div', { class: 'ilb-book-meta' }, [
+      el('span', { text: `来源：${source.book_file || '手动新建'}` }),
+      el('span', { text: `指纹：${shortHash(source.source_hash)}` }),
+      el('span', { text: `上次导入：${formatTime(source.imported_at)}` }),
+      el('span', { text: `导入 ${count} 次` }),
+    ]);
+  }
+
+  function bookActions(book) {
+    const source = book._source ?? {};
+    return el('div', { class: 'ilb-set-actions' }, [
+      button('导出', () => exportBook(book), { ghost: true }),
+      source.book_file
+        ? button('重新导入', () => openImportDialog(ctx, { preselect: [source.book_file], title: `重新导入 ${source.book_file}` }), { ghost: true })
+        : null,
+      button('复制一本', () => copyBook(book), { ghost: true }),
+      button('完整元数据', () => showMeta(book), { ghost: true }),
+      button('删除', () => removeBook(book), { ghost: true }),
+    ]);
+  }
+
+  /** 手机：书籍设置走底部抽屉（二级页），卡片本身不跟着长高。 */
+  function openBookSettings(book) {
+    const host = normalizeHostContext(readHost());
+    const reason = reasonOf(book, host);
+    ctx.openOverlay(`书籍设置 · ${book.name || book.book_id}`, [
+      el('p', { class: 'ilb-sub ilb-sheet-note', text: `${reason.text}。下面的开关点了就生效。` }),
+      settingsGrid(book, host),
+      bookMeta(book),
+      bookActions(book),
+    ]);
+  }
+
   function renderBook(book, manual, host) {
     const strategy = strategyOf(book.activation);
     const override = book.activation?.override ?? 'auto';
     const on = Object.prototype.hasOwnProperty.call(manual, book.book_id)
       ? manual[book.book_id] !== false
       : book.activation?.manual !== false;
-    const source = book._source ?? {};
-    const count = Number(source.import_count) || 1;
+    const count = Number((book._source ?? {}).import_count) || 1;
     const reason = reasonOf(book, host);
     const isOpen = expanded.has(book.book_id);
     const logicCount = (book.logic ?? []).length;
-    const hostRowNode = hostRow(book, host);
-    const hostNames = (book.host?.nativeNames ?? []).length;
+    const isMobile = ctx.layout?.() === 'mobile';
 
     const tags = [
       badge(on ? '启用' : '停用', on ? 'ok' : 'warn'),
@@ -274,7 +362,7 @@ export function renderShelf(ctx) {
     return el('div', {
       class: `ilb-card ilb-book-card ${isOpen ? 'ilb-book-card-open' : ''} ${compact() ? 'ilb-book-card-compact' : 'ilb-book-card-comfort'}`,
     }, [
-      // 一级：选择框 + 书名 + 更多，统一头部
+      // 第一行：选择框 + 书名 + 状态点 + ⋯
       el('div', { class: 'ilb-book-head' }, [
         checkbox(selected.has(book.book_id), (checked) => {
           if (checked) selected.add(book.book_id);
@@ -290,68 +378,21 @@ export function renderShelf(ctx) {
         el('span', { class: 'ilb-book-dot ' + (on ? 'ilb-dot-on' : 'ilb-dot-off'), title: on ? '启用中' : '已停用' }),
         moreMenu(book),
       ]),
-      // 摘要标签
+      // 第二行：状态标签
       el('div', { class: 'ilb-book-summary' }, tags),
-      // 一行说明 + 打开规则入口；点书体进规则页。紧凑模式只留原因，舒适模式多一行酒馆关联。
-      el('div', { class: 'ilb-book-line ilb-book-hostline' }, [
-        el('span', { class: 'ilb-sub ilb-book-reason ' + (reason.on === true ? 'ilb-reason-on' : reason.on === false ? 'ilb-reason-off' : ''), text: reason.text }),
-        el('span', { class: 'ilb-sub', text: `酒馆关联：${hostNames ? hostNames.join('、') : (host.contextAvailable ? '没有' : '未同步')}` }),
-      ]),
+      // 第三行：入口。手机用抽屉，卡片不再长高；桌面展开成紧凑两列。
       el('div', { class: 'ilb-book-foot' }, [
         button('打开规则', () => openRules(book), { ghost: true }),
-        button(isOpen ? '收起详情 ▴' : '展开详情 ▾', () => toggleExpanded(book), { ghost: true, title: isOpen ? '收起详情' : '展开详情' }),
+        isMobile
+          ? button('详情设置', () => openBookSettings(book), { ghost: true, title: '打开书籍设置' })
+          : button(isOpen ? '收起详情 ▴' : '展开详情 ▾', () => toggleExpanded(book), { ghost: true, title: isOpen ? '收起详情' : '展开详情' }),
         el('span', { class: 'ilb-spacer' }),
-        el('span', { class: 'ilb-sub ilb-book-comfort-only', text: `约 ${bookTokenEstimate(book, estimateTokens)} 词` }),
+        el('span', { class: 'ilb-sub ilb-book-comfort-only', text: `${reason.on === true ? '运行中' : reason.on === false ? '未运行' : '状态未知'} · 约 ${bookTokenEstimate(book, estimateTokens)} 词` }),
       ]),
-      isOpen ? el('div', { class: 'ilb-book-detail' }, [
-        hostRowNode,
-        el('div', { class: 'ilb-book-controls' }, [
-          el('label', { class: 'ilb-inline' }, [
-            el('span', { class: 'ilb-sub', text: '启用策略' }),
-            selectBox(strategy, Object.entries(STRATEGY_LABEL).map(([value, label]) => ({ value, label })), (value) => {
-              // mode 是 v0.14 的老字段：保留并同步，老版本读到它时行为尽量一致
-              const mode = value === 'auto' ? 'character' : value;
-              book.activation = { ...(book.activation ?? {}), strategy: value, mode };
-              repository.saveBook(book);
-              draw();
-            }),
-          ]),
-          el('label', { class: 'ilb-inline' }, [
-            el('span', { class: 'ilb-sub', text: '强制覆盖' }),
-            selectBox(override, Object.entries(OVERRIDE_LABEL).map(([value, label]) => ({ value, label })), (value) => {
-              book.activation = { ...(book.activation ?? {}), override: value };
-              repository.saveBook(book);
-              draw();
-            }),
-          ]),
-          el('label', { class: 'ilb-inline' }, [
-            checkbox(on, (checked) => {
-              repository.setManualState(book.book_id, checked);
-              draw();
-            }),
-            el('span', { class: 'ilb-sub', text: '手动开关' }),
-          ]),
-          el('label', { class: 'ilb-inline' }, [
-            checkbox(book.pool?.share === true, (checked) => {
-              book.pool = { ...(book.pool ?? {}), share: checked };
-              repository.saveBook(book);
-              draw();
-            }),
-            el('span', { class: 'ilb-sub', text: '进总条目池' }),
-          ]),
-        ]),
-        metaLine([
-          source.book_file
-            ? el('span', { class: 'ilb-sub', text: `来源：${source.book_file}` })
-            : el('span', { class: 'ilb-sub', text: '来源：手动新建' }),
-          source.source_hash
-            ? el('span', { class: 'ilb-sub', text: `指纹：${shortHash(source.source_hash)}` })
-            : null,
-          source.imported_at
-            ? el('span', { class: 'ilb-sub', text: `上次导入：${formatTime(source.imported_at)}` })
-            : null,
-          count > 1 ? el('span', { class: 'ilb-sub', text: `导入 ${count} 次` }) : null,
-        ]),
+      !isMobile && isOpen ? el('div', { class: 'ilb-book-detail' }, [
+        settingsGrid(book, host),
+        bookMeta(book),
+        bookActions(book),
       ]) : null,
     ]);
   }

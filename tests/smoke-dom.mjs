@@ -278,7 +278,10 @@ step('书架卡片：默认紧凑摘要、详情可展开、⋯菜单可开可�
 
   clickText(card, '展开详情');
   card = findCard();
-  if (!walk(card).some((n) => klass(n).includes('ilb-book-controls'))) throw new Error('展开后没有启用策略/开关等控件');
+  if (!walk(card).some((n) => klass(n).includes('ilb-set-grid'))) throw new Error('展开后没有设置网格');
+  for (const label of ['酒馆关联', '启用策略', '强制覆盖', '手动开关', '进总条目池']) {
+    if (!walk(card).some((n) => n.textContent === label)) throw new Error(`展开后缺设置项：${label}`);
+  }
   if (!walk(card).some((n) => n.textContent === '收起详情 ▴')) throw new Error('展开后按钮没有变成「收起详情」');
 
   clickText(rootEl, '舒适');

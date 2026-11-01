@@ -2692,3 +2692,142 @@ body.ilb-overlay-open .ilb-fab {
   padding: 0 10px;
 }
 
+/* ---- v0.24.1 书架卡片再压紧：标签靠左、控件靠右，两列网格 ---- */
+.ilb-book-card {
+  padding: 6px 9px;
+  gap: 3px;
+}
+.ilb-book-head {
+  min-height: 40px;
+  gap: 6px;
+}
+.ilb-book-card .ilb-book-title {
+  font-size: 14px;
+  padding: 3px 2px;
+  line-height: 1.25;
+}
+.ilb-book-summary {
+  gap: 3px 5px;
+}
+.ilb-book-summary .ilb-badge {
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 17px;
+}
+.ilb-book-foot {
+  gap: 4px;
+  margin-top: 1px;
+}
+.ilb-book-foot .ilb-btn,
+.ilb-book-foot button {
+  min-height: 32px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.ilb-book-detail {
+  gap: 6px;
+  padding-top: 6px;
+  margin-top: 2px;
+}
+.ilb-set-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 14px;
+}
+.ilb-set-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  min-width: 0;
+}
+.ilb-set-label {
+  flex: 0 0 auto;
+  min-width: 58px;
+  font-size: 12px;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+.ilb-set-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ilb-set-control select {
+  height: 30px;
+  font-size: 12px;
+  padding: 2px 6px;
+  width: 100%;
+  min-width: 0;
+}
+.ilb-set-control input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+}
+.ilb-set-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.ilb-set-inline .ilb-sub {
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ilb-set-inline .ilb-btn,
+.ilb-set-inline button {
+  min-height: 28px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.ilb-book-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.72;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(127, 127, 140, 0.22);
+}
+.ilb-set-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ilb-set-actions .ilb-btn,
+.ilb-set-actions button {
+  min-height: 30px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.ilb-sheet-note {
+  margin: 0 0 2px;
+  font-size: 12px;
+}
+.ilb-m .ilb-book-card {
+  padding: 6px 8px;
+}
+.ilb-m .ilb-book-title {
+  font-size: 14px;
+  padding: 4px 2px;
+}
+.ilb-m .ilb-book-foot button {
+  min-height: 42px;
+  padding: 6px 12px;
+}
+@media (max-width: 380px) {
+  .ilb-set-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .ilb-set-row {
+    min-height: 36px;
+  }
+}
+

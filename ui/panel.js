@@ -118,7 +118,9 @@ export function createPanel(deps) {
   const onTopOutsideClick = (event) => {
     if (!state.topOpen) return;
     const target = event?.target;
-    if (target?.closest?.('.ilb-m-top')) return;
+    // v0.24.1：折叠条搬到标题栏以后，点它或它展开的行都不能算“点外面”，
+    // 否则同一次点击的冒泡会把刚展开的行又收起来（表现为“按钮点不开”）。
+    if (target?.closest?.('.ilb-m-head, .ilb-m-top-row, .ilb-m-top-body')) return;
     if (closeTop) closeTop();
   };
 
