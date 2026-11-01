@@ -1,3 +1,15 @@
+## 0.22.0 · 补记（2026-11-01）· 构建 · CI 变绿，发布一键完成
+
+**一句话**：main 上的 `checks` 从 2026-10-26 起一直是红的——不是测试挂了，是 `tests/linkcheck.mjs` 在仓库根把 `memory/`（已移出扩展的旧叙事模块留档）也当成扩展模块去 import，留档里只保留了部分文件，必然报「找不到模块」。现在 linkcheck 跳过 `memory/`（和 `tests/`、`lab/` 一样），并补了 `scripts/publish-github.mjs`：一条命令完成「同步 extension → github、提交、推送」。
+
+**根因**：`linkcheck` 的 walk 只跳过 `node_modules/`、`tests/`、`lab/`；`memory/` 在 v0.8.0 已移出扩展（D-0044），但目录仍留在仓库里，`memory/narrative/block.js` 等文件 import 的 `../ui/dom.js` 在留档里不存在。CI 在 Node 20 / 22 上都卡在「模块链接检查」这一步。
+
+**修法**：`extension/tests/linkcheck.mjs` 与 `github/tests/linkcheck.mjs` 的 walk 增加 `memory` 跳过，并写明理由；工作区新增 `scripts/publish-github.mjs`（同步 + 提交 + 推送 + 失败原样报错），交接文档 §9 换成这条一键流程。
+
+**验证**：`github/` 根下 `node --test` 六件套 107/107、`node tests/linkcheck.mjs` 59/59、假 DOM 冒烟 38 步 0 失败；推送后 GitHub Actions `checks` 的 `test (20)` 与 `test (22)` 都 success（run 41308111571，commit `fcbe05af`）。
+
+**没做**：没有加自动发布（每次仍由我执行一键脚本）；没有把 `tests/live/` 放进 CI（需要真实酒馆与调试端口，不适合托管机器）。
+
 ## 0.22.0 · 2026-11-01 · 改进 · 手机界面重排：底栏钉住、顶栏压矮、三个列表能排序
 
 **一句话**：手机整屏界面的底栏不再跟着列表长度上下跑（导航移到滚动区外，永远贴窗口底）；顶部只留一行标题，常用的「书籍 / 新建 / 排序 / 筛选 / 变量」收成一行折叠按钮、常驻在顶部，翻列表时也能直接点「新增规则」；「更多」从浮层改成真的页面；书架 / 规则 / 逻辑三个列表都能按收录顺序、名称、创建时间、上次修改、触发次数排序，也能填「排序权重」手动排，选择会记住。
