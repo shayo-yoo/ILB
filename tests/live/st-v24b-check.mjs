@@ -111,6 +111,28 @@ try {
     openBtn?.click();
     await wait(700);
     result.openedRules = ILB.panel.state.activeTab === 'rules';
+
+    // 6) 删除仍可用：菜单 → 删除 → ILB 自己的确认浮层（不是原生 confirm）→ 确认
+    ILB.panel.setTab('shelf');
+    await wait(500);
+    const before = ILB.repository.listBooks().length;
+    const cardNodes = [...document.querySelectorAll('.ilb-book-card')];
+    const target = cardNodes[cardNodes.length - 1];
+    const moreBtn = target ? [...target.querySelectorAll('button')].find((b) => text(b) === '⋯') : null;
+    moreBtn?.click();
+    await wait(250);
+    const delBtn = target ? [...target.querySelectorAll('button')].find((b) => text(b) === '删除') : null;
+    result.deleteMenuVisible = Boolean(delBtn && visible(delBtn));
+    delBtn?.click();
+    await wait(350);
+    const overlay = [...document.querySelectorAll('.ilb-overlay, .ilb-m-sheet')].find((node) => text(node).includes('确认删除'));
+    result.deleteConfirmShown = Boolean(overlay && text(overlay).includes('确认删除'));
+    const confirmBtn = overlay ? [...overlay.querySelectorAll('button')].find((b) => text(b) === '确认删除') : null;
+    confirmBtn?.click();
+    await wait(600);
+    result.deleted = ILB.repository.listBooks().length === before - 1;
+    result.sheetsLeft = [...document.querySelectorAll('.ilb-m-sheet')].map((node) => visible(node) ? text(node).slice(0, 20) : '[hidden]');
+    result.sheetAfterDelete = !visible(document.querySelector('.ilb-m-sheet'));
     return result;
   })()`);
 } catch (error) {

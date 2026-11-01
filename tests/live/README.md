@@ -60,7 +60,7 @@ node tests/live/st-v24b-check.mjs
 - `st-v23-check.mjs`：v0.23.0 加。桌面 1360×900 验这一轮：书架卡片默认紧凑、「⋯」菜单可开可关、「展开详情」出现管理控件、切「舒适」后写进 `uiState.shelfMode`；规则列表停用项沉底（启用优先）、次排序选「名称」后 `listSort.rules.secondKey` 落盘、手动排序有权重框；逻辑页有默认组、新建组后组数 +1、组内新建逻辑成功且 `groupId` 对得上。截图 `live/last-v23-shelf.png`。
 
 - st-v24-check.mjs：v0.24.0 加。手机视口 390×844 验折叠条在标题栏里且不在滚动区、容器 32px/按钮 30px、标题栏折叠按钮能整条收起；书籍选择器可搜索并真的切书；规则搜索「只搜标题」与「全部字段」结果不同且范围落盘；紧凑隐藏/舒适显示「酒馆关联」行。截图 live/last-v24-mobile.png。
-- st-v24b-check.mjs：v0.24.1 加。手机视口 390×844 量 3 本书卡片高度（124px）、点 chip 真的展开（回归点）、打开「详情设置」抽屉验 5 行两列设置、「进总池」立即写回、关抽屉卡片高度不变、「打开规则」可用。截图 live/last-v24b-mobile.png 与 live/last-v241-shelf.png。
+- st-v24b-check.mjs：v0.24.1 加。手机视口 390×844 量 3 本书卡片高度（124px）、点 chip 真的展开（回归点）、打开「详情设置」抽屉验 5 行两列设置、「进总池」立即写回、关抽屉卡片高度不变、「打开规则」可用；再用「⋯ → 删除」验证 ILB 自己的确认浮层（不是原生 confirm）并真的删掉。截图 live/last-v24b-mobile.png 与 live/last-v241-shelf.png。
 
 这些脚本都会自建临时书并在结束时删掉，**不会动你已有的书**。跑之前酒馆必须已经把 `extension/` 里的新版拷进 `third-party\ILB`，否则验的是老版本。
 

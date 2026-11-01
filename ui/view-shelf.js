@@ -228,14 +228,28 @@ export function renderShelf(ctx) {
     draw();
   }
 
-  function removeBook(book) {
+  /**
+   * 删除确认不用浏览器原生 confirm（手机 WebView 里样式不可控，且从抽屉里弹会很突兀）。
+   * 用一层普通的 ILB 浮层：确认后关掉这层、删书、再关掉调用方的抽屉。
+   */
+  function removeBook(book, onDeleted = null) {
     closeMenu();
-    if (!window.confirm(`确定删除《${book.name}》？这一行删掉就找不回来了。`)) return;
-    repository.deleteBook(book.book_id);
-    if (ctx.state.activeBookId === book.book_id) ctx.state.activeBookId = null;
-    selected.delete(book.book_id);
-    expanded.delete(book.book_id);
-    draw();
+    ctx.openOverlay(`删除《${book.name || book.book_id}》`, [
+      hint('这本书的规则和逻辑会一起删掉，删了就找不回来了。'),
+      el('div', { class: 'ilb-actions' }, [
+        button('确认删除', () => {
+          ctx.closeOverlay?.();
+          repository.deleteBook(book.book_id);
+          if (ctx.state.activeBookId === book.book_id) ctx.state.activeBookId = null;
+          selected.delete(book.book_id);
+          expanded.delete(book.book_id);
+          draw();
+          if (typeof onDeleted === 'function') onDeleted();
+          ctx.toast(`已删除《${book.name || book.book_id}》`);
+        }),
+        button('取消', () => ctx.closeOverlay?.(), { ghost: true }),
+      ]),
+    ]);
   }
 
   function showMeta(book) {
@@ -312,7 +326,7 @@ export function renderShelf(ctx) {
     ]);
   }
 
-  function bookActions(book) {
+  function bookActions(book, onDeleted = null) {
     const source = book._source ?? {};
     return el('div', { class: 'ilb-set-actions' }, [
       button('导出', () => exportBook(book), { ghost: true }),
@@ -321,7 +335,7 @@ export function renderShelf(ctx) {
         : null,
       button('复制一本', () => copyBook(book), { ghost: true }),
       button('完整元数据', () => showMeta(book), { ghost: true }),
-      button('删除', () => removeBook(book), { ghost: true }),
+      button('删除', () => removeBook(book, onDeleted), { ghost: true }),
     ]);
   }
 
@@ -333,7 +347,7 @@ export function renderShelf(ctx) {
       el('p', { class: 'ilb-sub ilb-sheet-note', text: `${reason.text}。下面的开关点了就生效。` }),
       settingsGrid(book, host),
       bookMeta(book),
-      bookActions(book),
+      bookActions(book, () => ctx.closeOverlay?.()),
     ]);
   }
 
