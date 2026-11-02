@@ -12,7 +12,7 @@
 //   2. 底栏 nav 交给 ui/mobile.js 挂在滚动区外面——不再随着内容长短上下浮。
 //   3. 排序选择记在存档 ui.listSort 里；手动排序用 ui.order 当权重。
 
-import { el, option, button, checkbox, field, badge, toolbar, filterBar, hint, emptyText, counter, card, searchInput, selectBox, actionRow, metaLine, downloadJson } from './widgets.js';
+import { el, option, button, checkbox, field, badge, toolbar, filterBar, hint, emptyText, counter, card, searchInput, selectBox, actionRow, metaLine, downloadJson, focusSearch } from './widgets.js';
 import { openOverlay, closeOverlay, showHelp, helpButton, loadHelp } from './help.js';
 import * as guard from './guard.js';
 import {
@@ -631,7 +631,8 @@ export function createPanel(deps) {
           searchInput(state.ruleQuery, '搜标题、正文、触发词…', (value) => {
             state.ruleQuery = value;
             render();
-          }),
+            focusSearch('rules-query');
+          }, { key: 'rules-query' }),
           searchScopeSelect('rules'),
           selectBox(state.ruleGroup, [{ value: '', label: '全部分组' }, ...groups.map((g) => ({ value: g, label: `同组 ${g}` }))], (value) => {
             state.ruleGroup = value;
@@ -653,7 +654,8 @@ export function createPanel(deps) {
         searchInput(state.bookQuery, '搜书名、来源文件、条目标题…', (value) => {
           state.bookQuery = value;
           render();
-        }),
+          focusSearch('books-query');
+        }, { key: 'books-query' }),
         searchScopeSelect('books'),
       ]);
     }

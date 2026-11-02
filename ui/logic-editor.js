@@ -133,8 +133,11 @@ export function openLogicEditor(ctx, target, existing) {
   }
 
   drawFlow();
-  ctx.openOverlay(existing ? '编辑逻辑' : '新增逻辑', [
-    el('div', { class: 'ilb-editor' }, [
+  // 和规则编辑器一样：正文自己滚，保存/取消固定在浮层底部（footer），
+  // 滚到流程图最下面也不用回头找按钮。
+  ctx.openOverlay({
+    title: existing ? '编辑逻辑' : '新增逻辑',
+    nodes: [el('div', { class: 'ilb-editor' }, [
       hint('独立逻辑不依赖世界书条目：它自己看触发词，触发后把正文当一条内容注入。也可以被别的逻辑「调用」或被条目流程「激活」。'),
       field('名字（触发词和 AI 调用都用它）', nameInput),
       el('label', { class: 'ilb-inline' }, [enabledBox, el('span', { class: 'ilb-sub', text: '启用这条逻辑' })]),
@@ -158,11 +161,10 @@ export function openLogicEditor(ctx, target, existing) {
 
       el('h5', { class: 'ilb-section-title', text: '做什么（可以留空）' }),
       flowHost,
-
-      el('div', { class: 'ilb-actions' }, [
-        button(existing ? '保存' : '添加', save),
-        button('取消', () => ctx.closeOverlay(), { ghost: true }),
-      ]),
-    ]),
-  ]);
+    ])],
+    footer: [
+      button(existing ? '保存' : '添加', save),
+      button('取消', () => ctx.closeOverlay(), { ghost: true }),
+    ],
+  });
 }

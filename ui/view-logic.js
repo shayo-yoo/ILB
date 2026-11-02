@@ -6,6 +6,7 @@
 
 import { el, button, badge, hint, actionRow, downloadJson, metaLine, selectBox, card, checkbox } from './widgets.js';
 import { settingsGrid, metaLineText, inlineSwitch } from './card-kit.js';
+import { openMenu as openCardMenu } from './menu.js';
 
 // 桌面卡片内展开的详情；手机一律走底部抽屉。
 const expandedLogic = new Set();
@@ -206,38 +207,37 @@ export function renderLogicView(ctx) {
   // ---- 卡片 ----
 
   function menuFor(logic, { target, fromBook }) {
-    const menu = el('div', { class: 'ilb-menu', hidden: true }, [
-      button(logic.enabled === false ? '启用' : '停用', () => {
-        logic.enabled = logic.enabled === false;
-        logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
-        if (fromBook) saveBook();
-        else {
-          repository.saveStandaloneLogic(logic);
-          draw();
-        }
-      }, { ghost: true }),
-      fromBook ? button('搬进逻辑组…', () => moveFromBook(logic), { ghost: true }) : button('移动到组…', () => moveStandalone(logic), { ghost: true }),
-      fromBook ? button('复制进逻辑组…', () => copyFromBook(logic), { ghost: true }) : button('复制到组…', () => copyStandalone(logic), { ghost: true }),
-      button('导出', () => {
-        downloadJson(`ilb-logic-${(logic.name || 'logic').replace(/[\\/:*?"<>|]/g, '_')}.json`, {
+    const items = [
+      {
+        label: logic.enabled === false ? '启用' : '停用',
+        onClick: () => {
+          logic.enabled = logic.enabled === false;
+          logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
+          if (fromBook) saveBook();
+          else {
+            repository.saveStandaloneLogic(logic);
+            draw();
+          }
+        },
+      },
+      { label: fromBook ? '搬进逻辑组…' : '移动到组…', onClick: () => (fromBook ? moveFromBook(logic) : moveStandalone(logic)) },
+      { label: fromBook ? '复制进逻辑组…' : '复制到组…', onClick: () => (fromBook ? copyFromBook(logic) : copyStandalone(logic)) },
+      {
+        label: '导出',
+        onClick: () => downloadJson(`ilb-logic-${(logic.name || 'logic').replace(/[\\/:*?"<>|]/g, '_')}.json`, {
           kind: 'ilb-logic', version: 1, logics: [logic],
-        });
-      }, { ghost: true }),
-      button('删除', () => removeLogic(logic, { target, fromBook }), { ghost: true }),
-    ]);
-    menu.hidden = true;
-    menu.setAttribute('hidden', '');
+        }),
+      },
+      { label: '删除', danger: true, onClick: () => removeLogic(logic, { target, fromBook }) },
+    ];
     const toggle = el('button', {
       type: 'button', class: 'ilb-icon-btn', text: '⋯', title: '更多操作', 'aria-label': '更多操作',
-      'aria-expanded': 'false',
       onclick: (event) => {
         event.stopPropagation();
-        menu.hidden = !menu.hidden;
-        toggle.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+        if (typeof toggle.getBoundingClientRect === 'function') openCardMenu(toggle, items, { align: 'right' });
       },
     });
-    menu.addEventListener('click', () => { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); });
-    return el('div', { class: 'ilb-more' }, [toggle, menu]);
+    return el('div', { class: 'ilb-more' }, [toggle]);
   }
 
   function removeLogic(logic, { target, fromBook }) {

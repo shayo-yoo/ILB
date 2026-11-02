@@ -266,15 +266,18 @@ step('书架卡片：默认紧凑摘要、详情可展开、⋯菜单可开可�
   if (!klass(card).includes('ilb-book-card-compact')) throw new Error('默认不是紧凑模式');
   if (walk(card).some((n) => klass(n).includes('ilb-book-controls'))) throw new Error('默认就展开了管理详情');
 
-  const menu = walk(card).find((n) => klass(n).includes('ilb-book-menu'));
-  if (!menu) throw new Error('卡片没有「⋯」菜单');
-  if (menu.hidden !== true) throw new Error('「⋯」菜单默认是展开的');
+  // v0.26.0：菜单 portal 到 body（手机上挂对话框），不画在卡片里——画在卡片里
+  // 会被浮窗的 overflow: hidden 裁掉，下半截既看不见也点不到。
+  const bodyMenus = () => walk(document.body).filter((n) => klass(n).includes('ilb-menu-pop'));
   const moreBtn = walk(card).find((n) => n.textContent === '⋯' && (n._listeners?.click ?? []).length > 0);
   if (!moreBtn) throw new Error('找不到「⋯」按钮');
   moreBtn.dispatch('click');
-  if (menu.hidden !== false) throw new Error('点「⋯」没有展开菜单');
+  const popped = bodyMenus();
+  if (popped.length === 0) throw new Error('点「⋯」没有弹出菜单');
+  if (!walk(popped[0]).some((n) => n.textContent === '重命名…')) throw new Error('菜单里没有「重命名…」');
+  if (walk(card).some((n) => klass(n).includes('ilb-menu'))) throw new Error('菜单仍画在卡片里，会被浮窗裁掉');
   moreBtn.dispatch('click');
-  if (menu.hidden !== true) throw new Error('再点「⋯」没有收起菜单');
+  if (bodyMenus().length) throw new Error('再点「⋯」没有收起菜单');
 
   clickText(card, '展开详情');
   card = findCard();
@@ -758,10 +761,30 @@ step('规则页：勾选框与批量栏只在选择模式出现，次要操作�
   for (const label of ['编辑', '试一句']) {
     if (!visibleBtns.some((b) => b.textContent === label)) throw new Error(`卡片上应该能看到「${label}」`);
   }
-  const menus = all.filter((n) => String(n.className ?? '') === 'ilb-menu');
-  if (menus.length === 0) throw new Error('没有「⋯」菜单');
-  if (!menus.some((m) => walk(m).some((n) => n.textContent === '删除'))) {
-    throw new Error('「⋯」菜单里没有删除');
+  // v0.26.0：菜单 portal 到 body；点菜单项只执行它自己，不再穿透到下层卡片按钮。
+  const menusInCard = all.filter((n) => String(n.className ?? '') === 'ilb-menu');
+  if (menusInCard.length !== 0) throw new Error('「⋯」菜单还画在卡片里，会被浮窗裁掉');
+  const moreToggle = all.find((n) => n.textContent === '⋯' && (n._listeners?.click ?? []).length > 0);
+  if (!moreToggle) throw new Error('卡片上没有「⋯」按钮');
+  moreToggle.dispatch('click');
+  const pop = walk(document.body).find((n) => String(n.className ?? '').includes('ilb-menu-pop'));
+  if (!pop) throw new Error('点「⋯」没有弹出菜单');
+  if (!walk(pop).some((n) => n.textContent === '删除')) throw new Error('「⋯」菜单里没有删除');
+  const bookNow = () => repository.listBooks().find((b) => b.book_id === 'book-t');
+  const beforeCount = (bookNow()?.entries ?? []).length;
+  const beforeFlags = new Map((bookNow()?.entries ?? []).map((e) => [e.id, e.enabled !== false]));
+  const dupBtn = walk(pop).find((n) => n.textContent === '复制一条');
+  if (!dupBtn) throw new Error('菜单里没有「复制一条」');
+  dupBtn.dispatch('click');
+  const afterBook = bookNow();
+  if ((afterBook?.entries ?? []).length !== beforeCount + 1) throw new Error('点「复制一条」没有真的复制');
+  for (const [id, wasEnabled] of beforeFlags) {
+    const now = (afterBook?.entries ?? []).find((e) => e.id === id);
+    if (!now) throw new Error('复制后原来的条目不见了');
+    if ((now.enabled !== false) !== wasEnabled) throw new Error('点「复制一条」误触发了启用开关');
+  }
+  if (walk(document.body).some((n) => String(n.className ?? '').includes('ilb-menu-pop'))) {
+    throw new Error('点完菜单项后菜单没有收起');
   }
   // v0.25.0：卡片三行（标题 / 摘要与标签 / 操作），桌面的「详情」在卡内展开成两列网格
   const detailBtn = visibleBtns.find((b) => b.textContent === '详情 ▾');

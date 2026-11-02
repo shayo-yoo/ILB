@@ -12,10 +12,11 @@ import {
 } from '../core/host-context.js';
 import {
   el, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
-  searchInput, selectBox, actionRow, metaLine, downloadJson,
+  searchInput, selectBox, actionRow, metaLine, downloadJson, field, focusSearch,
 } from './widgets.js';
 import { openImportDialog } from './importer.js';
 import { settingRow } from './card-kit.js';
+import { openMenu as openCardMenu, closeMenu as closeCardMenu } from './menu.js';
 
 // 说明"这本书现在为什么开 / 为什么关"：策略 + 强制覆盖 + 宿主关联，三者合成一句话（ILB-4.6）。
 // 这里只做展示用的推算；真正判定在 core/resolve-books.js，两边规则一致。
@@ -54,8 +55,6 @@ export function renderShelf(ctx) {
   const batchHost = el('div', { class: 'ilb-batchbar' });
   const counterLine = counter('');
   let checking = false;
-  let openMenu = null;
-  let menuBound = false;
   if (!(ctx.state.bookSelected instanceof Set)) ctx.state.bookSelected = new Set();
   if (!(ctx.state.bookExpanded instanceof Set)) ctx.state.bookExpanded = new Set();
   if (ctx.state.shelfMode !== 'comfort') ctx.state.shelfMode = 'compact';
@@ -63,28 +62,6 @@ export function renderShelf(ctx) {
   const expanded = ctx.state.bookExpanded;
 
   const compact = () => ctx.state.shelfMode !== 'comfort';
-
-  function closeMenu() {
-    if (!openMenu) return;
-    openMenu.hidden = true;
-    openMenu = null;
-  }
-
-  function toggleMenu(node) {
-    const opening = node.hidden;
-    closeMenu();
-    if (!opening) return;
-    node.hidden = false;
-    openMenu = node;
-    if (!menuBound && typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-      menuBound = true;
-      document.addEventListener('click', (event) => {
-        if (!openMenu) return;
-        if (event?.target?.closest?.('.ilb-more')) return;
-        closeMenu();
-      });
-    }
-  }
 
   function setMode(mode) {
     ctx.state.shelfMode = mode === 'comfort' ? 'comfort' : 'compact';
@@ -177,26 +154,61 @@ export function renderShelf(ctx) {
     draw();
   }
 
+  /** 「⋯」：菜单挂到 body / 手机上挂进 dialog，避免被浮窗的 overflow 裁掉。 */
   function moreMenu(book) {
-    const menu = el('div', { class: 'ilb-menu ilb-book-menu', hidden: true }, [
-      button('导出这本', () => exportBook(book), { ghost: true }),
+    const items = [
+      { label: '重命名…', onClick: () => renameBook(book) },
+      { label: '导出这本', onClick: () => exportBook(book) },
       book._source?.book_file
-        ? button('重新导入', () => {
-          closeMenu();
-          openImportDialog(ctx, { preselect: [book._source.book_file], title: `重新导入 ${book._source.book_file}` });
-        }, { ghost: true })
+        ? {
+          label: '重新导入',
+          onClick: () => openImportDialog(ctx, { preselect: [book._source.book_file], title: `重新导入 ${book._source.book_file}` }),
+        }
         : null,
-      button('复制一本', () => copyBook(book), { ghost: true }),
-      button('完整元数据', () => showMeta(book), { ghost: true }),
-      button('删除', () => removeBook(book), { ghost: true }),
-    ]);
-    // 假 DOM 里 setAttribute('hidden','') 不会同步 .hidden，这里补一次；真浏览器两者等价。
-    menu.hidden = true;
-    menu.setAttribute('hidden', '');
-    return el('div', { class: 'ilb-more' }, [
-      button('⋯', () => toggleMenu(menu), { ghost: true, title: '更多操作' }),
-      menu,
-    ]);
+      { label: '复制一本', onClick: () => copyBook(book) },
+      { label: '完整元数据', onClick: () => showMeta(book) },
+      { label: '删除', danger: true, onClick: () => removeBook(book) },
+    ].filter(Boolean);
+    const toggle = button('⋯', () => {
+      if (typeof toggle.getBoundingClientRect === 'function') openCardMenu(toggle, items, { align: 'right' });
+    }, { ghost: true, title: '更多操作' });
+    toggle.classList.add('ilb-icon-btn');
+    return el('div', { class: 'ilb-more' }, [toggle]);
+  }
+
+  /** 只改显示名：book_id、来源指纹、导入记录都不动。 */
+  function renameBook(book) {
+    const input = el('input', { class: 'ilb-input', type: 'text', value: book.name || '' });
+    const commit = () => {
+      const name = String(input.value ?? '').trim();
+      if (!name) {
+        ctx.toast('书名不能为空', 'warn');
+        return;
+      }
+      if (name === book.name) {
+        ctx.closeOverlay?.();
+        return;
+      }
+      book.name = name;
+      book.ui = { ...(book.ui ?? {}), updatedAt: Date.now() };
+      repository.saveBook(book);
+      ctx.closeOverlay?.();
+      draw();
+      ctx.toast(`已改名为《${name}》`);
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') commit();
+    });
+    ctx.openOverlay({
+      title: '重命名世界书',
+      nodes: [
+        el('div', { class: 'ilb-editor' }, [
+          field('书名', input, '只改显示名，book_id 与导入来源都不变。'),
+        ]),
+      ],
+      footer: [button('保存', commit), button('取消', () => ctx.closeOverlay?.(), { ghost: true })],
+    });
+    setTimeout(() => { try { input.focus(); input.select?.(); } catch { /* 忽略 */ } }, 30);
   }
 
   function exportBook(book) {
@@ -328,6 +340,7 @@ export function renderShelf(ctx) {
         ? button('重新导入', () => openImportDialog(ctx, { preselect: [source.book_file], title: `重新导入 ${source.book_file}` }), { ghost: true })
         : null,
       button('复制一本', () => copyBook(book), { ghost: true }),
+      button('重命名…', () => renameBook(book), { ghost: true }),
       button('完整元数据', () => showMeta(book), { ghost: true }),
       button('删除', () => removeBook(book, onDeleted), { ghost: true }),
     ]);
@@ -390,6 +403,14 @@ export function renderShelf(ctx) {
       el('div', { class: 'ilb-book-summary' }, tags),
       // 第三行：入口。手机用抽屉，卡片不再长高；桌面展开成紧凑两列。
       el('div', { class: 'ilb-book-foot' }, [
+        // 手动开关放在最前：它决定这本书参不参与判定，是这一行里最常点的开关。
+        el('label', { class: 'ilb-inline ilb-foot-switch', title: '手动开关：决定这本书参不参与判定' }, [
+          checkbox(on, (checked) => {
+            repository.setManualState(book.book_id, checked);
+            draw();
+          }, '手动开关'),
+          el('span', { class: 'ilb-sub', text: '手动' }),
+        ]),
         button('打开规则', () => openRules(book), { ghost: true }),
         isMobile
           ? button('详情设置', () => openBookSettings(book), { ghost: true, title: '打开书籍设置' })
@@ -541,7 +562,8 @@ export function renderShelf(ctx) {
       searchInput(ctx.state.bookQuery, '搜书名、来源文件…', (value) => {
         ctx.state.bookQuery = value;
         draw();
-      }),
+        focusSearch('shelf-books');
+      }, { key: 'shelf-books' }),
       ctx.searchScopeSelect?.('books'),
       counterLine,
       modeBar,

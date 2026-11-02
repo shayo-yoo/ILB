@@ -13,10 +13,11 @@ import { validateBook, defaultEntry, normalizeEntry } from '../core/model.js';
 import { filterEntries, listGroups, describeFilter, RULE_MODES, RULE_MODE_LABEL } from '../core/search.js';
 import {
   el, option, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
-  searchInput, selectBox, actionRow, metaLine, card, field,
+  searchInput, selectBox, actionRow, metaLine, card, field, focusSearch,
 } from './widgets.js';
 import { pickerButton } from './picker.js';
 import { settingsGrid, metaLineText, inlineSwitch } from './card-kit.js';
+import { openMenu as openCardMenu } from './menu.js';
 
 // 桌面「详情」是卡片内展开；手机点「详情」开底部抽屉。展开状态只在本次会话里记。
 const expandedRules = new Set();
@@ -41,24 +42,10 @@ export function describeTrigger(entry) {
   return parts.length ? parts.join('；') : '没有设置触发词（不会出现）';
 }
 
-/** 点页面别处也收菜单：整个模块只登记一次，避免每次重画都加一个监听。 */
-let outsideBound = false;
-function bindOutsideClose() {
-  if (outsideBound) return;
-  const doc = globalThis.document;
-  if (!doc?.addEventListener) return;
-  outsideBound = true;
-  doc.addEventListener('click', (event) => {
-    if (event?.target?.closest?.('.ilb-more')) return;
-    doc.querySelectorAll('.ilb-menu').forEach((node) => {
-      node.hidden = true;
-    });
-  });
-}
+/** 点页面别处也收菜单：菜单已 portal 到 body，统一由 ui/menu.js 管。 */
 
 export function renderRules(ctx) {
   const { repository, state } = ctx;
-  bindOutsideClose();
   const books = repository.listBooks();
   if (books.length === 0) return emptyText('先去书架导入或新建一本书。');
 
@@ -178,44 +165,29 @@ export function renderRules(ctx) {
     draw();
   }
 
-  /** 打开一个「⋯」菜单前先把别的收起来：不然两张卡的菜单会同时摊在那儿互相压。 */
-  function hideOtherMenus(keep) {
-    const scope = keep?.ownerDocument ?? globalThis.document;
-    if (!scope?.querySelectorAll) return;
-    scope.querySelectorAll('.ilb-menu').forEach((node) => {
-      if (node !== keep) node.hidden = true;
-    });
-  }
-
-  /** 卡片右上角的「⋯」：低频操作都收在这里，危险操作（删除）排最后。 */
+  /** 卡片右上角的「⋯」：低频操作都收在这里，危险操作（删除）排最后。
+   *  菜单由 ui/menu.js 挂到 body / 手机 dialog，不再被卡片与浮窗的 overflow 裁掉。 */
   function moreMenu(entry) {
-    const menu = el('div', { class: 'ilb-menu', hidden: true }, [
-      button('设置分组', () => setGroup(entry), { ghost: true }),
-      button('往前排', () => move(entry, -1), { ghost: true }),
-      button('往后排', () => move(entry, 1), { ghost: true }),
-      button('复制一条', () => duplicate(entry), { ghost: true }),
-      button('删除', () => remove(entry), { ghost: true }),
-    ]);
+    const items = [
+      { label: '设置分组', onClick: () => setGroup(entry) },
+      { label: '往前排', onClick: () => move(entry, -1) },
+      { label: '往后排', onClick: () => move(entry, 1) },
+      { label: '复制一条', onClick: () => duplicate(entry) },
+      { label: '删除', danger: true, onClick: () => remove(entry) },
+    ];
     const toggle = el('button', {
       type: 'button',
       class: 'ilb-icon-btn',
       text: '⋯',
       title: '更多操作',
       'aria-label': '更多操作',
-      'aria-expanded': 'false',
+      'aria-haspopup': 'menu',
       onclick: (event) => {
         event.stopPropagation();
-        const opening = menu.hidden;
-        if (opening) hideOtherMenus(menu);
-        menu.hidden = !menu.hidden;
-        toggle.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+        if (typeof toggle.getBoundingClientRect === 'function') openCardMenu(toggle, items, { align: 'right' });
       },
     });
-    menu.addEventListener('click', () => {
-      menu.hidden = true;
-      toggle.setAttribute('aria-expanded', 'false');
-    });
-    return el('div', { class: 'ilb-more' }, [toggle, menu]);
+    return el('div', { class: 'ilb-more' }, [toggle]);
   }
 
   /** 详情里的快捷设置：规则页最常改的几项，改完立即保存。 */
@@ -426,7 +398,8 @@ export function renderRules(ctx) {
       searchInput(state.ruleQuery, '搜标题、正文、触发词…', (value) => {
         state.ruleQuery = value;
         draw();
-      }),
+        focusSearch('rules-query');
+      }, { key: 'rules-query' }),
       ctx.searchScopeSelect?.('rules'),
       button(state.rulesFilterOpen ? '筛选 ▴' : '筛选 ▾', () => {
         state.rulesFilterOpen = !state.rulesFilterOpen;

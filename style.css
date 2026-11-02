@@ -2967,3 +2967,47 @@ body.ilb-overlay-open .ilb-fab {
 .ilb-m .ilb-rule-meta {
   min-height: 28px;
 }
+
+/* ---- v0.26.0 卡片「⋯」菜单（portal） ---- */
+/* 菜单被裁掉过：卡片靠近浮窗底部时，绝对定位的菜单下半截会落在 .ilb-window 的
+   overflow: hidden 里，看不见也点不到。现在由 ui/menu.js 挂到 body（手机挂对话框），
+   用 fixed 定位，并在视口内夹取。 */
+.ilb-menu-pop {
+  position: fixed;
+  right: auto;
+  top: auto;
+  z-index: 2147483001;
+  min-width: 168px;
+  max-width: min(280px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ilb-menu-pop .ilb-menu-item {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--SmartThemeBodyColor, inherit);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ilb-menu-pop .ilb-menu-item:hover,
+.ilb-menu-pop .ilb-menu-item:focus-visible {
+  background: rgba(122, 167, 255, 0.18);
+  outline: none;
+}
+.ilb-menu-pop .ilb-menu-danger { color: #ff8a8a; }
+.ilb-menu-pop .ilb-menu-item:disabled { opacity: 0.5; cursor: default; }
+
+/* 书架卡片第三行最前面的手动开关：矮一点，别把这一行撑高 */
+.ilb-foot-switch {
+  gap: 4px;
+  min-height: 32px;
+  margin-right: 2px;
+}
+.ilb-foot-switch .ilb-sub { font-size: 12px; }

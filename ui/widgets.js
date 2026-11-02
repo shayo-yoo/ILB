@@ -75,14 +75,46 @@ export function card(children, extraClass = '') {
   return el('article', { class: `ilb-card ${extraClass}`.trim() }, children);
 }
 
-export function searchInput(value, placeholder, onInput) {
+/**
+ * 搜索框：输入停下来才筛（250ms），避免"每按一个键就重画、键盘跟着收起"。
+ * key 用来在重画后把焦点与光标还回同一个搜索框（见 focusSearch）。
+ */
+export function searchInput(value, placeholder, onInput, opts = {}) {
+  const key = opts.key || placeholder;
+  let timer = 0;
   return el('input', {
     class: 'ilb-input ilb-search',
     type: 'search',
     value: value ?? '',
     placeholder,
-    oninput: (event) => onInput(event.target.value),
+    'data-search-key': key,
+    oninput: (event) => {
+      // 中文输入法组合期间不筛：候选还没落字，筛了也白筛，还会打断输入。
+      if (event.isComposing) return;
+      const next = event.target.value;
+      clearTimeout(timer);
+      timer = setTimeout(() => onInput(next), 250);
+    },
+    onkeydown: (event) => {
+      if (event.key === 'Enter') {
+        clearTimeout(timer);
+        onInput(event.target.value);
+      }
+    },
   });
+}
+
+/** 重画之后把焦点还回搜索框，并把光标放到末尾。 */
+export function focusSearch(key) {
+  try {
+    const node = document.querySelector(`.ilb-search[data-search-key="${key}"]`);
+    if (!node) return;
+    node.focus();
+    const end = String(node.value ?? '').length;
+    node.setSelectionRange?.(end, end);
+  } catch {
+    /* 没有 document 或桩不支持时忽略 */
+  }
 }
 
 export function selectBox(value, items, onChange, cls = 'ilb-select') {
