@@ -23,6 +23,10 @@ jobs:
           node --test tests/core.test.mjs tests/flow.test.mjs tests/search.test.mjs \
             tests/snapshot.test.mjs tests/import-plan.test.mjs tests/ui-layout.test.mjs
 
+      # v0.28.0：对外接口是契约，接口与关联的用例也进 CI（以前只在本地跑）
+      - name: 接口与关联单测
+        run: node --test tests/api.test.mjs tests/api-worldbooks.test.mjs tests/bindings.test.mjs
+
       - name: 模块链接检查
         run: node tests/linkcheck.mjs
 

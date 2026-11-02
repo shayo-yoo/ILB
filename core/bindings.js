@@ -198,7 +198,8 @@ export function describeBindingTarget(binding) {
  * 两种情形：
  *   · 只换名字（oldAvatar === newAvatar）：把同角色的记录上的名字刷新一遍；
  *   · 换了文件名（重命名角色卡）：把记录的 avatar 改成新的；改完若和已有的
- *     「同一角色 + 同一本书」撞车，保留 updatedAt 较新的一条，其余的合并掉。
+ *     「同一角色 + 同一本书」撞车，按**改名之前**的 updatedAt 留较新的一条，其余的合并掉
+ *     （不能拿刷新后的 now 去比，否则搬进来的那条永远赢）。
  *
  * @param {object[]} bindings 已经 normalizeBinding 过的记录
  * @param {string} oldAvatar
@@ -217,6 +218,9 @@ export function planRename(bindings, oldAvatar, newAvatar, opts = {}) {
 
   const renameAll = from !== to;
   const touched = new Set();
+  // 合并时要比较的是"改名之前"的时间。被搬过来的记录 updatedAt 会被刷成 now，
+  // 如果拿刷新后的时间比，它永远赢——结果是"留下的那张卡自己调过的开关被悄悄换掉"。
+  const priorAt = new Map();
   const next = list.map((b) => {
     const avatar = str(b.character?.avatar).trim();
     if (avatar !== from) return b;
@@ -231,14 +235,17 @@ export function planRename(bindings, oldAvatar, newAvatar, opts = {}) {
       updatedAt: now,
     };
     touched.add(changedOne);
+    priorAt.set(changedOne, num(b.updatedAt, 0));
     return changedOne;
   });
   if (touched.size === 0) return result;
 
-  // 合并：同一角色 + 同一本书只留一条（新的优先；时间一样时留原来就在前面的那条）
+  // 合并：同一角色 + 同一本书只留一条。比的是改名前的 updatedAt；
+  // 时间一样时留"原本就在新角色名下"的那条（用户的设置是他自己调出来的，别被搬进来的覆盖）。
   const kept = [];
   const index = new Map();
   let merged = 0;
+  const stampOf = (b) => (priorAt.has(b) ? priorAt.get(b) : num(b.updatedAt, 0));
   for (const b of next) {
     const key = `${str(b.character?.avatar)}\u0000${str(b.bookId)}`;
     const at = index.get(key);
@@ -249,9 +256,10 @@ export function planRename(bindings, oldAvatar, newAvatar, opts = {}) {
     }
     merged += 1;
     const current = kept[at];
-    const curAt = num(current.updatedAt, 0);
-    const nextAt = num(b.updatedAt, 0);
+    const curAt = stampOf(current);
+    const nextAt = stampOf(b);
     if (nextAt > curAt) kept[at] = b;
+    else if (nextAt === curAt && touched.has(current) && !touched.has(b)) kept[at] = b;
   }
 
   // updated 只数"活下来并且真的被改过"的记录，合并掉的单独记在 merged 里

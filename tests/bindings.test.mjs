@@ -193,16 +193,59 @@ test('角色卡改名：关联搬过去；撞车时留较新的一条', () => {
   assert.equal(api.bindings.list({ character: 'A.png' }).total, 0);
   assert.equal(api.bindings.get(one.id).binding.character.avatar, 'A2.png');
 
-  // 撞车：C.png 上已经有一条同书关联，把另一张卡改名成 C.png 时要合并，留 updatedAt 较新的那条
-  const newer = bind(api, 'C.png', 'b1');
-  const older = bind(api, 'D.png', 'b1');
-  repository.updateBinding(older.id, { updatedAt: 1 });
+  // 撞车：C.png 上已经有一条同书关联，把另一张卡改名成 C.png 时要合并，留 updatedAt 较新的那条。
+  // 时间写死，不靠 Date.now()——否则「两次创建落在同一毫秒」还是「隔了一毫秒」会改变谁赢，测试会间歇失败。
+  const base = 1_700_000_000_000;
+  const settled = repository.createBinding({
+    id: 'bind-settled',
+    character: { avatar: 'C.png', name: 'C' },
+    bookId: 'b1',
+    policy: 'on',
+    note: 'C 自己调的',
+    createdAt: base - 5000,
+    updatedAt: base - 10,
+  });
+  repository.createBinding({
+    id: 'bind-stale',
+    character: { avatar: 'D.png', name: 'D' },
+    bookId: 'b1',
+    policy: 'auto',
+    createdAt: base - 4000,
+    updatedAt: base - 1000,
+  });
   const res = api.bindings.renameCharacter('D.png', 'C.png');
   assert.equal(res.ok, true);
   assert.equal(res.merged, 1);
   const merged = api.bindings.list({ character: 'C.png', bookId: 'b1' });
   assert.equal(merged.total, 1);
-  assert.equal(merged.bindings[0].id, newer.id);
+  assert.equal(merged.bindings[0].id, settled.id);
+  // 留下的应该是"这张卡自己"的表态，不能被搬进来的那条悄悄换掉
+  assert.equal(merged.bindings[0].policy, 'on');
+  assert.equal(merged.bindings[0].note, 'C 自己调的');
+
+  // 反过来也成立：被搬过来的那条本来就更新（用户刚调过），那就留它
+  repository.createBinding({
+    id: 'bind-target',
+    character: { avatar: 'E.png', name: 'E' },
+    bookId: 'b2',
+    policy: 'on',
+    createdAt: base - 5000,
+    updatedAt: base - 9000,
+  });
+  repository.createBinding({
+    id: 'bind-mover',
+    character: { avatar: 'F.png', name: 'F' },
+    bookId: 'b2',
+    policy: 'off',
+    createdAt: base - 4000,
+    updatedAt: base - 5,
+  });
+  const moved = api.bindings.renameCharacter('F.png', 'E.png');
+  assert.equal(moved.merged, 1);
+  const afterMove = api.bindings.list({ character: 'E.png', bookId: 'b2' });
+  assert.equal(afterMove.total, 1);
+  assert.equal(afterMove.bindings[0].id, 'bind-mover');
+  assert.equal(afterMove.bindings[0].policy, 'off');
 
   // 同一张卡只改显示名：old===new
   const touched = api.bindings.renameCharacter('A2.png', 'A2.png', { name: '又改了' });
