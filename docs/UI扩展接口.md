@@ -280,6 +280,7 @@ if (!api?.caps?.includes('bindings')) return;   // 旧版 ILB：安静退出
 - 存在 ILB 自己的存档里（`extension_settings.independent_lorebook.bindings`），**不写角色卡**，换酒馆/换设备只要备份往返就还在。
 - 同一张卡 × 同一本书只能有一条；表态只有三种：`auto`（有关联就启用）、`on`（强制启用）、`off`（强制停用）。
 - 角色卡改名/换文件名时，ILB 自己把关联搬过去（`CHARACTER_RENAMED`）；角色卡被删时只打 `orphanedAt` 标记，**不删数据**，等用户确认后再清。
+- 改名撞车（新名字名下已经有关联同一本书）：按**改名之前**的 `updatedAt` 留较新的一条，时间相同则留原本就在新名字名下的那条——那张卡自己的表态与备注不会被搬进来的覆盖；合并掉的数量在返回的 `merged` 里。
 
 ### 方法
 
