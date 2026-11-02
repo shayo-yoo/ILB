@@ -3032,3 +3032,53 @@ body.ilb-overlay-open .ilb-fab {
   margin-right: 2px;
 }
 .ilb-foot-switch .ilb-sub { font-size: 12px; }
+
+/* v0.29.0：书架「书籍设置 → 角色关联」里的列表与新增行 */
+.ilb-bind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 10px;
+}
+
+.ilb-bind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
+}
+
+.ilb-bind-who {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.ilb-bind-who .ilb-sub {
+  font-size: 11px;
+  opacity: 0.65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ilb-bind-row .ilb-select {
+  flex: 0 0 auto;
+}
+
+.ilb-bind-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.14));
+}
+
+.ilb-bind-add .ilb-select {
+  flex: 1 1 120px;
+  min-width: 0;
+}

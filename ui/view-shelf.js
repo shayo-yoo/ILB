@@ -3,6 +3,7 @@
 // v0.23.0 起卡片分三级：默认摘要 / 展开详情 / 「⋯」更多操作；移动端默认紧凑模式。
 
 import { makeEmptyBook, bookTokenEstimate, strategyOf } from '../core/model.js';
+import { bindingAvatarsOf, bindingVote, describeBinding, pickBinding, bindingWhoName } from '../core/bindings.js';
 import { exportNativeWorld } from '../core/export-native.js';
 import { estimateTokens } from '../core/budget.js';
 import { filterBooks } from '../core/search.js';
@@ -18,19 +19,31 @@ import { openImportDialog } from './importer.js';
 import { settingRow } from './card-kit.js';
 import { openMenu as openCardMenu, closeMenu as closeCardMenu } from './menu.js';
 
-// 说明"这本书现在为什么开 / 为什么关"：策略 + 强制覆盖 + 宿主关联，三者合成一句话（ILB-4.6）。
-// 这里只做展示用的推算；真正判定在 core/resolve-books.js，两边规则一致。
-function reasonOf(book, host) {
+// 说明"这本书现在为什么开 / 为什么关"：策略 + 强制覆盖 + 宿主关联 + 角色关联，合成一句话（ILB-4.6）。
+// 这里只做展示用的推算；真正判定在 core/resolve-books.js，两边规则一致：
+// 强制覆盖 → 关联投票（v0.29.0）→ 策略 → 宿主匹配。
+function reasonOf(book, host, vote = null, binding = null) {
   const strategy = strategyOf(book.activation);
   const override = book.activation?.override ?? 'auto';
   if (override === 'off') return { on: false, text: '你强制停用了它（覆盖策略）' };
   if (override === 'on') return { on: true, text: '你强制启用了它（覆盖策略）' };
+  if (vote === 'off' || vote === 'on') {
+    return {
+      on: vote === 'on',
+      text: describeBinding({ policy: vote, binding, isGroup: Boolean(host?.group?.id) }),
+    };
+  }
   if (strategy === 'always') return { on: true, text: '策略是「始终启用」' };
   if (strategy === 'manual') return { on: null, text: '策略是「手动控制」，看下面的手动开关' };
   if (!host.contextAvailable) return { on: null, text: '还没读到酒馆上下文（状态未知），先按手动开关走' };
+  if (vote === 'auto') {
+    return { on: true, text: describeBinding({ policy: 'auto', binding, isGroup: Boolean(host?.group?.id) }) };
+  }
   const match = matchBookToHost(book, host);
-  if (match.matched) return { on: true, text: describeMatch(match) };
-  if (match.candidate) return { on: false, text: `酒馆里有同名书「${match.candidate}」，但只凭名字相同不会自动启用` };
+  // 注意：matched / candidate 是数组，空数组在 JS 里也是真值——必须看长度。
+  // 老代码写成 if (match.matched)，导致所有「策略=自动、又没匹配上」的书都显示「运行中」。
+  if (match.matched.length > 0) return { on: true, text: describeMatch(match) };
+  if (match.candidate.length > 0) return { on: false, text: `酒馆里有同名书「${match.candidate[0].name}」，但只凭名字相同不会自动启用` };
   return { on: false, text: '当前角色 / 聊天没有关联这本书' };
 }
 
@@ -118,6 +131,31 @@ export function renderShelf(ctx) {
     }
   }
 
+  /** 读全部关联（规范化后的副本）。老存档没有这个键时 repository 会补成空数组。 */
+  function listBindingsSafe() {
+    try {
+      return typeof repository.listBindings === 'function' ? repository.listBindings() : [];
+    } catch (err) {
+      console.warn('[ILB] 读取角色关联失败', err);
+      return [];
+    }
+  }
+
+  /** 当前在场的角色对这本书怎么投票（与 core/resolve-books.js 同一套函数，不另写一份规则）。 */
+  function voteFor(book, host, bindings = null) {
+    try {
+      const list = Array.isArray(bindings) ? bindings : listBindingsSafe();
+      const avatars = bindingAvatarsOf(host);
+      if (!avatars) return { vote: null, binding: null };
+      const vote = bindingVote(list, book.book_id, avatars);
+      if (!vote) return { vote: null, binding: null };
+      return { vote, binding: pickBinding(list, book.book_id, avatars) };
+    } catch (err) {
+      console.warn('[ILB] 关联投票算不出来，这一本按老规则显示', err);
+      return { vote: null, binding: null };
+    }
+  }
+
   function readHost() {
     try {
       return typeof ctx.getHostContext === 'function' ? ctx.getHostContext() : null;
@@ -132,6 +170,8 @@ export function renderShelf(ctx) {
     const manual = repository.getManualState();
     // 宿主上下文每次重画都重新读：切了角色就该看到新的"为什么"
     const host = normalizeHostContext(readHost());
+    // 关联也只读一次：几百本书逐本查一遍存档没必要（v0.29.0）
+    const bindings = listBindingsSafe();
     const shown = ctx.sortedBooks(filterBooks(all, ctx.state.bookQuery, ctx.state.searchScope?.books ?? 'book'));
     const visible = new Set(shown.map((b) => b.book_id));
     for (const id of [...selected]) if (!visible.has(id)) selected.delete(id);
@@ -151,7 +191,7 @@ export function renderShelf(ctx) {
       listHost.appendChild(emptyText('没有匹配的书。换个关键词试试。'));
       return;
     }
-    for (const book of shown) listHost.appendChild(renderBook(book, manual, host));
+    for (const book of shown) listHost.appendChild(renderBook(book, manual, host, bindings));
     drawBatch(shown);
   }
 
@@ -289,7 +329,7 @@ export function renderShelf(ctx) {
     ]);
   }
 
-  function settingsGrid(book, host) {
+  function settingsGrid(book, host, bindings = null) {
     const strategy = strategyOf(book.activation);
     const override = book.activation?.override ?? 'auto';
     const manual = repository.getManualState();
@@ -315,6 +355,9 @@ export function renderShelf(ctx) {
     ]);
     return el('div', { class: 'ilb-set-grid' }, [
       settingRow('酒馆关联', hostControl),
+      // v0.29.0：角色卡关联。数据与 ILBCC 同一份（存档里的 bindings），
+      // 这里只是多了个入口——在这边加的关联，附属扩展里立刻能看到、也能导出。
+      settingRow('角色关联', bindingControl(book, bindings)),
       settingRow('启用策略', selectBox(strategy, Object.entries(STRATEGY_LABEL).map(([value, label]) => ({ value, label })), (value) => {
         // mode 是 v0.14 的老字段：保留并同步，老版本读到它时行为尽量一致
         const mode = value === 'auto' ? 'character' : value;
@@ -334,6 +377,128 @@ export function renderShelf(ctx) {
         save();
       })),
     ]);
+  }
+
+  // ---- 角色卡关联（v0.29.0）----
+  // 关联只存 ILB 存档里的 bindings，不写角色卡、也不碰酒馆的原生绑定。
+  // 真正的启停由 core/resolve-books.js 在每次生成前判定；这里只管增删改查。
+  const BINDING_POLICY_OPTIONS = [
+    { value: 'auto', label: '跟随书设置' },
+    { value: 'on', label: '强制启用' },
+    { value: 'off', label: '强制停用' },
+  ];
+
+  function policyLabel(value) {
+    return BINDING_POLICY_OPTIONS.find((item) => item.value === value)?.label ?? value;
+  }
+
+  function bindingControl(book, bindings = null) {
+    const rows = (Array.isArray(bindings) ? bindings : listBindingsSafe()).filter((b) => b.bookId === book.book_id);
+    const live = rows.filter((b) => !b.orphanedAt);
+    const names = live.map((row) => bindingWhoName(row)).slice(0, 2);
+    const text = live.length === 0
+      ? '还没关联角色卡'
+      : `已关联 ${live.length} 个角色（${names.join('、')}${live.length > names.length ? '…' : ''}）`;
+    return el('span', { class: 'ilb-set-inline' }, [
+      el('span', { class: 'ilb-sub', text }),
+      button('管理…', () => openBindings(book), { ghost: true, title: '把这本书关联到角色卡' }),
+    ]);
+  }
+
+  function bindingRow(book, row, reopen) {
+    const who = bindingWhoName(row);
+    const avatar = String(row.character?.avatar ?? '');
+    const nameNode = el('div', { class: 'ilb-bind-who' }, [
+      el('strong', { text: who }),
+      el('span', { class: 'ilb-sub', text: avatar }),
+    ]);
+    const policy = selectBox(row.policy, BINDING_POLICY_OPTIONS, (value) => {
+      try {
+        repository.updateBinding(row.id, { policy: value });
+        ctx.toast(`已设为「${policyLabel(value)}」`);
+      } catch (err) {
+        ctx.toast(`改策略失败：${err?.message ?? err}`, 'warn');
+      }
+      draw();
+      reopen();
+    });
+    const remove = button('解除', () => {
+      try {
+        if (typeof repository.removeBinding === 'function') repository.removeBinding(row.id);
+        ctx.toast('已解除这本书和该角色的关联；角色卡本身没有动');
+      } catch (err) {
+        ctx.toast(`解除失败：${err?.message ?? err}`, 'warn');
+      }
+      draw();
+      reopen();
+    }, { ghost: true });
+    return el('div', { class: 'ilb-bind-row' }, [
+      nameNode,
+      row.orphanedAt ? badge('角色已改名或删除', 'warn') : null,
+      policy,
+      remove,
+    ]);
+  }
+
+  function addBindingRow(book, rows, reopen) {
+    const bound = new Set(rows.map((row) => String(row.character?.avatar ?? '')).filter(Boolean));
+    const characters = (ctx.listCharacters?.() ?? []).filter((card) => card.avatar && !bound.has(card.avatar));
+    if (characters.length === 0) {
+      return el('div', { class: 'ilb-bind-add' }, [
+        hint(bound.size > 0 ? '酒馆里的角色卡都关联过了。' : '没读到角色卡：先在酒馆里建一张角色卡，再回来。'),
+      ]);
+    }
+    let chosen = characters[0].avatar;
+    let policy = 'auto';
+    const pick = selectBox(chosen, characters.map((card) => ({ value: card.avatar, label: card.name || card.avatar })), (value) => {
+      chosen = value;
+    });
+    const policySelect = selectBox('auto', BINDING_POLICY_OPTIONS, (value) => {
+      policy = value;
+    });
+    const add = button('关联到这本书', () => {
+      const card = characters.find((item) => item.avatar === chosen) ?? characters[0];
+      try {
+        repository.createBinding({
+          character: { avatar: card.avatar, name: card.name },
+          bookId: book.book_id,
+          policy,
+        });
+        ctx.toast(`已关联「${card.name || card.avatar}」`);
+      } catch (err) {
+        ctx.toast(`关联失败：${err?.message ?? err}`, 'warn');
+      }
+      draw();
+      reopen();
+    }, { primary: true });
+    return el('div', { class: 'ilb-bind-add' }, [
+      el('span', { class: 'ilb-set-label', text: '新增' }),
+      pick,
+      policySelect,
+      add,
+    ]);
+  }
+
+  function openBindings(book) {
+    const rows = listBindingsSafe().filter((b) => b.bookId === book.book_id);
+    const reopen = () => openBindings(book);
+    const nodes = [
+      el('p', {
+        class: 'ilb-sub ilb-sheet-note',
+        text: '关联存在 ILB 自己的存档里，不会改写角色卡。进入这张卡时，ILB 按这里的设置决定这本书启不启用；附属扩展「ILB 角色卡兼容」看到的是同一份数据，也能一起导出。',
+      }),
+    ];
+
+    if (rows.length === 0) {
+      nodes.push(emptyText('这本书还没有关联到任何角色卡。'));
+    } else {
+      const list = el('div', { class: 'ilb-bind-list' });
+      for (const row of rows) list.appendChild(bindingRow(book, row, reopen));
+      nodes.push(list);
+    }
+
+    nodes.push(addBindingRow(book, rows, reopen));
+    ctx.openOverlay(`角色关联 · ${book.name || book.book_id}`, nodes);
   }
 
   function bookMeta(book) {
@@ -364,23 +529,26 @@ export function renderShelf(ctx) {
   /** 手机：书籍设置走底部抽屉（二级页），卡片本身不跟着长高。 */
   function openBookSettings(book) {
     const host = normalizeHostContext(readHost());
-    const reason = reasonOf(book, host);
+    const bindings = listBindingsSafe();
+    const vote = voteFor(book, host, bindings);
+    const reason = reasonOf(book, host, vote.vote, vote.binding);
     ctx.openOverlay(`书籍设置 · ${book.name || book.book_id}`, [
       el('p', { class: 'ilb-sub ilb-sheet-note', text: `${reason.text}。下面的开关点了就生效。` }),
-      settingsGrid(book, host),
+      settingsGrid(book, host, bindings),
       bookMeta(book),
       bookActions(book, () => ctx.closeOverlay?.()),
     ]);
   }
 
-  function renderBook(book, manual, host) {
+  function renderBook(book, manual, host, bindings = []) {
     const strategy = strategyOf(book.activation);
     const override = book.activation?.override ?? 'auto';
     const on = Object.prototype.hasOwnProperty.call(manual, book.book_id)
       ? manual[book.book_id] !== false
       : book.activation?.manual !== false;
     const count = Number((book._source ?? {}).import_count) || 1;
-    const reason = reasonOf(book, host);
+    const vote = voteFor(book, host, bindings);
+    const reason = reasonOf(book, host, vote.vote, vote.binding);
     const isOpen = expanded.has(book.book_id);
     const logicCount = (book.logic ?? []).length;
     const isMobile = ctx.layout?.() === 'mobile';
@@ -431,10 +599,13 @@ export function renderShelf(ctx) {
           ? button('详情设置', () => openBookSettings(book), { ghost: true, title: '打开书籍设置' })
           : button(isOpen ? '收起详情 ▴' : '展开详情 ▾', () => toggleExpanded(book), { ghost: true, title: isOpen ? '收起详情' : '展开详情' }),
         el('span', { class: 'ilb-spacer' }),
-        el('span', { class: 'ilb-sub ilb-book-comfort-only', text: `${reason.on === true ? '运行中' : reason.on === false ? '未运行' : '状态未知'} · 约 ${bookTokenEstimate(book, estimateTokens)} 词` }),
+        el('span', {
+          class: 'ilb-sub ilb-book-comfort-only',
+          text: `${reason.on === true ? '运行中' : reason.on === false ? '未运行' : '状态未知'} · 约 ${bookTokenEstimate(book, estimateTokens)} 词`,
+        }),
       ]),
       !isMobile && isOpen ? el('div', { class: 'ilb-book-detail' }, [
-        settingsGrid(book, host),
+        settingsGrid(book, host, bindings),
         bookMeta(book),
         bookActions(book),
       ]) : null,

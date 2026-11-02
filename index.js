@@ -27,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.28.0';
+const VERSION = '0.29.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -200,6 +200,16 @@ async function boot() {
         return hostContext ? hostContext.read() : null;
       } catch {
         return null;
+      }
+    },
+    // 书架里「角色关联」要从全部角色卡里挑：只取 avatar 与名字，懒加载时这两样也在
+    listCharacters: () => {
+      try {
+        return (getContext()?.characters ?? [])
+          .map((card) => ({ avatar: String(card?.avatar ?? ''), name: String(card?.name ?? '') }))
+          .filter((card) => card.avatar);
+      } catch {
+        return [];
       }
     },
     describeHost: () => (hostContext ? hostContext.describe() : { moduleLoaded: false, via: '', error: '宿主联动没初始化', supported: [] }),

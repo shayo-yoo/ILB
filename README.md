@@ -1,9 +1,9 @@
-# Independent Lorebook (ILB)
+﻿# Independent Lorebook (ILB)
 
 让 SillyTavern 的世界书更强，同时不逼用户学语法。
 
 > **重要声明**：判定层的单元测试、模块链接检查、假 DOM 界面冒烟都已通过；
-> 本机 **SillyTavern 1.19.0 + 无头 Chrome 156** 里的自动探针（`tests/live/`，19 个）也全过。
+> 本机 **SillyTavern 1.19.0 + 无头 Chrome 156** 里的自动探针（`tests/live/`，20 个）也全过。
 > 但**手机真机（SillyDroid / iOS WebView）仍未实测**，真实模型生成时的观感也没测过——
 > 这两处凡是与本文档描述不一致，以实机结果为准。
 
@@ -262,7 +262,7 @@ node tests/serve.mjs 8792
 - 对外接口 `window.ILB.api` 现为 **v1.4**：`tests/api.test.mjs` 与 `tests/api-worldbooks.test.mjs`、`tests/bindings.test.mjs` 覆盖，
   `tests/api-demo.mjs` 是演示，以及在真酒馆里跑的 `tests/live/st-ui-step.mjs`、`st-v27-check.mjs`、`st-v28-check.mjs`
   （`call` 带回 `ui`/`durationMs`/`id`、`callAsync` 不抛、事件顺序 `call,ui`；worldbooks 与 bindings 的错误码、删书、备份往返）。
-  但**还没有真实的第三方扩展长期消费 1.3/1.4 这两组命名空间**；`ilb:ready` 的真实加载时序也未在宿主里验证。
+  但**还没有真实的第三方扩展长期消费这些命名空间**（`ILB 角色卡兼容` 是第一个，0.1.x 仍在自用阶段）；`ilb:ready` 的真实加载时序也未在宿主里验证。
 - 「界面」步骤（v0.14.0，接口 1.2）只产出一条一次性指令，**只有用户点按钮调用时**才会执行（聊天里自动触发会跳过并留诊断）；
   **ILBUI 拿到指令后实际翻页/提示的观感还没联调过**，手机外壳里更没试过。
 - 流程的文本模式（v0.13.0，v0.13.1 认直接赋值与行内注释）只有 `tests/flow-text.test.mjs` 的 17 条用例与冒烟 2 步兜底；

@@ -106,3 +106,11 @@ node tests/live/st-v28-check.mjs
 覆盖：api 1.4 的 `caps` / `ready` / `describe().methods`；`runtime.status()` 在没跑过时返回 `ran:false`；`bindings` 的增删查改与四种错误码（`NOT_FOUND` / `CONFLICT` / `BAD_PAYLOAD`）；判定优先级（书 `override='off'` 压过关联、关联 `off` 压过 `always`、关联 `on`、关联 `auto`）；`runtime.preview()` 覆盖全部书且与真跑后的 `status().activeBooks` 一致；群聊按成员投票；角色改名后关联搬过去；删角色后变孤儿且不再参与判定、`purgeOrphans` 清掉；`worldbooks.deleteBook` 的四种情形（有绑定拒绝 / `cascade` / 不存在 / 正常）；`importBook` 拒 `schema_version:3`、迁移 `1`；整份备份带 `bindings` 并能往返。
 
 探针会自建 `probe-v28-*` 三本书与临时关联，结束时只清自己建的东西（不动用户的真实书与关联）。跑之前请先备份一次：「书架 → 导出全部数据」。
+
+### st-v29-check.mjs —— v0.29.0 书架里给书绑定角色卡
+
+```
+node tests/live/st-v29-check.mjs
+```
+
+覆盖：点开一张真实角色卡 → 造一本 `probe-v29-book` → 书架搜索定位 → 展开详情 →「书籍设置」里有「角色关联」行 →「管理…」打开浮层（标题、新增区、两个下拉）→ 选当前角色 + 「强制启用」→ 关联落库（`api.bindings.list` 能查到、`policy='on'`）→ `runtime.preview()` 的 `rule` 变成 `binding-on` → 浮层与书架卡片都显示出来 → 附属扩展（装了的话）也能读到同一条。结束时删关联、`deleteBook(cascade)` 删探针书、清搜索框，只动自己建的东西。
