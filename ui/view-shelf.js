@@ -98,12 +98,24 @@ export function renderShelf(ctx) {
     }, { ghost: true }));
     batchHost.appendChild(button('删除', () => {
       const list = targets();
-      if (!window.confirm(`删除选中的 ${list.length} 本书？删了就找不回来了。`)) return;
+      // 删书会连带解除角色关联（v0.28.0）：必须在确认框里说清楚，不能悄悄弄断别人的设定
+      const bound = list.reduce((sum, book) => sum + boundCountOf(book.book_id), 0);
+      const extra = bound > 0 ? `这些书还被 ${bound} 个角色关联着，关联会一起解除。` : '';
+      if (!window.confirm(`删除选中的 ${list.length} 本书？${extra}删了就找不回来了。`)) return;
       for (const book of list) repository.deleteBook(book.book_id);
       selected.clear();
       ctx.toast(`已删除 ${list.length} 本`);
       draw();
     }, { ghost: true }));
+  }
+
+  /** 这本书被几个角色关联着。数不出来就当 0——宁可少提醒，不要吓人。 */
+  function boundCountOf(bookId) {
+    try {
+      return typeof repository.countBindingsForBook === 'function' ? repository.countBindingsForBook(bookId) : 0;
+    } catch {
+      return 0;
+    }
   }
 
   function readHost() {
@@ -247,8 +259,11 @@ export function renderShelf(ctx) {
    */
   function removeBook(book, onDeleted = null) {
     closeMenu();
+    const bound = boundCountOf(book.book_id);
+    const lines = [hint('这本书的规则和逻辑会一起删掉，删了就找不回来了。')];
+    if (bound > 0) lines.push(hint(`还有 ${bound} 个角色关联着这本书，删除会一起解除这些关联。`));
     ctx.openOverlay(`删除《${book.name || book.book_id}》`, [
-      hint('这本书的规则和逻辑会一起删掉，删了就找不回来了。'),
+      ...lines,
       el('div', { class: 'ilb-actions' }, [
         button('确认删除', () => {
           ctx.closeOverlay?.();

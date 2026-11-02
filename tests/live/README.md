@@ -96,3 +96,13 @@ node tests/live/st-v27-check.mjs
 ```
 
 覆盖：`ILB.api.ready / version / caps`；worldbooks 的列表、取书、导出、冲突（ask/skip/overwrite）、批量导入、坏数据、清理；手机顶部折叠条展开是浮层（列表上边不动）、再点收起。
+
+### st-v28-check.mjs —— v0.28.0 角色卡关联与运行时接口
+
+```
+node tests/live/st-v28-check.mjs
+```
+
+覆盖：api 1.4 的 `caps` / `ready` / `describe().methods`；`runtime.status()` 在没跑过时返回 `ran:false`；`bindings` 的增删查改与四种错误码（`NOT_FOUND` / `CONFLICT` / `BAD_PAYLOAD`）；判定优先级（书 `override='off'` 压过关联、关联 `off` 压过 `always`、关联 `on`、关联 `auto`）；`runtime.preview()` 覆盖全部书且与真跑后的 `status().activeBooks` 一致；群聊按成员投票；角色改名后关联搬过去；删角色后变孤儿且不再参与判定、`purgeOrphans` 清掉；`worldbooks.deleteBook` 的四种情形（有绑定拒绝 / `cascade` / 不存在 / 正常）；`importBook` 拒 `schema_version:3`、迁移 `1`；整份备份带 `bindings` 并能往返。
+
+探针会自建 `probe-v28-*` 三本书与临时关联，结束时只清自己建的东西（不动用户的真实书与关联）。跑之前请先备份一次：「书架 → 导出全部数据」。

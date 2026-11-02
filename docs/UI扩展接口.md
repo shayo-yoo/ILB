@@ -1,4 +1,4 @@
-# ILB 对外接口（给别的扩展用）· API v1.2
+# ILB 对外接口（给别的扩展用）· API v1.4
 
 > 这份文件是**契约**。ILB 内部的 `repository / pipeline / 书的字段结构` 都可能在版本间改动；别的扩展只许用下面这些入口，不要直接读 `window.ILB.repository` 之类的东西。
 >
@@ -205,10 +205,12 @@ const off = api.subscribe((payload) => {
 
 ## 7. 版本策略
 
-- `API_VERSION` 是**契约**版本，与扩展版本号（`manifest.json` 的 `0.14.0`）分开。
+- `API_VERSION` 是**契约**版本，与扩展版本号（`manifest.json` 的 `0.28.0`）分开。
 - 加字段、加可选参数、加方法：小版本（`1.0 → 1.1`），老调用不受影响。
   - 1.1 相对 1.0：`outcome/ran/vars/unusedArgs/missingParams`、`snapshot` 的 `params`、`call` 的 `opts`、`subscribe` 不再抛异常、`set` 拒绝 `NaN/Infinity`。其中"同名逻辑不再取第一个"会让**原本静默成功的旧写法**变成报错——这是有意的修正，写进了 D-0049。
   - 1.2 相对 1.1：`call` 返回值加顶层 `ui` 与 `durationMs`、新增 `callAsync`、`caps` 加 `'ui'` / `'callAsync'`、`subscribe` 多一个 `'ui'` 事件。**纯加法**，只认 `ok`/`outcome` 的旧代码行为不变；`extra` 仍是 `string[]`（没改成对象，见 D-0053）。
+  - 1.3 相对 1.2：新增 `worldbooks` 命名空间（`list/get/has/exportBook/importBook/importMany`）、`api.ready`、`caps` 加 `'ready'`/`'worldbooks'`。`worldbooks.*` 是 `async`，失败返回 `{ ok:false, error:{code,message} }`（见《世界书接口》）。
+  - 1.4 相对 1.3：新增 `bindings` 与 `runtime` 两个命名空间、`worldbooks.deleteBook`、`caps` 加 `'bindings'`/`'runtime'`/`'bookDelete'`。**纯加法**：不给一个关联也照样按 1.3 的规则启用书，判定结果逐字不变。
 - 改字段语义、删方法：大版本（`1.x → 2.0`），并至少在旧版本里保留一个发布周期的兼容层。
 - 破坏性变更必须写进 `docs/决策记录.md` 与 `参考文档.md` 的编号条款。
 
@@ -236,7 +238,7 @@ function mount(widget) {
 - 动作只有三种：`set`（写变量）、`call`（走逻辑）、`open`（打开别的界面/ILB 面板）。`add` 不是接口动作，是 UI 侧的"读-算-写"。
 - 布局、样式、声明格式由 UI 扩展自己负责；ILB 不解释布局。
 
-## 9. 现在的已知限制（v1.2）
+## 9. 现在的已知限制（v1.4）
 
 | 限制 | 说明 |
 |---|---|
@@ -248,3 +250,128 @@ function mount(widget) {
 | 界面指令不能等用户 | `ask` 只是显示；"确认后继续"要靠拆两条逻辑 |
 | 指令里不能写变量 | 字段是常量字符串，不拼 `$变量`（没有表达式语言，D-0006） |
 | 没有异步逻辑 | `callAsync` 只是让出一帧，逻辑本身仍是同步的，没有 `await` 逻辑内部的写法 |
+| 关联只能由扩展建 | ILB 自己没有"给这张卡加一本书"的界面（v1.4 只开了接口，见 D-0087）；书架只在删书时提示会解除几条关联 |
+
+## 10. 角色卡关联（1.4 新增）
+
+给"角色卡兼容扩展"用：记住哪张卡认哪本书，并让这份关联真正参与启用判定。
+
+```js
+const api = globalThis.ILB?.api ?? (globalThis.ILB_READY ? await globalThis.ILB_READY : null);
+await api?.ready;
+if (!api?.caps?.includes('bindings')) return;   // 旧版 ILB：安静退出
+```
+
+### 一条关联长什么样
+
+```js
+{
+  id: 'bind-m3k2n1-a7fq',
+  character: { avatar: 'Seraphina.png', name: 'Seraphina' },  // avatar 是酒馆的角色卡文件名
+  bookId: 'book-abc',
+  policy: 'auto',        // 'auto' | 'on' | 'off'
+  note: '',
+  createdAt: 1762000000000,
+  updatedAt: 1762000000000,
+  orphanedAt: null,      // 角色卡被删掉后变成时间戳
+}
+```
+
+- 存在 ILB 自己的存档里（`extension_settings.independent_lorebook.bindings`），**不写角色卡**，换酒馆/换设备只要备份往返就还在。
+- 同一张卡 × 同一本书只能有一条；表态只有三种：`auto`（有关联就启用）、`on`（强制启用）、`off`（强制停用）。
+- 角色卡改名/换文件名时，ILB 自己把关联搬过去（`CHARACTER_RENAMED`）；角色卡被删时只打 `orphanedAt` 标记，**不删数据**，等用户确认后再清。
+
+### 方法
+
+| 方法 | 返回 |
+|---|---|
+| `bindings.list(opts?)` | `{ ok:true, bindings:[...], total }`。`opts.character`（avatar 字符串或 `{avatar}`）、`opts.bookId`、`opts.includeOrphaned`（默认 `true`） |
+| `bindings.get(id)` | `{ ok:true, binding }` / `NOT_FOUND` |
+| `bindings.create({character:{avatar,name}, bookId, policy?, note?})` | `{ ok:true, binding }`；`policy` 默认 `'auto'` |
+| `bindings.update(id, {policy?, note?})` | `{ ok:true, binding }`。只认这两个字段，其余忽略 |
+| `bindings.remove(id)` | `{ ok:true, removed:true|false }`，**幂等** |
+| `bindings.removeForCharacter(avatar)` | `{ ok:true, removed:number }` |
+| `bindings.renameCharacter(oldAvatar, newAvatar, {name?}?)` | `{ ok:true, updated, merged }`；`old === new` 时只刷显示名 |
+| `bindings.purgeOrphans()` | `{ ok:true, removed:number }`，清掉角色卡已删的关联 |
+
+全部**同步**返回，不抛异常。失败是 `{ ok:false, error:{ code, message, ...} }`：
+
+| code | 什么时候 | 额外字段 |
+|---|---|---|
+| `BAD_PAYLOAD` | 缺 avatar / 缺 bookId / policy 不是三值之一 / 超过 5000 条 | `field` |
+| `NOT_FOUND` | 书不存在，或这条关联不存在 | `field:'bookId'` |
+| `CONFLICT` | 这张卡已经关联了这本书 | `id`（已有那条的 id，直接拿去 `update`） |
+| `NOT_SUPPORTED` | 旧版 ILB 没有这个方法 | — |
+
+### 关联怎么影响"这本书启不启用"
+
+每本书按下面的顺序，**第一条命中的说了算**：
+
+| 顺序 | 条件 | 结果 | `rule` |
+|---|---|---|---|
+| 1 | 书自己设了 `override = 'off'` | 停用 | `force-off` |
+| 2 | 书自己设了 `override = 'on'` | 启用 | `force-on` |
+| 3 | 当前角色（或群成员）投票 `off` | 停用 | `binding-off` |
+| 4 | 当前角色（或群成员）投票 `on` | 启用 | `binding-on` |
+| 5 | 策略 `always` | 启用 | `always` |
+| 6 | 策略 `auto`，且投票 `auto` 或原生世界书名匹配 | 启用 | `binding` / `auto` |
+| 7 | 策略 `manual` | 按手动开关 | `manual` |
+| 8 | 其余 | 停用 | … |
+
+- **投票**：群聊看全体成员（任何一个 `on` 就 `on`，否则任何 `auto` 就 `auto`，全 `off` 才是 `off`）；单聊只看当前角色。没有关联 = 不投票，走 1.3 的老规则。
+- 关闭"宿主联动总开关"（`hostLinkEnabled = false`）只关掉**原生世界书名匹配**；角色卡自己认过的书仍然算数。
+- 孤儿关联（`orphanedAt` 非空）一律不投票。
+
+### 示例
+
+```js
+// 让「Seraphina」认识这本书，并强制启用
+api.bindings.create({ character: { avatar: 'Seraphina.png', name: 'Seraphina' }, bookId: 'book-abc', policy: 'on' });
+
+// 列出她关联的所有书
+const mine = api.bindings.list({ character: 'Seraphina.png' });
+
+// 改表态
+api.bindings.update(mine.bindings[0].id, { policy: 'off', note: '这本只在她自己的线里用' });
+```
+
+## 11. 运行时（1.4 新增）
+
+回答"按此刻的角色与聊天，这一轮到底会启用哪些书、为什么"。
+
+```js
+if (api.caps.includes('runtime')) {
+  const now = api.runtime.preview();     // 只算，不跑
+  const last = api.runtime.status();     // 上一轮真跑的结果
+}
+```
+
+### `runtime.preview()`
+
+```js
+{
+  ok: true,
+  at: 1762000000000,
+  chatId: 'chat-abc',
+  character: { avatar: 'A.png', name: 'A' } | null,
+  group: { id: 'g1', members: [{ avatar, name }] } | null,
+  books: [{ id, name, enabled, rule, reason, binding: {id,avatar,name,policy}|null }],
+  activeBooks: ['book-abc', ...],
+}
+```
+
+- **纯函数语义**：不跑逻辑、不注入、不写状态、不发 `ilb:change`。可以随时调、调多少次都一样（同一时刻）。
+- 和真正那一轮共用同一段组装代码，所以 `preview().activeBooks` 与真跑结果**必然一致**（有单测钉住）。
+- 读不到宿主上下文时 `character: null`，按 1.3 的老路算，**不报错**。
+- `books` 覆盖**全部**书（不只是启用的），每本都带 `rule` 与一句 `reason`。
+
+### `runtime.status()`
+
+```js
+{ ok:true, ran:true,  at, chatId, character, group, books:[...], activeBooks:[...], error:null }
+{ ok:true, ran:false, at:0, error:null }
+```
+
+- 就是 ILB 自己面板上那个"这一轮为什么是这样"，**不持久化**（刷新页面就没了）。
+- 只报结论与原因，**不含聊天正文、提示词、条目内容**——可以直接给别的扩展看。
+- 没跑过就老实说 `ran:false`，不编数据。

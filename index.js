@@ -14,7 +14,7 @@ import { loadHost } from './host.js';
 import { createRepository } from './adapters/repository.js';
 import { createNativeWorlds } from './adapters/native-worlds.js';
 import { createSillyTavernContext } from './adapters/sillytavern-context.js';
-import { createHostWatcher } from './adapters/sillytavern-events.js';
+import { createHostWatcher, bindingOpsFrom } from './adapters/sillytavern-events.js';
 import { createInjector } from './adapters/inject.js';
 import { createPipeline } from './runtime/pipeline.js';
 import { createApi } from './runtime/api.js';
@@ -27,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.27.0';
+const VERSION = '0.28.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -242,12 +242,53 @@ async function boot() {
     getContext,
     getChatId: getChatIdSafe,
     notify,
+    // v0.28.0：runtime.preview / runtime.status 要的运行时输入。
+    // 与 pipeline.run 走同一个 buildResolveInput，预览与实际启用才会一致。
+    readHostContext: () => {
+      try {
+        return hostContext ? hostContext.read() : null;
+      } catch {
+        return null;
+      }
+    },
+    getProviders: () => registry.activationProviders.list().map(({ id, impl }) => ({
+      id,
+      label: impl?.label,
+      test: impl?.test,
+    })),
+    getLastRun: () => pipeline.describeLastRun(),
     openPanel: (tab) => {
       if (tab) panel.setTab(tab);
       if (shellReady) shell.open();
     },
     closeUi: () => shell.close(),
   });
+  // 角色卡变了，关联跟着走（v0.28.0）。放在"重新渲染"之前：否则面板会先按旧关联画一遍。
+  // 改名 = 把关联搬到新 avatar（撞车时留较新的一条）；删除 = 只打孤儿标记，不删数据。
+  function applyBindingOps(ops) {
+    if (!Array.isArray(ops) || ops.length === 0) return;
+    let touched = false;
+    for (const op of ops) {
+      try {
+        if (op.kind === 'rename' && typeof repository.renameBindings === 'function') {
+          const res = repository.renameBindings(op.from, op.to, { name: op.name });
+          if (res && (res.updated > 0 || res.merged > 0)) touched = true;
+        } else if (op.kind === 'orphan' && typeof repository.markBindingsOrphaned === 'function') {
+          if (repository.markBindingsOrphaned([op.avatar]) > 0) touched = true;
+        }
+      } catch (err) {
+        // 关联没跟上不能连累界面刷新与注入
+        console.warn('[ILB] 角色卡关联没跟上这次变化', err);
+      }
+    }
+    if (!touched) return;
+    try {
+      api.notify('bindings_changed');
+    } catch {
+      /* 订阅者报错不影响 */
+    }
+  }
+
   notifyVia = (message, kind = 'info') => shell.notify(message, kind);
   let panelReady = false;
   if (shellReady) {
@@ -338,8 +379,10 @@ async function boot() {
         logger: {
           warn: (m) => console.warn(`[ILB] ${m}`),
         },
-        onChange: ({ reasons, groups }) => {
+        onChange: ({ reasons, groups, events }) => {
           try {
+            // 先让关联跟上角色卡的变化，再重画界面（顺序反了会闪一下旧关联）
+            applyBindingOps(bindingOpsFrom(events));
             // 上一轮诊断是按旧角色算的：先清掉，免得界面显示过期结论
             pipeline.reset();
             panel.render();

@@ -2,9 +2,10 @@
 
 让 SillyTavern 的世界书更强，同时不逼用户学语法。
 
-> **重要声明**：这份代码**还没有在真实的 SillyTavern 里运行过**。判定层的单元测试、
-> 模块链接检查、以及用假 DOM 做的界面冒烟已经跑过并通过（见 §测试），但宿主 API、
-> 注入效果、真实浏览器里的样式都仍是推断。第一件事请按 §「第一步：探针」做完再判断能用不能用。
+> **重要声明**：判定层的单元测试、模块链接检查、假 DOM 界面冒烟都已通过；
+> 本机 **SillyTavern 1.19.0 + 无头 Chrome 156** 里的自动探针（`tests/live/`，19 个）也全过。
+> 但**手机真机（SillyDroid / iOS WebView）仍未实测**，真实模型生成时的观感也没测过——
+> 这两处凡是与本文档描述不一致，以实机结果为准。
 
 ## 安装
 
@@ -54,6 +55,8 @@ SillyTavern/public/scripts/extensions/third-party/ILB/
 | 判定层 | `core/evaluate.js` | 触发 → 条件 → 流程 → 时效 → 连锁 → 概率 → 分组 → 排序 → 预算 |
 | 判定流程 | `core/flow.js` | 八种节点（检测/判定/比较/定义/计算/添加/通过/不通过）的纯函数执行器；**空流程等于没有流程** |
 | 多书解析 | `core/resolve-books.js` | 这一轮哪些书在场、哪些条目进总池 |
+| 角色卡关联 | `core/bindings.js` | 角色卡 ↔ 世界书的多对多关联：归一化、投票（任一强制启用即启用）、原因文案、改名合并 |
+| 世界书接口 | `runtime/api.js` | 对外 `window.ILB.api`（v1.4）：snapshot/变量/调用 + `worldbooks` / `bindings` / `runtime` |
 | 导入导出 | `core/import-native.js` / `core/export-native.js` | 原生格式双向转换，未知字段无损暂存 |
 | 重复导入合并 | `core/merge-book.js` | 按源文件 uid 配对：只增只更新、保留用户改过的正文、保留书的启用设置 |
 | 纯文本工具 | `core/text-match.js` / `core/ids.js` / `core/budget.js` | 匹配、哈希、词数估算 |
@@ -150,8 +153,10 @@ node tests/live/st-ui-step.mjs       :: 「界面」步骤：call 带回 ui / ca
 2026-10-27 在 SillyTavern 1.19.0 上首次实测：加载、面板、文本模式、手机高度全过；
 同时抓到一个假 DOM 抓不到的问题（输入框背景 fallback 写死深色，浅色主题下字看不见），已修（D-0052）。
 
-> 给别的扩展用：`window.ILB.api`（**v1.2**）开 `snapshot / set / remove / call / callAsync / subscribe` 与 `ui.openPanel / close`，
-> 契约见 `docs/UI扩展接口.md`；它只读写聊天变量，不含任何宿主对象。
+> 给别的扩展用：`window.ILB.api`（**v1.4**）开 `snapshot / set / remove / call / callAsync / subscribe` 与 `ui.openPanel / close`，
+> 并提供三组面向扩展的命名空间：`worldbooks`（列表/取书/单本导入导出/批量导入/`deleteBook`）、
+> `bindings`（角色卡 ↔ 世界书的关联：增删查改、改名搬运、孤儿清理）、`runtime`（`preview()` 预测这一轮哪几本会启用、`status()` 上一轮真实结果）。
+> 契约见 `docs/UI扩展接口.md` 与 `docs/世界书接口.md`；它只读写聊天变量，不含任何宿主对象。
 
 > 标签栏最右的「使用说明」读 `data/guide/zh-cn.json`；`docs/使用指南.md` 是它导出的同源副本，**不要手改 md**。
 
@@ -254,16 +259,17 @@ node tests/serve.mjs 8792
 - 同一楼层重画时随机数应保持不变（种子 = 聊天 id + 楼层 + 节点 id），但真实宿主里"楼层"如何计数未经实测。
 - 「每轮都跑」的逻辑在滑动重生成时会跑几次，取决于宿主重画次数与幂等键（`__ilbCallsSeen`），需真机确认。
 - 聊天变量只支持数字/文本/开关（`normalizeVars` 不收数组与对象），没有列表编辑界面。
-- 对外接口 `window.ILB.api` 现为 **v1.2**：`tests/api.test.mjs` 15 条用例、`tests/api-demo.mjs` 演示，
-  以及在真酒馆里跑的 `tests/live/st-ui-step.mjs`（`call` 带回 `ui`/`durationMs`/`id`、`callAsync` 不抛、事件顺序 `call,ui`）。
-  但**还没有真实的第三方 UI 扩展长期消费它**（ILBUI 已按 1.2 落地 0.10.0，联调仍在进行）；`ilb:ready` 的真实加载时序也未在宿主里验证。
+- 对外接口 `window.ILB.api` 现为 **v1.4**：`tests/api.test.mjs` 与 `tests/api-worldbooks.test.mjs`、`tests/bindings.test.mjs` 覆盖，
+  `tests/api-demo.mjs` 是演示，以及在真酒馆里跑的 `tests/live/st-ui-step.mjs`、`st-v27-check.mjs`、`st-v28-check.mjs`
+  （`call` 带回 `ui`/`durationMs`/`id`、`callAsync` 不抛、事件顺序 `call,ui`；worldbooks 与 bindings 的错误码、删书、备份往返）。
+  但**还没有真实的第三方扩展长期消费 1.3/1.4 这两组命名空间**；`ilb:ready` 的真实加载时序也未在宿主里验证。
 - 「界面」步骤（v0.14.0，接口 1.2）只产出一条一次性指令，**只有用户点按钮调用时**才会执行（聊天里自动触发会跳过并留诊断）；
   **ILBUI 拿到指令后实际翻页/提示的观感还没联调过**，手机外壳里更没试过。
 - 流程的文本模式（v0.13.0，v0.13.1 认直接赋值与行内注释）只有 `tests/flow-text.test.mjs` 的 17 条用例与冒烟 2 步兜底；
   **真实 SillyTavern 里没试过**，也没有语法高亮/自动补全。它和表单改的是同一份 `flow.nodes`，不是第二套执行逻辑（D-0050）。
 - 「复制给 AI 的说明」在桌面 Chrome 上走 `navigator.clipboard`，手机 WebView 里可能被拒，会退回 `execCommand('copy')`；
   这条路**没有在 SillyDroid 之类容器里实测过**。
-- 单元测试、链接检查、界面冒烟都已跑过并通过（199 + 49 模块 + 24 步），但**它们用的都是假宿主与假 DOM**。
+- 单元测试、链接检查、界面冒烟都已跑过并通过（395 + 64 模块 + 41 步），但**它们用的都是假宿主与假 DOM**。
   凡是断言和行为对不上的地方，以实机跑出来的结果为准，别信本文档。
 - 独立逻辑、跳转/调用、AI 正文调用（v0.9.0）只在单元测试与 `tests/logic-demo.mjs` 里验证过；
   真实模型会不会照着写 `[[ILB:…]]`、跳转长流程在界面上累不累，都要等实机。

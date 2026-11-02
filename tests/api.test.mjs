@@ -41,18 +41,27 @@ function buildApi({ vars = {}, specs = null } = {}) {
 test('接口版本与说明写清楚', () => {
   const { api } = buildApi();
   assert.equal(api.version, API_VERSION);
-  assert.equal(API_VERSION, '1.3');
+  assert.equal(API_VERSION, '1.4');
   const methods = api.describe().methods;
-  // 老方法一个都不能少；1.3 追加 worldbooks.*
+  // 老方法一个都不能少；1.3 追加 worldbooks.*，1.4 追加 bindings.* / runtime.* / worldbooks.deleteBook
   for (const name of ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe']) {
     assert.ok(methods.includes(name), `缺方法 ${name}`);
   }
   assert.ok(methods.includes('worldbooks.exportBook'));
+  assert.ok(methods.includes('worldbooks.deleteBook'));
+  for (const name of ['bindings.list', 'bindings.get', 'bindings.create', 'bindings.update', 'bindings.remove', 'bindings.removeForCharacter', 'bindings.renameCharacter', 'bindings.purgeOrphans']) {
+    assert.ok(methods.includes(name), `缺方法 ${name}`);
+  }
+  assert.ok(methods.includes('runtime.preview'));
+  assert.ok(methods.includes('runtime.status'));
   assert.ok(api.describe().caps.includes('outcome'));
   assert.ok(API_CAPS.includes('nonce'));
   assert.ok(API_CAPS.includes('ui'));
   assert.ok(API_CAPS.includes('callAsync'));
   assert.ok(API_CAPS.includes('worldbooks'));
+  assert.ok(API_CAPS.includes('bindings'));
+  assert.ok(API_CAPS.includes('runtime'));
+  assert.ok(API_CAPS.includes('bookDelete'));
 });
 
 test('worldbooks 命名空间在旧调用里也不会炸（没有实现时返回 NOT_SUPPORTED）', async () => {

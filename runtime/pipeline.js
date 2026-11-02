@@ -72,6 +72,41 @@ export function buildEvalRequest(ctx, books, settings, chatState, storedVars = {
 }
 
 /**
+ * 组装"这一轮该启用哪些书"的全部输入，并跑一次 resolveBooks。
+ *
+ * pipeline.run 和 ILB.api.runtime.preview 共用这一段——两处的结论必须一样，
+ * 各自抄一份迟早会对不上（预览说启用、真跑却停用，用户没法信任何一边）。
+ * 这里只读数据、只算，不跑逻辑、不注入、不写状态。
+ *
+ * @param {object} args
+ *   repository —— 数据端口
+ *   context    —— 宿主 getContext() 的结果
+ *   settings   —— 当前设置
+ *   hostContext—— 这一轮读到的宿主联动上下文（null = 读不到）
+ *   chatState / vars —— 可选；不传就现读
+ *   providers  —— 扩展点（启用提供者）
+ */
+export function buildResolveInput({ repository, context, settings, hostContext = null, chatState, vars, providers = [] } = {}) {
+  const books = repository.listBooks();
+  const chatId = resolveChatId(context);
+  const state = chatState !== undefined ? chatState : repository.getChatState(chatId);
+  const storedVars = vars !== undefined ? vars : repository.getVars(chatId);
+  const request = buildEvalRequest(context, books, settings ?? {}, state, storedVars);
+  const resolveContext = {
+    characterId: context?.characterId,
+    characterName: context?.name2,
+    boundBooks: request.boundBooks ?? null,
+    manualState: repository.getManualState(),
+    hostContext,
+    hostLink: { enabled: settings?.hostLinkEnabled !== false },
+    // 角色卡关联（v0.28.0）：没有就是空数组，判定层照样走 1.3 的老路
+    bindings: typeof repository.listBindings === 'function' ? repository.listBindings() : [],
+  };
+  const resolved = resolveBooks(books, resolveContext, providers);
+  return { chatId, books, request, resolveContext, resolved };
+}
+
+/**
  * @param {object} deps
  *   repository  —— 数据端口（settings 命名空间）
  *   injector    —— 注入端口
@@ -161,16 +196,18 @@ export function createPipeline(deps) {
     let request;
     let resolved;
     try {
-      const chatState = repository.getChatState(currentChatId);
-      request = buildEvalRequest(ctx, books, settings, chatState, repository.getVars(currentChatId));
-      resolved = resolveBooks(books, {
-        characterId: ctx.characterId,
-        characterName: ctx.name2,
-        boundBooks: request.boundBooks ?? null,
-        manualState: repository.getManualState(),
+      // 与 ILB.api.runtime.preview 共用同一段组装（见 buildResolveInput）：预览说什么，这里就是什么
+      const input = buildResolveInput({
+        repository,
+        context: ctx,
+        settings,
         hostContext: lastHostContext,
-        hostLink: { enabled: settings.hostLinkEnabled !== false },
-      }, registry.activationProviders.list().map(({ id, impl }) => ({ id, label: impl?.label, test: impl?.test })));
+        chatState: repository.getChatState(currentChatId),
+        vars: repository.getVars(currentChatId),
+        providers: registry.activationProviders.list().map(({ id, impl }) => ({ id, label: impl?.label, test: impl?.test })),
+      });
+      request = input.request;
+      resolved = input.resolved;
     } catch (err) {
       lastError = err;
       log.error('准备判定输入失败，这一轮不注入', err);
@@ -312,6 +349,29 @@ export function createPipeline(deps) {
       lastError = null;
       lastHostContext = null;
       lastSkip = null;
+    },
+    /**
+     * 只算"这一轮该启用哪些书"：不跑逻辑、不注入、不写状态、不发事件。
+     * `ILB.api.runtime.preview()` 走这里，保证它和真跑看到的是同一份结论。
+     * 读不到上下文时会抛错——由调用方翻译成 { ok:false }。
+     */
+    resolveOnly(getContext) {
+      const ctx = readContext(getContext);
+      let settings;
+      try {
+        settings = repository.getSettings();
+      } catch {
+        settings = {};
+      }
+      let hostContext = null;
+      try {
+        hostContext = typeof deps.readHostContext === 'function' ? deps.readHostContext() : null;
+      } catch (err) {
+        hostContext = null;
+        log.warn(`预览时读不到宿主联动信息（按老路算）: ${err?.message ?? err}`);
+      }
+      const providers = registry.activationProviders.list().map(({ id, impl }) => ({ id, label: impl?.label, test: impl?.test }));
+      return { context: ctx, settings, hostContext, ...buildResolveInput({ repository, context: ctx, settings, hostContext, providers }) };
     },
     /** 供诊断面板用：这一轮为什么没出现/为什么出现 */
     describeLastRun() {

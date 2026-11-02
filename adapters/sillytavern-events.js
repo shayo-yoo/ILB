@@ -46,6 +46,7 @@ export function createHostWatcher({ getEventSource, getEventTypes, onChange, log
   const clearTimer = timer?.clear ?? ((h) => clearTimeout(h));
   const handlers = [];
   const pending = new Set();
+  const pendingEvents = [];
   let handle = null;
   let subscribed = false;
   let report = { subscribed: [], skipped: [], failures: [], at: 0 };
@@ -60,16 +61,19 @@ export function createHostWatcher({ getEventSource, getEventTypes, onChange, log
     if (pending.size === 0) return;
     const groups = [...pending];
     pending.clear();
+    // 事件参数要留给"关联跟着角色卡走"用：角色卡改名/删除时，args 里带着旧新 avatar。
+    const events = pendingEvents.splice(0);
     const reasons = HOST_EVENT_GROUPS.filter((g) => groups.includes(g.key)).map((g) => g.label);
     try {
-      onChange?.({ reasons, groups, at: Date.now() });
+      onChange?.({ reasons, groups, events, at: Date.now() });
     } catch (err) {
       logger?.warn?.(`ILB 刷新回调出错（已忽略）：${err?.message ?? err}`);
     }
   }
 
-  function schedule(groupKey) {
+  function schedule(groupKey, event, args) {
     pending.add(groupKey);
+    if (event) pendingEvents.push({ event, args: Array.isArray(args) ? args : [] });
     if (handle != null) return;
     handle = setTimer(flush, Math.max(0, Number(debounceMs) || 0));
   }
@@ -105,7 +109,7 @@ export function createHostWatcher({ getEventSource, getEventTypes, onChange, log
           continue;
         }
         seen.add(name);
-        const handler = () => schedule(group.key);
+        const handler = (...args) => schedule(group.key, event, args);
         try {
           source.on(name, handler);
           handlers.push({ source, name, handler });
@@ -125,6 +129,7 @@ export function createHostWatcher({ getEventSource, getEventTypes, onChange, log
       handle = null;
     }
     pending.clear();
+    pendingEvents.length = 0;
     for (const { source, name, handler } of handlers.splice(0)) {
       try {
         if (typeof source.off === 'function') source.off(name, handler);
@@ -137,4 +142,49 @@ export function createHostWatcher({ getEventSource, getEventTypes, onChange, log
   }
 
   return { subscribe, dispose, describe: () => ({ ...report, active: subscribed, listening: handlers.length }) };
+}
+
+/**
+ * 把一批宿主事件翻成"角色卡关联该怎么跟着动"。
+ *
+ * 为什么放在适配层：每种事件的参数形状是酒馆的私事（详见下面的注释），
+ * 换成别的宿主只需要改这一个函数，core 与 repository 不该知道这些。
+ *
+ * 酒馆实际发出的形状（1.13 起核对过源码）：
+ *   CHARACTER_RENAMED    → (oldAvatar, newAvatar)        两个字符串
+ *   CHARACTER_EDITED     → ({ detail: { id, character } })  character.avatar 不变，name 可能变了
+ *   CHARACTER_DELETED    → ({ id, character })             character.avatar 就是被删的那张
+ *   CHARACTER_DUPLICATED → ({ oldAvatar, newAvatar })      复制出来的是一张新卡，不继承关联
+ *
+ * @param {Array<{event:string, args:any[]}>} events
+ * @returns {Array<{kind:'rename',from:string,to:string,name?:string}|{kind:'orphan',avatar:string}>}
+ */
+export function bindingOpsFrom(events = []) {
+  const ops = [];
+  for (const one of Array.isArray(events) ? events : []) {
+    const event = String(one?.event ?? '');
+    const args = Array.isArray(one?.args) ? one.args : [];
+    if (event === 'CHARACTER_RENAMED') {
+      const from = typeof args[0] === 'string' ? args[0].trim() : '';
+      const to = typeof args[1] === 'string' ? args[1].trim() : '';
+      if (from) ops.push({ kind: 'rename', from, to: to || from });
+      continue;
+    }
+    if (event === 'CHARACTER_EDITED') {
+      const character = args[0]?.detail?.character ?? args[0]?.character ?? null;
+      const avatar = String(character?.avatar ?? '').trim();
+      if (!avatar) continue;
+      const name = String(character?.name ?? '').trim();
+      ops.push({ kind: 'rename', from: avatar, to: avatar, ...(name ? { name } : {}) });
+      continue;
+    }
+    if (event === 'CHARACTER_DELETED') {
+      const character = args[0]?.character ?? null;
+      const avatar = String(character?.avatar ?? '').trim();
+      if (avatar) ops.push({ kind: 'orphan', avatar });
+      continue;
+    }
+    // CHARACTER_DUPLICATED 及组外的其他事件：不处理（复制卡不继承关联，这是刻意的）
+  }
+  return ops;
 }

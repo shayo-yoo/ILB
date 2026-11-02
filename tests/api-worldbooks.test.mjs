@@ -197,5 +197,7 @@ test('api.ready 能 await，caps 里声明了 worldbooks', async () => {
   assert.ok(API_CAPS.includes('worldbooks'));
   assert.ok(API_CAPS.includes('ready'));
   assert.equal(api.version, API_VERSION);
-  assert.equal(api.describe().worldbooks.length, 6);
+  // 1.4 多了 deleteBook：6 → 7
+  assert.equal(api.describe().worldbooks.length, 7);
+  assert.ok(api.describe().worldbooks.includes('deleteBook'));
 });

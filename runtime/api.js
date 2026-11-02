@@ -17,12 +17,20 @@
 //   - set 拒绝 NaN / Infinity
 //   - subscribe(非函数) 不再抛异常
 
+// 版本：1.4（v0.28.0，在 1.3 上只加命名空间与方法）
+//   - bindings：角色卡 ↔ ILB 世界书的关联（增删查改、改名迁移、清理孤儿）
+//   - runtime：preview（只算不跑）与 status（上一轮真跑的结果）
+//   - worldbooks.deleteBook：删书，默认拒绝"还有角色挂着"的书
+//   - importBook 开始校验 schema_version（比本版新 → NOT_SUPPORTED，比本版老 → 迁移）
+
 import { evaluateFlow } from '../core/flow.js';
 import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { coerceValue, normalizeVars } from '../core/vars.js';
+import { BINDING_LIMIT, BINDING_POLICIES, avatarProblem, bindingWhoName, newBindingId } from '../core/bindings.js';
+import { buildResolveInput } from './pipeline.js';
 
 /** 接口契约版本。加字段不算破坏性变更，改字段语义才算。 */
-export const API_VERSION = '1.3';
+export const API_VERSION = '1.4';
 
 /** 供 UI 扩展判断"这版有哪些能力"，比 version 字符串更好用。 */
 export const API_CAPS = [
@@ -42,6 +50,9 @@ export const API_CAPS = [
   'caps',
   'ready',
   'worldbooks',
+  'bindings',
+  'runtime',
+  'bookDelete',
 ];
 
 const NAME_MAX = 40;
@@ -66,8 +77,37 @@ function now() {
   }
 }
 
-export function createApi({ repository, getContext, getChatId, notify = () => {}, openPanel = null, closeUi = null } = {}) {
+export function createApi({
+  repository,
+  getContext,
+  getChatId,
+  notify = () => {},
+  openPanel = null,
+  closeUi = null,
+  readHostContext = null,
+  getProviders = null,
+  getLastRun = null,
+} = {}) {
   const listeners = new Set();
+
+  function readHostSafely() {
+    if (typeof readHostContext !== 'function') return null;
+    try {
+      return readHostContext();
+    } catch {
+      return null;
+    }
+  }
+
+  function providersOf() {
+    if (typeof getProviders !== 'function') return [];
+    try {
+      const list = getProviders();
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
 
   function chatId() {
     try {
@@ -359,14 +399,25 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
   // 所有方法都是 async，调用方可以统一 await。
 
   function apiError(err) {
+    const extra = err && err.extra && typeof err.extra === 'object' ? err.extra : {};
     return {
       ok: false,
       error: {
         code: String(err && err.code ? err.code : 'ERROR'),
         message: String(err && err.message ? err.message : err),
         ...(err && err.id ? { id: String(err.id) } : {}),
+        ...extra,
       },
     };
+  }
+
+  /** 造一个带错误码的异常，交给 apiError 翻译成 { ok:false, error }。 */
+  function apiFail(code, message, extra = {}) {
+    const err = new Error(message);
+    err.code = code;
+    const keys = Object.keys(extra);
+    if (keys.length > 0) err.extra = extra;
+    return err;
   }
 
   function briefBook(book) {
@@ -478,12 +529,351 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
       }
       return { ok: failed.length === 0, imported, failed };
     },
+
+    /**
+     * 删一本书。
+     * 默认拒绝"还有角色卡挂着"的书——那会把别人的关联悄悄弄断。
+     * @param {string} id
+     * @param {{cascade?: boolean}} [opts] cascade:true = 连关联一起删
+     * @returns {{ok:true, id:string, removedBindings:number}|{ok:false, error:object}}
+     */
+    async deleteBook(id, opts = {}) {
+      try {
+        const key = String(id ?? '').trim();
+        const book = repository.getBook(key);
+        if (!book) return { ok: false, error: { code: 'NOT_FOUND', message: `没有这本书：${id}` } };
+        const all = bindingsOf().filter((one) => one.bookId === key);
+        const boundCount = all.filter((one) => !one.orphanedAt).length;
+        if (boundCount > 0 && opts?.cascade !== true) {
+          return {
+            ok: false,
+            error: {
+              code: 'CONFLICT',
+              message: `还有 ${boundCount} 个角色关联这本书`,
+              boundCount,
+            },
+          };
+        }
+        repository.deleteBook(key);
+        emit('worldbooks.deleteBook', { id: key, removedBindings: all.length });
+        return { ok: true, id: key, removedBindings: all.length };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+  };
+
+  // ---- 角色卡关联（v0.28.0，P0） ----
+  //
+  // 一条关联 = 某个角色卡 × 某本 ILB 书 × 表态（auto / on / off）。
+  // 约定与世界书接口一致：全部同步返回，失败返回 { ok:false, error:{code,message} }，不抛异常。
+
+  function bindingsOf() {
+    if (typeof repository.listBindings !== 'function') return [];
+    try {
+      return repository.listBindings() ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  function avatarOf(input) {
+    if (typeof input === 'string') return input.trim();
+    return String(input?.avatar ?? '').trim();
+  }
+
+  function findBinding(id) {
+    const key = String(id ?? '').trim();
+    if (!key) return null;
+    return bindingsOf().find((one) => one.id === key) ?? null;
+  }
+
+  function uniqueBindingId(existing, at) {
+    const taken = new Set(existing.map((one) => one.id));
+    let id = newBindingId(at);
+    let n = 0;
+    while (taken.has(id)) {
+      n += 1;
+      id = newBindingId(at + n);
+    }
+    return id;
+  }
+
+  const bindings = {
+    /**
+     * 列关联。
+     * @param {{character?: string|{avatar:string}, bookId?: string, includeOrphaned?: boolean}} [opts]
+     *   includeOrphaned 默认 true（角色卡删掉后留下的关联也列出来，界面才能提示清理）
+     */
+    list(opts = {}) {
+      try {
+        const avatar = avatarOf(opts?.character);
+        const bookId = String(opts?.bookId ?? '').trim();
+        const includeOrphaned = opts?.includeOrphaned !== false;
+        const list = bindingsOf().filter((one) => {
+          if (!includeOrphaned && one.orphanedAt) return false;
+          if (avatar && one.character?.avatar !== avatar) return false;
+          if (bookId && one.bookId !== bookId) return false;
+          return true;
+        });
+        // 按创建时间升序：同一天建的多条，界面上的顺序不该每次刷新都变
+        list.sort((a, c) => Number(a.createdAt) - Number(c.createdAt) || String(a.id).localeCompare(String(c.id)));
+        return { ok: true, bindings: list, total: list.length };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    get(id) {
+      try {
+        const one = findBinding(id);
+        if (!one) return { ok: false, error: { code: 'NOT_FOUND', message: `没有这条关联：${id}` } };
+        return { ok: true, binding: one };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /**
+     * 建一条关联。
+     * @param {{character:{avatar:string,name?:string}, bookId:string, policy?:'auto'|'on'|'off', note?:string}} input
+     */
+    create(input = {}) {
+      try {
+        const character = input && typeof input === 'object' && input.character && typeof input.character === 'object'
+          ? input.character
+          : {};
+        const avatar = avatarOf(character);
+        const problem = avatarProblem(avatar);
+        if (problem) throw apiFail('BAD_PAYLOAD', problem, { field: 'character.avatar' });
+        const bookId = String(input?.bookId ?? '').trim();
+        if (!bookId) throw apiFail('BAD_PAYLOAD', '缺少 bookId', { field: 'bookId' });
+        const policy = input?.policy == null ? 'auto' : String(input.policy);
+        if (!BINDING_POLICIES.includes(policy)) {
+          throw apiFail('BAD_PAYLOAD', `policy 只能是 ${BINDING_POLICIES.join(' / ')}`, { field: 'policy' });
+        }
+        if (!booksOf().some((book) => book.book_id === bookId)) {
+          throw apiFail('NOT_FOUND', `没有这本书：${bookId}`, { field: 'bookId' });
+        }
+        const all = bindingsOf();
+        if (all.length >= BINDING_LIMIT) {
+          throw apiFail('BAD_PAYLOAD', `关联最多 ${BINDING_LIMIT} 条，请先清理不用的`, { field: 'bindings' });
+        }
+        const dup = all.find((one) => one.bookId === bookId && one.character?.avatar === avatar);
+        if (dup) throw apiFail('CONFLICT', `「${bindingWhoName(dup)}」已经关联了这本书`, { id: dup.id });
+        const at = Date.now();
+        const created = repository.createBinding({
+          id: uniqueBindingId(all, at),
+          character: { avatar, name: String(character.name ?? '').trim() },
+          bookId,
+          policy,
+          note: String(input?.note ?? ''),
+          createdAt: at,
+          updatedAt: at,
+          orphanedAt: null,
+        });
+        emit('bindings.create', { id: created.id, bookId, avatar });
+        return { ok: true, binding: created };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /** 只改表态与备注；改别的一律忽略（关联的"谁"和"哪本书"是不变的）。 */
+    update(id, patch = {}) {
+      try {
+        const one = findBinding(id);
+        if (!one) return { ok: false, error: { code: 'NOT_FOUND', message: `没有这条关联：${id}` } };
+        const next = { updatedAt: Date.now() };
+        if (patch && patch.policy !== undefined) {
+          const policy = String(patch.policy);
+          if (!BINDING_POLICIES.includes(policy)) {
+            throw apiFail('BAD_PAYLOAD', `policy 只能是 ${BINDING_POLICIES.join(' / ')}`, { field: 'policy' });
+          }
+          next.policy = policy;
+        }
+        if (patch && patch.note !== undefined) next.note = String(patch.note);
+        const saved = repository.updateBinding(one.id, next);
+        if (!saved) return { ok: false, error: { code: 'NOT_FOUND', message: `没有这条关联：${id}` } };
+        emit('bindings.update', { id: saved.id });
+        return { ok: true, binding: saved };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /** 幂等：删不存在的不算错误。 */
+    remove(id) {
+      try {
+        const key = String(id ?? '').trim();
+        const removed = typeof repository.removeBinding === 'function' ? repository.removeBinding(key) === true : false;
+        if (removed) emit('bindings.remove', { id: key });
+        return { ok: true, removed };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    removeForCharacter(avatar) {
+      try {
+        const who = avatarOf(avatar);
+        if (!who) throw apiFail('BAD_PAYLOAD', '缺少角色卡标识（avatar）', { field: 'avatar' });
+        const removed = typeof repository.removeBindingsForCharacter === 'function'
+          ? repository.removeBindingsForCharacter(who)
+          : 0;
+        if (removed > 0) emit('bindings.removeForCharacter', { avatar: who, removed });
+        return { ok: true, removed };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /**
+     * 角色卡改名/换文件名后，把关联一起搬过去。
+     * oldAvatar === newAvatar 时只刷新显示名。
+     * @param {string} oldAvatar
+     * @param {string} newAvatar
+     * @param {{name?: string}} [opts]
+     * @returns {{ok:true, updated:number, merged:number}}
+     */
+    renameCharacter(oldAvatar, newAvatar, opts = {}) {
+      try {
+        const from = avatarOf(oldAvatar);
+        const to = avatarOf(newAvatar) || from;
+        if (!from) throw apiFail('BAD_PAYLOAD', '缺少角色卡标识（oldAvatar）', { field: 'oldAvatar' });
+        const problem = avatarProblem(to);
+        if (problem) throw apiFail('BAD_PAYLOAD', problem, { field: 'newAvatar' });
+        const res = typeof repository.renameBindings === 'function'
+          ? repository.renameBindings(from, to, { name: opts?.name, now: Date.now() })
+          : { updated: 0, merged: 0 };
+        if (res.updated > 0 || res.merged > 0) emit('bindings.renameCharacter', { from, to, ...res });
+        return { ok: true, updated: res.updated, merged: res.merged };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /** 清掉角色卡已经删掉的关联（orphanedAt 非空）。 */
+    purgeOrphans() {
+      try {
+        const removed = typeof repository.purgeOrphanBindings === 'function' ? repository.purgeOrphanBindings() : 0;
+        if (removed > 0) emit('bindings.purgeOrphans', { removed });
+        return { ok: true, removed };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+  };
+
+  // ---- 运行时（v0.28.0，P1） ----
+  //
+  // preview：只算不跑——不跑逻辑、不注入、不写状态、不发事件。
+  // status ：上一轮真跑的结果；不持久化，也不含聊天正文、提示词、条目内容。
+
+  function hostView(hostContext) {
+    const host = hostContext && typeof hostContext === 'object' ? hostContext : null;
+    if (!host || host.contextAvailable !== true) return { character: null, group: null };
+    const avatar = String(host.character?.avatar ?? '').trim();
+    const character = avatar || host.character?.name
+      ? { avatar, name: String(host.character?.name ?? '') }
+      : null;
+    const group = host.group && host.group.id
+      ? {
+        id: String(host.group.id),
+        members: (Array.isArray(host.group.members) ? host.group.members : []).map((member) => ({
+          avatar: String(member?.avatar ?? ''),
+          name: String(member?.name ?? ''),
+        })),
+      }
+      : null;
+    return { character, group };
+  }
+
+  function briefDecisions(input) {
+    const details = input?.resolved?.details ?? {};
+    return (input?.books ?? []).map((book) => {
+      const detail = details[book.book_id] ?? {};
+      return {
+        id: book.book_id,
+        name: book.name,
+        enabled: detail.enabled === true,
+        rule: detail.rule ?? 'manual',
+        reason: detail.reason ?? '',
+        binding: detail.binding ?? null,
+      };
+    });
+  }
+
+  const runtime = {
+    /**
+     * 预览：按"此刻"的角色/聊天算出这一轮会启用哪些书。
+     * 与真跑共用 buildResolveInput，所以两边的 activeBooks 一定一致。
+     */
+    preview() {
+      try {
+        const context = getContext();
+        const settings = repository.getSettings();
+        const hostContext = readHostSafely();
+        const input = buildResolveInput({ repository, context, settings, hostContext, providers: providersOf() });
+        const host = hostView(hostContext);
+        return {
+          ok: true,
+          at: Date.now(),
+          chatId: input.chatId,
+          character: host.character,
+          group: host.group,
+          books: briefDecisions(input),
+          activeBooks: [...(input.resolved?.activeBooks ?? [])],
+        };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /** 上一轮真跑的结果。没跑过就 ran:false，不假装有数据。 */
+    status() {
+      try {
+        const info = typeof getLastRun === 'function' ? getLastRun() : null;
+        if (!info || info.ran !== true) return { ok: true, ran: false, at: 0, error: null };
+        // 用"那一轮判定时读到的"宿主上下文，别用现在的：用户可能已经换角色了，
+        // 拿新角色配旧结论会让人以为"刚跑的那轮"是这个角色。读不到才退回现读。
+        const captured = info.books?.hostContext && typeof info.books.hostContext === 'object' ? info.books.hostContext : null;
+        const host = hostView(captured ?? readHostSafely());
+        const details = info.books?.details ?? {};
+        const books = booksOf().map((book) => {
+          const detail = details[book.book_id] ?? {};
+          return {
+            id: book.book_id,
+            name: book.name,
+            enabled: detail.enabled === true,
+            rule: detail.rule ?? 'manual',
+            reason: detail.reason ?? '',
+            binding: detail.binding ?? null,
+          };
+        });
+        return {
+          ok: true,
+          ran: true,
+          at: Number(info.at) || 0,
+          chatId: String(captured?.chatId ?? '') || chatId(),
+          character: host.character,
+          group: host.group,
+          books,
+          activeBooks: Array.isArray(info.books?.active) ? [...info.books.active] : [],
+          error: info.error ?? null,
+        };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
   };
 
   const api = {
     version: API_VERSION,
     caps: [...API_CAPS],
     worldbooks,
+    bindings,
+    runtime,
     snapshot,
     set,
     remove,
@@ -494,12 +884,19 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     describe: () => ({
       version: API_VERSION,
       caps: [...API_CAPS],
-      methods: ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe', 'worldbooks.list', 'worldbooks.get', 'worldbooks.has', 'worldbooks.exportBook', 'worldbooks.importBook', 'worldbooks.importMany'],
-      worldbooks: ['list', 'get', 'has', 'exportBook', 'importBook', 'importMany'],
+      methods: [
+        'snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe',
+        'worldbooks.list', 'worldbooks.get', 'worldbooks.has', 'worldbooks.exportBook', 'worldbooks.importBook', 'worldbooks.importMany', 'worldbooks.deleteBook',
+        'bindings.list', 'bindings.get', 'bindings.create', 'bindings.update', 'bindings.remove', 'bindings.removeForCharacter', 'bindings.renameCharacter', 'bindings.purgeOrphans',
+        'runtime.preview', 'runtime.status',
+      ],
+      worldbooks: ['list', 'get', 'has', 'exportBook', 'importBook', 'importMany', 'deleteBook'],
+      bindings: ['list', 'get', 'create', 'update', 'remove', 'removeForCharacter', 'renameCharacter', 'purgeOrphans'],
+      runtime: ['preview', 'status'],
       ui: ['openPanel', 'close'],
       events: ['ilb:ready', 'ilb:change'],
       callReturns: ['ok', 'outcome', 'ran', 'passed', 'id', 'name', 'reason', 'writes', 'extra', 'ui', 'durationMs', 'steps', 'vars', 'unusedArgs', 'missingParams'],
-      notes: '只写聊天变量；不改设置与书。失败返回 { ok:false, outcome:"error", reason }。',
+      notes: '只写聊天变量；不改设置与书。失败返回 { ok:false, outcome:"error", reason }。1.4 起 worldbooks/bindings/runtime 失败返回 { ok:false, error:{code,message} }。',
     }),
     ui: {
       openPanel: (tab) => {

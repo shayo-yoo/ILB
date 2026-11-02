@@ -9,6 +9,7 @@
 
 import { BOOK_STRATEGIES, BOOK_OVERRIDES, STRATEGY_LABEL, describeMatch, matchBookToHost } from './host-context.js';
 import { strategyOf, legacyStrategyOf } from './model.js';
+import { bindingAvatarsOf, bindingVote, describeBinding, pickBinding } from './bindings.js';
 
 function asArray(v) {
   return Array.isArray(v) ? v : [];
@@ -38,6 +39,12 @@ export function resolveBooks(books, context = {}, providers = []) {
   const hostLink = context.hostLink && typeof context.hostLink === 'object' ? context.hostLink : {};
   const hostEnabled = hostLink.enabled !== false;
 
+  // 角色卡关联（v0.28.0）：谁在场、关联怎么说。没有关联、或读不到宿主上下文时
+  // 投票一律弃权（null），下面的判定与 1.3 逐字一致。
+  const bindings = asArray(context.bindings);
+  const avatars = bindingAvatarsOf(hostContext);
+  const isGroup = Boolean(hostContext && hostContext.group && hostContext.group.id);
+
   const activeBooks = [];
   const inactiveBooks = [];
   const reasons = {};
@@ -50,7 +57,7 @@ export function resolveBooks(books, context = {}, providers = []) {
   for (const book of asArray(books)) {
     if (!book || !book.book_id) continue;
 
-    const decided = decideBook(book, { bound, manualState, context, providers, hostContext, hostEnabled });
+    const decided = decideBook(book, { bound, manualState, context, providers, hostContext, hostEnabled, bindings, avatars, isGroup });
     reasons[book.book_id] = decided.reason;
     details[book.book_id] = {
       enabled: decided.enabled,
@@ -61,6 +68,8 @@ export function resolveBooks(books, context = {}, providers = []) {
       sources: asArray(decided.sources),
       matched: asArray(decided.matched),
       candidate: asArray(decided.candidate),
+      // 这条结论由哪条关联说了算（没有关联就是 null）；界面用它显示"谁挂了这本书"
+      binding: decided.binding ?? null,
     };
     if (decided.warning) warnings.push({ bookId: book.book_id, message: decided.warning });
 
@@ -92,7 +101,7 @@ export function resolveBooks(books, context = {}, providers = []) {
   };
 }
 
-function decideBook(book, { bound, manualState, context, providers, hostContext, hostEnabled }) {
+function decideBook(book, { bound, manualState, context, providers, hostContext, hostEnabled, bindings, avatars, isGroup }) {
   // 1) 扩展点优先：任何一个提供者表态 true/false，就听它的；null 表示不表态
   for (const provider of asArray(providers)) {
     if (!provider || typeof provider.test !== 'function') continue;
@@ -122,6 +131,21 @@ function decideBook(book, { bound, manualState, context, providers, hostContext,
     return { ...base, enabled: true, rule: 'force-on', reason: '你把它设为「强制启用」（策略是' + STRATEGY_LABEL[strategy] + '，被手动覆盖）' };
   }
 
+  // 3.5) 角色卡关联投票（v0.28.0）：夹在"书的强制开关"之后、"策略"之前。
+  // 位置很关键：必须早于下面 strategy==='auto' 里"宿主联动总开关关着就退回老路"那一步——
+  // 总开关关掉只是不再认酒馆自己的世界书绑定，ILB 自己存的关联照样算数。
+  const vote = avatars ? bindingVote(bindings, book.book_id, avatars) : null;
+  if (vote === 'off' || vote === 'on') {
+    const info = pickBinding(bindings, book.book_id, avatars);
+    return {
+      ...base,
+      enabled: vote === 'on',
+      rule: vote === 'on' ? 'binding-on' : 'binding-off',
+      reason: describeBinding({ policy: vote, binding: info, isGroup }),
+      binding: info,
+    };
+  }
+
   // 4) 始终启用
   if (strategy === 'always') {
     return { ...base, enabled: true, rule: 'always', reason: '这本书设为「始终启用」' };
@@ -129,6 +153,18 @@ function decideBook(book, { bound, manualState, context, providers, hostContext,
 
   // 5) 自动跟随酒馆
   if (strategy === 'auto') {
+    // 关联表态「自动」= 这本书被当前在场角色挂着，直接启用（不必再看原生来源）。
+    // 放在最前面：宿主联动总开关关着时它也要生效（D-0087）。
+    if (vote === 'auto') {
+      const info = pickBinding(bindings, book.book_id, avatars);
+      return {
+        ...base,
+        enabled: true,
+        rule: 'binding',
+        reason: describeBinding({ policy: 'auto', binding: info, isGroup }),
+        binding: info,
+      };
+    }
     if (!hostContext) return legacyCharacterMode(book, { bound, manualState, context, base });
     if (hostContext.contextAvailable !== true) {
       return {

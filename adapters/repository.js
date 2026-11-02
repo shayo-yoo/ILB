@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from '../core/settings-defaults.js';
 import { normalizeBook, normalizeLogic } from '../core/model.js';
 import { DATA_VERSION, migrateBucket } from '../core/migrate.js';
 import { createSnapshot, evictSnapshots } from '../core/snapshot.js';
+import { normalizeBinding, normalizeBindings, planRename } from '../core/bindings.js';
 
 function safeClone(v, fallback) {
   try {
@@ -34,6 +35,9 @@ function emptyState() {
     // 独立逻辑（v0.23.0）：逻辑组 + 不挂在任何书上的逻辑。老存档没有这两个键，读的时候补空。
     logicGroups: [],
     logics: [],
+    // 角色卡 ↔ 世界书的关联（v0.28.0）：老存档没有这个键，读的时候补空；
+    // 数据格式版本（DATA_VERSION）不跟着涨——它只是多了一个可选键。
+    bindings: [],
   };
 }
 
@@ -108,6 +112,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     b.stats.logics = b.stats.logics && typeof b.stats.logics === 'object' ? b.stats.logics : {};
     b.logicGroups = Array.isArray(b.logicGroups) ? b.logicGroups : [];
     b.logics = Array.isArray(b.logics) ? b.logics : [];
+    // 关联是"只加键"：老存档读到就在这里补空数组，不触发迁移、不改版本号
+    b.bindings = Array.isArray(b.bindings) ? b.bindings : [];
     migrateIfNeeded(b);
     cache = b;
     return b;
@@ -186,11 +192,122 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
 
   function deleteBook(bookId) {
     const b = bucket();
+    const id = String(bookId);
     const before = b.books.length;
-    b.books = b.books.filter((x) => x && x.book_id !== String(bookId));
-    delete b.manualState[String(bookId)];
-    commit();
+    b.books = b.books.filter((x) => x && x.book_id !== id);
+    delete b.manualState[id];
+    // 书没了，指向它的关联也没有意义了：跟着删，免得留下"指向不存在的书"的记录
+    const bindingsBefore = b.bindings.length;
+    b.bindings = b.bindings.filter((x) => !x || String(x.bookId ?? '') !== id);
+    if (b.books.length !== before || b.bindings.length !== bindingsBefore) commit();
     return b.books.length !== before;
+  }
+
+  // ---- 角色卡 ↔ 世界书的关联（v0.28.0） ----
+  //
+  // 这里只做存/取/改/删。能不能建（书在不在、重复不重复、超没超上限）由
+  // runtime/api.js 判断——数据层不认识"规则"，只认识数组；读到的坏记录丢掉并说一句。
+
+  const warnBinding = (message) => console.warn(`[ILB] ${message}`);
+
+  function listBindings() {
+    try {
+      return normalizeBindings(bucket().bindings, { warn: warnBinding }).map((one) => safeClone(one, one));
+    } catch {
+      return [];
+    }
+  }
+
+  function getBinding(id) {
+    const key = String(id ?? '');
+    if (!key) return null;
+    return listBindings().find((one) => one.id === key) ?? null;
+  }
+
+  /** 这本书还有几个角色挂着（被标成孤儿的算失效，不计数）。删书确认框要用。 */
+  function countBindingsForBook(bookId) {
+    const id = String(bookId ?? '');
+    if (!id) return 0;
+    return listBindings().filter((one) => one.bookId === id && !one.orphanedAt).length;
+  }
+
+  function createBinding(raw) {
+    const one = normalizeBinding(raw, { warn: warnBinding });
+    if (!one) throw new Error('这条关联缺少角色卡标识或书 id');
+    const b = bucket();
+    b.bindings.push(one);
+    commit();
+    return safeClone(one, one);
+  }
+
+  function updateBinding(id, patch) {
+    const key = String(id ?? '');
+    const b = bucket();
+    const idx = b.bindings.findIndex((x) => x && String(x.id) === key);
+    if (idx < 0) return null;
+    const next = normalizeBinding({ ...b.bindings[idx], ...patch, id: key, updatedAt: Date.now() }, { warn: warnBinding });
+    if (!next) return null;
+    b.bindings[idx] = next;
+    commit();
+    return safeClone(next, next);
+  }
+
+  function removeBinding(id) {
+    const key = String(id ?? '');
+    const b = bucket();
+    const before = b.bindings.length;
+    b.bindings = b.bindings.filter((x) => !x || String(x.id ?? '') !== key);
+    if (b.bindings.length === before) return false;
+    commit();
+    return true;
+  }
+
+  /** 解除某个角色的全部关联（删角色卡时也走这条，不按书过滤）。 */
+  function removeBindingsForCharacter(avatar) {
+    const who = String(avatar ?? '').trim();
+    if (!who) return 0;
+    const b = bucket();
+    const before = b.bindings.length;
+    b.bindings = b.bindings.filter((x) => !x || String(x.character?.avatar ?? '').trim() !== who);
+    const removed = before - b.bindings.length;
+    if (removed > 0) commit();
+    return removed;
+  }
+
+  /** 角色卡被删：不删关联，只打个时间戳（书还在，用户以后可能把卡找回来）。 */
+  function markBindingsOrphaned(avatars, at = Date.now()) {
+    const list = (Array.isArray(avatars) ? avatars : [avatars]).map((x) => String(x ?? '').trim()).filter(Boolean);
+    if (list.length === 0) return 0;
+    const b = bucket();
+    let changed = 0;
+    const when = Math.max(0, Math.trunc(Number(at) || Date.now()));
+    b.bindings = b.bindings.map((x) => {
+      if (!x || x.orphanedAt) return x;
+      if (!list.includes(String(x.character?.avatar ?? '').trim())) return x;
+      changed += 1;
+      return { ...x, orphanedAt: when, updatedAt: when };
+    });
+    if (changed > 0) commit();
+    return changed;
+  }
+
+  /** 清掉所有被标成孤儿的关联（角色卡已经删了、用户确认不再需要）。 */
+  function purgeOrphanBindings() {
+    const b = bucket();
+    const before = b.bindings.length;
+    b.bindings = b.bindings.filter((x) => !x || !x.orphanedAt);
+    const removed = before - b.bindings.length;
+    if (removed > 0) commit();
+    return removed;
+  }
+
+  function renameBindings(oldAvatar, newAvatar, opts = {}) {
+    const b = bucket();
+    const plan = planRename(normalizeBindings(b.bindings, { warn: warnBinding }), oldAvatar, newAvatar, opts);
+    if (!plan.changed) return { updated: 0, merged: 0 };
+    b.bindings = plan.bindings;
+    commit();
+    return { updated: plan.updated, merged: plan.merged };
   }
 
   // ---- 独立逻辑组（v0.23.0）：逻辑不再必须以一本书为前提 ----
@@ -494,6 +611,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
         stats: b.stats,
         logicGroups: b.logicGroups,
         logics: b.logics,
+        // 关联跟着整包走（v0.28.0）：导出的是规范化后的副本，改导出结果不影响存档
+        bindings: normalizeBindings(b.bindings, { warn: warnBinding }),
       },
       {},
     );
@@ -522,10 +641,13 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     if (Array.isArray(source.snapshots)) b.snapshots = evictSnapshots(source.snapshots);
     if (Array.isArray(source.logicGroups)) b.logicGroups = source.logicGroups.map((g) => normalizeLogicGroup(g));
     if (Array.isArray(source.logics)) b.logics = source.logics.map((l) => normalizeStandaloneLogic(l));
+    // 关联（v0.28.0）：这份备份里有就整体替换；没有就保留现在这份——
+    // 老备份不该把用户后来建的关联清空。
+    if (Array.isArray(source.bindings)) b.bindings = normalizeBindings(source.bindings, { warn: warnBinding });
     // 导入的是"一整套存档"：版本号跟着走，下次打开不会再迁一遍
     b.version = DATA_VERSION;
     commit();
-    return { books: b.books.length };
+    return { books: b.books.length, bindings: b.bindings.length };
   }
 
   // ---- 单本世界书的导出/导入（v0.27.0，给角色卡兼容扩展用） ----
@@ -567,11 +689,32 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
    * @returns {{id:string, action:'created'|'skipped'|'overwritten'}}
    */
   function importBook(blob, opts = {}) {
-    const src = blob && typeof blob === 'object' && blob.book && typeof blob.book === 'object' ? blob.book : blob;
-    if (!src || typeof src !== 'object' || Array.isArray(src)) {
+    const raw = blob && typeof blob === 'object' && blob.book && typeof blob.book === 'object' ? blob.book : blob;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       const err = new Error('导入的内容不是一本有效世界书');
       err.code = 'BAD_PAYLOAD';
       throw err;
+    }
+    // 版本校验（v0.28.0）：比这版新的书明确拒绝——假装能读只会把数据改坏。
+    // 比这版老的书先走同一个迁移入口（core/migrate.js），迁不动就按坏数据处理。
+    const declared = Number(
+      blob && typeof blob === 'object' && blob.schema_version != null ? blob.schema_version : raw.schema_version,
+    );
+    let src = raw;
+    if (Number.isFinite(declared) && declared > DATA_VERSION) {
+      const err = new Error(`这本书的格式版本是 ${declared}，这一版 ILB 只认识到 ${DATA_VERSION}；请先升级 ILB 再导入`);
+      err.code = 'NOT_SUPPORTED';
+      throw err;
+    }
+    if (Number.isFinite(declared) && declared < DATA_VERSION) {
+      const migrated = migrateBucket({ version: 1, books: [safeClone(raw, {})] }, { now: Date.now() });
+      const next = migrated && !migrated.error && Array.isArray(migrated.data?.books) ? migrated.data.books[0] : null;
+      if (!next) {
+        const err = new Error(`这本书的格式版本是 ${declared}，迁移失败：${migrated?.error || '内容不完整'}`);
+        err.code = 'BAD_PAYLOAD';
+        throw err;
+      }
+      src = next;
     }
     const b = bucket();
     const incomingId = String(src.book_id ?? '').trim();
@@ -654,6 +797,17 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     getBook,
     saveBook,
     deleteBook,
+    // 角色卡 ↔ 世界书关联（v0.28.0）：数据层只做存取，规则在 runtime/api.js
+    listBindings,
+    getBinding,
+    countBindingsForBook,
+    createBinding,
+    updateBinding,
+    removeBinding,
+    removeBindingsForCharacter,
+    markBindingsOrphaned,
+    purgeOrphanBindings,
+    renameBindings,
     exportBook,
     importBook,
     getManualState,

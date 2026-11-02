@@ -90,7 +90,8 @@ const apiOut = await page.evaluate(`(async () => {
 })()`);
 
 const apiOk =
-  apiOut.version === '1.3' &&
+  // 版本只要求「至少 1.3」：这一版起 1.4，探针不该因为后来升版就变红
+  Number(String(apiOut.version).split('.')[1]) >= 3 &&
   apiOut.capsWorldbooks &&
   apiOut.readyIsApi &&
   apiOut.created?.action === 'created' &&

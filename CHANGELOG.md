@@ -1,3 +1,25 @@
+## 0.28.0 · 2026-11-02 · 新增 · 角色卡关联（bindings）与运行时接口
+
+**一句话**：ILB 能记住"哪张角色卡认哪本书、要不要强制开关"，并让这份关联真正参与每轮的启用判定；同时开放 `runtime.preview()` / `runtime.status()`，让别的扩展随时问"这一轮会启用哪些书、为什么"。一切只增不改——一条关联都没有时，判定结果与 0.27.0 逐字相同。
+
+**接口（`ILB.api`，版本 1.4）**：
+- 新增 `bindings.list / get / create / update / remove / removeForCharacter / renameCharacter / purgeOrphans`（同步返回，失败 `{ok:false,error:{code,message}}`）。
+- 关联记录：`{id, character:{avatar,name}, bookId, policy:'auto'|'on'|'off', note, createdAt, updatedAt, orphanedAt}`；`(avatar, bookId)` 唯一，重复建返回 `CONFLICT` 并带已有 `id`。
+- 判定优先级：书自己的 `override` → 关联投票（`binding-off` / `binding-on`）→ `always` → `auto`（`binding` / 原生匹配）→ `manual`。群聊看全体成员，任一 `on` 即 `on`。
+- `runtime.preview()`：只算不跑，返回每本书的 `{enabled, rule, reason, binding}` 与 `activeBooks`；与真跑共用 `buildResolveInput`，两边结果必然一致。
+- `runtime.status()`：上一轮真跑的结论（`ran:false` 表示没跑过），不持久化、不含聊天正文。
+- `worldbooks.deleteBook(id, {cascade})`：有角色关联时默认 `CONFLICT`（带 `boundCount`），`cascade:true` 才连关联一起删。
+- `importBook` 现在校验 `schema_version`：比 ILB 新 → `NOT_SUPPORTED`，比 ILB 旧 → 先迁移再导入。
+- `exportAll / importAll` 带上 `bindings`；老备份没有这个键时**保留现有**关联，不清空。
+- `caps` 加 `'bindings'` / `'runtime'` / `'bookDelete'`。
+- 角色卡改名/编辑/删除由 `adapters/sillytavern-events.js` 转成操作：改名把关联搬过去（撞车留较新的一条），删除只打孤儿标记不删数据，复制不继承关联（D-0087）。
+
+**界面**：书架单本与批量删除的确认里写明"还有 N 个角色关联着这本书，删除会一起解除"。
+
+**验证**：单元 395/395（新增 `tests/bindings.test.mjs` 16 条）、`linkcheck` 64/64、假 DOM 冒烟 0 失败；真酒馆 `tests/live/st-v28-check.mjs` **36 项全 true**（关联增删改查、判定优先级、群聊投票、preview 与 run 一致、deleteBook 四种情形、importBook 版本校验、备份往返；当时酒馆里有真实角色卡，`character.avatar` 是真值）。
+
+**未验证**：真机上角色卡"重命名"与"删除"两条事件的端到端联动（单元里用构造事件测过，真酒馆只验证了 API 与判定）；5000 条上限在多设备同步下的实际表现。
+
 ## 0.27.0 · 2026-11-02 · 新增 · 世界书接口（P0）与手机折叠条浮层
 
 **一句话**：ILB 本体开始对外提供稳定的世界书接口（列书/取书/单本导出导入/批量导入，冲突策略由调用方选），给角色卡兼容扩展用；手机顶部那条折叠菜单展开时改成浮层，盖在列表上，不再把卡片列表往下挤。
