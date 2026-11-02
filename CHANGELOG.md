@@ -1,3 +1,22 @@
+## 0.27.0 · 2026-11-02 · 新增 · 世界书接口（P0）与手机折叠条浮层
+
+**一句话**：ILB 本体开始对外提供稳定的世界书接口（列书/取书/单本导出导入/批量导入，冲突策略由调用方选），给角色卡兼容扩展用；手机顶部那条折叠菜单展开时改成浮层，盖在列表上，不再把卡片列表往下挤。
+
+**接口（`ILB.api`，版本 1.3）**：
+- `ILB.api.ready`：Promise，resolve 出同一份 api；另设 `globalThis.ILB_READY`，扩展加载顺序颠倒时也能等。
+- `worldbooks.list({detail})` / `get(id)` / `has(id)`。
+- `worldbooks.exportBook(id)` → `{ok, schema_version, exported_at, book}`。
+- `worldbooks.importBook(payload, {onConflict, targetId})`：`new`（默认新建 id）/ `skip` / `overwrite` / `ask`（返回 `CONFLICT` 带 id 与书名）。
+- `worldbooks.importMany({books}, opts)`：逐本结果 + `failed[]`，一本失败不影响其它本。
+- 失败统一 `{ok:false, error:{code,message}}`，不抛异常；错误码：`NOT_FOUND`、`CONFLICT`、`BAD_PAYLOAD`、`NOT_SUPPORTED`。
+- 换书 id 时条目/逻辑 id 会一起重定前缀，流程里对这些 id 的引用也会改写（不会留下 `新书::旧书::e1`）。
+
+**界面**：手机折叠条（书籍/新建/排序/筛选/变量）展开的内容改为 `position:absolute` 浮层，锚在折叠条下方、盖住列表；卡片列表的上边位置不变（探针实测 206 → 206）；浮层底色用主题 tint 叠两层并加模糊，底下的卡片不会透上来。
+
+**验证**：单元 379/379、`linkcheck` 63/63、假 DOM 冒烟 0 失败；真酒馆 `tests/live/st-v27-check.mjs` 全过（接口 14 项 + 手机浮层 7 项）。
+
+**未验证**：真机上浮层的滚动惯性、长菜单（变量很多时）的触控、附属扩展在真实加载顺序下的等待。
+
 ## 0.26.0 · 2026-11-02 · 修复 · 菜单不再被浮窗裁掉；重命名、搜索防抖、逻辑底栏与手动开关位置
 
 **一句话**：卡片「⋯」菜单改成挂到页面最上层的浮层（手机挂进对话框），贴底时也能完整点到；书架可以重命名世界书；逻辑编辑的保存/取消固定在底部；搜索停下才筛、重画后焦点回得来；手动开关挪到「打开规则 / 详情设置」前面。

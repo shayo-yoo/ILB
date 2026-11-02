@@ -1086,11 +1086,18 @@ step('手机：顶部操作区默认收起、能展开排序；底栏挂在滚�
   if (shown.length !== 1) throw new Error(`点开排序后应该有 1 组展开，实际 ${shown.length}`);
   if (!walk(shown[0]).some((n) => cls(n).includes('ilb-sort-key'))) throw new Error('排序组里没有排序键下拉');
 
+  // 展开的那组是浮层（v0.27.0）：容器加 ilb-m-top-body-on，卡片列表不被挤下去
+  const bodyNode = all.find((n) => cls(n) === 'ilb-m-top-body');
+  if (!bodyNode) throw new Error('没有顶部操作区的浮层容器');
+  if (!bodyNode.classList.contains('ilb-m-top-body-on')) throw new Error('展开后浮层容器没有打开');
+
   // 再点同一个按钮要能收起（之前内联与委托各改一半，收起时被委托又展开）
   chip.dispatch('click');
   all = walk(host);
   const afterSecond = all.filter((n) => cls(n) === 'ilb-m-top-row' && n.hidden !== true);
   if (afterSecond.length !== 0) throw new Error(`再点一次应全部收起，实际还有 ${afterSecond.length} 组展开`);
+  const bodyClosed = all.find((n) => cls(n) === 'ilb-m-top-body');
+  if (bodyClosed && bodyClosed.classList.contains('ilb-m-top-body-on')) throw new Error('收起后浮层容器还开着');
 
   // 点开 A 再点 B：只留 B
   chip.dispatch('click');

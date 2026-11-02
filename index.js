@@ -27,7 +27,7 @@ import { loadHelp } from './ui/help.js';
 import { runSelfTest } from './ui/selftest.js';
 
 const EXT_LABEL = 'Independent Lorebook';
-const VERSION = '0.26.0';
+const VERSION = '0.27.0';
 
 function notify(message, kind = 'info') {
   try {
@@ -413,6 +413,13 @@ async function boot() {
     selftest: () => runSelfTest(),
     runOnce,
   };
+
+  // 附属扩展最早可能在 ILB 之前加载：它先 await 这个 Promise（或监听 ilb:ready）。
+  try {
+    globalThis.ILB_READY = api.ready;
+  } catch {
+    /* 没有全局对象就算了 */
+  }
 
   console.info(
     `[ILB] 已启动 v${VERSION}（通过 ${host.via} 拿到宿主；界面：${shellReady ? `悬浮球 · ${shell.label()}` : '退回设置页'}）`,

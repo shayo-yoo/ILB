@@ -2118,11 +2118,11 @@ body.ilb-overlay-open .ilb-fab {
   border-top: 1px solid var(--SmartThemeBorderColor, #444);
 }
 
-/* 椤堕儴甯搁┗鎿嶄綔鍖猴細鎸夊姛鑳藉垎鎸夐挳锛岄粯璁ゅ叏鏀惰捣锛涘垪琛ㄦ粴鍒板摢閮借兘鎿嶄綔 */
+/* 顶部常驻操作区：按功能分按钮，默认全收起；列表滚到哪都能操作 */
 .ilb-m-top {
   position: sticky;
   top: 0;
-  z-index: 7;
+  z-index: 30;
   background: var(--SmartThemeBlurTintColor, #181820);
   border-bottom: 1px solid var(--SmartThemeBorderColor, #333);
 }
@@ -2166,10 +2166,6 @@ body.ilb-overlay-open .ilb-fab {
 
 .ilb-m-top-body {
   padding: 0 10px 8px;
-}
-
-.ilb-m-top-row[hidden] {
-  display: none !important;
 }
 
 .ilb-m-top-row .ilb-sortbar {
@@ -2532,8 +2528,32 @@ body.ilb-overlay-open .ilb-fab {
 .ilb-m-head-folded .ilb-m-head-slot {
   display: none;
 }
+/* 展开的那一组是浮层：覆盖在列表上方，不把卡片列表往下挤（v0.27.0） */
 .ilb-m-top-body {
-  border-bottom: 1px solid rgba(127, 127, 140, 0.18);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  display: none;
+  max-height: min(62vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 0 8px;
+  /* 主题的 tint 是半透明的，同色叠两层才不透出下面的卡片（v0.21.3 同一招） */
+  background-color: var(--SmartThemeBlurTintColor, #181820);
+  background-image: linear-gradient(var(--SmartThemeBlurTintColor, #181820), var(--SmartThemeBlurTintColor, #181820));
+  /* 有些主题的 tint 只有半透明：再加一层模糊，底下的卡片文字不会透上来（v0.27.0） */
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  backdrop-filter: blur(14px) saturate(115%);
+  border-bottom: 1px solid rgba(127, 127, 140, 0.28);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+}
+.ilb-m-top-body.ilb-m-top-body-on {
+  display: block;
+}
+.ilb-m-top-row[hidden] {
+  display: none !important;
 }
 .ilb-m-top-row {
   padding: 6px 10px 8px;
@@ -2688,6 +2708,7 @@ body.ilb-overlay-open .ilb-fab {
   grid-template-columns: 1fr;
 }
 .ilb-m .ilb-m-head-slot {
+  position: relative;
   margin: 0 -10px;
   padding: 0 10px;
 }

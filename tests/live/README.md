@@ -88,3 +88,11 @@ node tests/live/st-v26-check.mjs
 ```
 
 覆盖：书架重命名、贴底「⋯」菜单（portal、视口夹取、不穿透）、规则「⋯」复制、搜索防抖与焦点恢复、逻辑编辑器固定底栏、手动开关顺序；最后切手机视口复核菜单在对话框里。
+
+### st-v27-check.mjs —— v0.27.0 接口与手机浮层
+
+```
+node tests/live/st-v27-check.mjs
+```
+
+覆盖：`ILB.api.ready / version / caps`；worldbooks 的列表、取书、导出、冲突（ask/skip/overwrite）、批量导入、坏数据、清理；手机顶部折叠条展开是浮层（列表上边不动）、再点收起。

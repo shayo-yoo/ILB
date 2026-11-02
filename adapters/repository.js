@@ -528,6 +528,125 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     return { books: b.books.length };
   }
 
+  // ---- 单本世界书的导出/导入（v0.27.0，给角色卡兼容扩展用） ----
+  //
+  // 这里只做"数据层"的事：取一本、换 id、按策略处理冲突、落地。不认角色卡、
+  // 不认包格式，也不问用户——策略由调用方传进来（ILB-API）。
+
+  function findBookById(id) {
+    const key = String(id ?? '');
+    if (!key) return null;
+    return bucket().books.find((x) => x && x.book_id === key) ?? null;
+  }
+
+  function exportBook(id) {
+    const book = findBookById(id);
+    if (!book) return null;
+    return {
+      schema_version: DATA_VERSION,
+      exported_at: Date.now(),
+      book: safeClone(book, {}),
+    };
+  }
+
+  function uniqueBookId(existing, seed = 'book') {
+    const taken = new Set(existing.map((x) => x && x.book_id).filter(Boolean));
+    let id = `${seed}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    let n = 1;
+    while (taken.has(id)) {
+      n += 1;
+      id = `${seed}-${Date.now().toString(36)}-${n}`;
+    }
+    return id;
+  }
+
+  /**
+   * 导入一本世界书。
+   * @param {object} blob  `{ book }` 或书本身；带 schema_version 的导出结果也接受。
+   * @param {{onConflict?:'new'|'skip'|'overwrite'|'ask', targetId?:string}} opts
+   * @returns {{id:string, action:'created'|'skipped'|'overwritten'}}
+   */
+  function importBook(blob, opts = {}) {
+    const src = blob && typeof blob === 'object' && blob.book && typeof blob.book === 'object' ? blob.book : blob;
+    if (!src || typeof src !== 'object' || Array.isArray(src)) {
+      const err = new Error('导入的内容不是一本有效世界书');
+      err.code = 'BAD_PAYLOAD';
+      throw err;
+    }
+    const b = bucket();
+    const incomingId = String(src.book_id ?? '').trim();
+    const existing = incomingId ? findBookById(incomingId) : null;
+    const policy = ['new', 'skip', 'overwrite', 'ask'].includes(opts.onConflict) ? opts.onConflict : 'ask';
+
+    if (existing) {
+      if (policy === 'skip') return { id: existing.book_id, action: 'skipped' };
+      if (policy === 'ask') {
+        const err = new Error(`这本书已经存在：${existing.name || existing.book_id}`);
+        err.code = 'CONFLICT';
+        err.id = existing.book_id;
+        err.name = existing.name || '';
+        throw err;
+      }
+      if (policy === 'overwrite') {
+        const incoming = safeClone(src, {});
+        // 覆盖时保留原来的创建时间与 id；显示名与内容以导入为准。
+        incoming.book_id = existing.book_id;
+        incoming.created_at = existing.created_at || incoming.created_at || Date.now();
+        incoming.updated_at = Date.now();
+        const next = normalizeBook(incoming);
+        next.book_id = existing.book_id;
+        const at = b.books.indexOf(existing);
+        b.books[at] = next;
+        commit();
+        return { id: next.book_id, action: 'overwritten' };
+      }
+    }
+
+    // 新建：不覆盖任何已有书。id 优先用调用方指定（包里有稳定 id 时），否则生成。
+    const id = String(opts.targetId ?? '').trim() || uniqueBookId(b.books);
+    const incoming = rebaseBookIds(safeClone(src, {}), incomingId, id);
+    incoming.book_id = id;
+    incoming.created_at = incoming.created_at || Date.now();
+    incoming.updated_at = Date.now();
+    const book = normalizeBook(incoming);
+    book.book_id = id;
+    b.books.push(book);
+    commit();
+    return { id, action: 'created' };
+  }
+
+  /**
+   * 换书 id 时，把条目/逻辑的 id 前缀一起换掉，并把流程里对这些 id 的引用改过来。
+   * 不这么做的话：新书里会出现 `新书::旧书::e1`，而条件/激活节点还指着 `旧书::e1`。
+   */
+  function rebaseBookIds(book, oldId, newId) {
+    if (!oldId || !newId || oldId === newId) return book;
+    const map = new Map();
+    const rebase = (id) => {
+      const s = String(id ?? '');
+      if (!s.startsWith(`${oldId}::`)) return s;
+      const next = `${newId}::${s.slice(oldId.length + 2)}`;
+      map.set(s, next);
+      return next;
+    };
+    const clone = safeClone(book, {});
+    clone.entries = (clone.entries ?? []).map((e) => ({ ...e, id: rebase(e.id) }));
+    clone.logic = (clone.logic ?? []).map((l) => ({ ...l, id: rebase(l.id) }));
+    const walk = (value) => {
+      if (Array.isArray(value)) return value.map(walk);
+      if (value && typeof value === 'object') {
+        const out = {};
+        for (const key of Object.keys(value)) out[key] = walk(value[key]);
+        return out;
+      }
+      if (typeof value === 'string' && map.has(value)) return map.get(value);
+      return value;
+    };
+    clone.entries = walk(clone.entries);
+    clone.logic = walk(clone.logic);
+    return clone;
+  }
+
   return {
     getSettings,
     saveSettings,
@@ -535,6 +654,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     getBook,
     saveBook,
     deleteBook,
+    exportBook,
+    importBook,
     getManualState,
     setManualState,
     getChatState,

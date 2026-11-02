@@ -41,12 +41,30 @@ function buildApi({ vars = {}, specs = null } = {}) {
 test('接口版本与说明写清楚', () => {
   const { api } = buildApi();
   assert.equal(api.version, API_VERSION);
-  assert.equal(API_VERSION, '1.2');
-  assert.deepEqual(api.describe().methods, ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe']);
+  assert.equal(API_VERSION, '1.3');
+  const methods = api.describe().methods;
+  // 老方法一个都不能少；1.3 追加 worldbooks.*
+  for (const name of ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe']) {
+    assert.ok(methods.includes(name), `缺方法 ${name}`);
+  }
+  assert.ok(methods.includes('worldbooks.exportBook'));
   assert.ok(api.describe().caps.includes('outcome'));
   assert.ok(API_CAPS.includes('nonce'));
   assert.ok(API_CAPS.includes('ui'));
   assert.ok(API_CAPS.includes('callAsync'));
+  assert.ok(API_CAPS.includes('worldbooks'));
+});
+
+test('worldbooks 命名空间在旧调用里也不会炸（没有实现时返回 NOT_SUPPORTED）', async () => {
+  const { api } = buildApi();
+  // buildApi 的假 repository 没有 exportBook/importBook：要明确说"不支持"，而不是静默成功
+  const out = await api.worldbooks.exportBook('b1');
+  assert.equal(out.ok, false);
+  assert.equal(out.error.code, 'NOT_SUPPORTED');
+  const list = await api.worldbooks.list();
+  assert.equal(list.ok, true);
+  assert.equal(list.books[0].id, 'b1');
+  assert.equal(list.books[0].entries, 0);
 });
 
 test('快照：只给只读信息，不含宿主对象；逻辑带参数表', () => {

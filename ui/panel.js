@@ -550,6 +550,7 @@ export function createPanel(deps) {
     function setOpen(next) {
       state.topOpen = next;
       for (const [key, node] of Object.entries(rows)) applyHidden(node, key !== next);
+      body.classList.toggle('ilb-m-top-body-on', !!next);
       for (const node of chipNodes) {
         const isOn = node.getAttribute('data-chip') === next;
         node.classList.toggle('ilb-m-chip-on', isOn);
@@ -569,6 +570,7 @@ export function createPanel(deps) {
       body.appendChild(row);
     }
     // 初始高亮跟着 state 走（切页回来时保留之前展开的那组）
+    body.classList.toggle('ilb-m-top-body-on', !!state.topOpen);
     for (const node of chipNodes) {
       const isOn = node.getAttribute('data-chip') === state.topOpen;
       node.classList.toggle('ilb-m-chip-on', isOn);
@@ -822,11 +824,15 @@ export function createPanel(deps) {
         const headerHost = typeof getHeaderRoot === 'function' ? getHeaderRoot() : null;
         if (headerHost) {
           headerHost.innerHTML = '';
-          if (!state.topFolded) headerHost.appendChild(parts.chips);
+          if (!state.topFolded) {
+            // 折叠条与它的浮层放在同一个容器里：浮层以折叠条为锚点往下展开，
+            // 覆盖列表而不是把列表挤下去（v0.27.0）。
+            headerHost.appendChild(parts.chips);
+            headerHost.appendChild(parts.body);
+          }
         } else if (!state.topFolded) {
-          root.appendChild(parts.chips);
+          root.appendChild(el('div', { class: 'ilb-m-top' }, [parts.chips, parts.body]));
         }
-        if (!state.topFolded) root.appendChild(parts.body);
         main.appendChild(drawView());
         root.appendChild(main);
         // 底栏由 ui/mobile.js 挂在滚动区外面；拿不到挂载点时退回旧行为（画在面板里）

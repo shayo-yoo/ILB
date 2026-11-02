@@ -22,7 +22,7 @@ import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { coerceValue, normalizeVars } from '../core/vars.js';
 
 /** 接口契约版本。加字段不算破坏性变更，改字段语义才算。 */
-export const API_VERSION = '1.2';
+export const API_VERSION = '1.3';
 
 /** 供 UI 扩展判断"这版有哪些能力"，比 version 字符串更好用。 */
 export const API_CAPS = [
@@ -40,6 +40,8 @@ export const API_CAPS = [
   'strict',
   'vars',
   'caps',
+  'ready',
+  'worldbooks',
 ];
 
 const NAME_MAX = 40;
@@ -350,9 +352,138 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     return () => listeners.delete(fn);
   }
 
+  // ---- 世界书接口（v0.27.0，P0） ----
+  //
+  // 给角色卡兼容扩展用：列书、取书、单本导出/导入（带冲突策略）、批量导入。
+  // 约定：失败不抛异常，返回 { ok:false, error:{ code, message } }；
+  // 所有方法都是 async，调用方可以统一 await。
+
+  function apiError(err) {
+    return {
+      ok: false,
+      error: {
+        code: String(err && err.code ? err.code : 'ERROR'),
+        message: String(err && err.message ? err.message : err),
+        ...(err && err.id ? { id: String(err.id) } : {}),
+      },
+    };
+  }
+
+  function briefBook(book) {
+    return {
+      id: book.book_id,
+      name: book.name,
+      enabled: book.enabled !== false,
+      entries: Array.isArray(book.entries) ? book.entries.length : 0,
+      logics: Array.isArray(book.logic) ? book.logic.length : 0,
+      updatedAt: Number(book.updated_at) || 0,
+      schemaVersion: Number(book.schema_version) || 2,
+    };
+  }
+
+  function needBookMethod(name, fn) {
+    if (typeof fn !== 'function') {
+      const err = new Error(`这一版 ILB 还不支持 worldbooks.${name}`);
+      err.code = 'NOT_SUPPORTED';
+      throw err;
+    }
+    return fn;
+  }
+
+  const worldbooks = {
+    async list(opts = {}) {
+      try {
+        const books = repository.listBooks() ?? [];
+        const detail = opts?.detail === true;
+        return {
+          ok: true,
+          books: books.map((book) => (detail ? { ...briefBook(book), book } : briefBook(book))),
+        };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    async get(id) {
+      try {
+        const book = repository.getBook(String(id ?? ''));
+        if (!book) return { ok: false, error: { code: 'NOT_FOUND', message: `没有这本书：${id}` } };
+        return { ok: true, book };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    async has(id) {
+      try {
+        const books = repository.listBooks() ?? [];
+        return { ok: true, exists: books.some((b) => b && b.book_id === String(id ?? '')) };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /** 单本完整导出：{ schema_version, exported_at, book }。 */
+    async exportBook(id) {
+      try {
+        const fn = needBookMethod('exportBook', repository.exportBook);
+        const payload = fn.call(repository, String(id ?? ''));
+        if (!payload) return { ok: false, error: { code: 'NOT_FOUND', message: `没有这本书：${id}` } };
+        return { ok: true, ...payload };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /**
+     * 导入一本。
+     * @param {object} payload `{ book }` 或书本身
+     * @param {{onConflict?:'new'|'skip'|'overwrite'|'ask', targetId?:string}} opts
+     */
+    async importBook(payload, opts = {}) {
+      try {
+        const fn = needBookMethod('importBook', repository.importBook);
+        const res = fn.call(repository, payload, opts);
+        return { ok: true, id: res.id, action: res.action };
+      } catch (err) {
+        return apiError(err);
+      }
+    },
+
+    /**
+     * 批量导入：{ books: [...] } 或数组。逐本返回结果，不因一本失败而中断。
+     * @returns {{ok:boolean, imported:Array<{id:string,action:string}>, failed:Array<{index:number,error:object}>}}
+     */
+    async importMany(payload, opts = {}) {
+      const list = Array.isArray(payload) ? payload : Array.isArray(payload?.books) ? payload.books : null;
+      if (!list) {
+        return { ok: false, error: { code: 'BAD_PAYLOAD', message: '批量导入需要数组或 { books: [...] }' } };
+      }
+      const imported = [];
+      const failed = [];
+      for (let i = 0; i < list.length; i += 1) {
+        try {
+          const fn = needBookMethod('importBook', repository.importBook);
+          const res = fn.call(repository, list[i], opts);
+          imported.push({ index: i, id: res.id, action: res.action });
+        } catch (err) {
+          failed.push({
+            index: i,
+            error: {
+              code: String(err && err.code ? err.code : 'ERROR'),
+              message: String(err && err.message ? err.message : err),
+            },
+          });
+        }
+      }
+      return { ok: failed.length === 0, imported, failed };
+    },
+  };
+
   const api = {
     version: API_VERSION,
     caps: [...API_CAPS],
+    worldbooks,
     snapshot,
     set,
     remove,
@@ -363,7 +494,8 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
     describe: () => ({
       version: API_VERSION,
       caps: [...API_CAPS],
-      methods: ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe'],
+      methods: ['snapshot', 'set', 'remove', 'call', 'callAsync', 'subscribe', 'worldbooks.list', 'worldbooks.get', 'worldbooks.has', 'worldbooks.exportBook', 'worldbooks.importBook', 'worldbooks.importMany'],
+      worldbooks: ['list', 'get', 'has', 'exportBook', 'importBook', 'importMany'],
       ui: ['openPanel', 'close'],
       events: ['ilb:ready', 'ilb:change'],
       callReturns: ['ok', 'outcome', 'ran', 'passed', 'id', 'name', 'reason', 'writes', 'extra', 'ui', 'durationMs', 'steps', 'vars', 'unusedArgs', 'missingParams'],
@@ -390,6 +522,10 @@ export function createApi({ repository, getContext, getChatId, notify = () => {}
       },
     },
   };
+
+  // 别的扩展（例如角色卡兼容扩展）可以 await ILB.api.ready，拿到同一份 api；
+  // 它加载得比 ILB 早时，先等这个 Promise，或监听 ilb:ready 事件。
+  api.ready = Promise.resolve(api);
 
   // 提示一下：别的扩展加载得比 ILB 早时，它拿不到 window.ILB；监听这个事件即可。
   try {
