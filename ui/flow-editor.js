@@ -153,7 +153,7 @@ export function renderFlowEditor(options = {}) {
   /** 表单 / 文本两种写法，改的是同一个 model（ILB-4.20） */
   let textMode = false;
 
-  /** 窗子够不够宽：够宽才值得并排三栏，窄了宁可一列到底。 */
+  /** 标准密度保留完整单列表单；wide 密度才画三栏，容器太窄再回退单列。 */
   function isWide() {
     try {
       return typeof ctx?.density === 'function' && ctx.density() === 'wide';

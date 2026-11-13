@@ -283,7 +283,7 @@
 }
 
 .ilb-modal-wide {
-  width: min(96vw, 900px);
+  width: min(96vw, 1120px);
 }
 
 .ilb-modal-head,
@@ -1695,7 +1695,8 @@ body.ilb-overlay-open .ilb-fab {
   padding: 6px 8px;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background-color: var(--SmartThemeBlurTintColor, #1e1e1e);
+  background-image: linear-gradient(var(--SmartThemeBlurTintColor, #1e1e1e), var(--SmartThemeBlurTintColor, #1e1e1e));
   position: sticky;
   top: 0;
   z-index: 4;
@@ -1961,10 +1962,25 @@ body.ilb-overlay-open .ilb-fab {
 
 .ilb-flow-workspace {
   display: grid;
-  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) minmax(240px, 320px);
+  grid-template-columns: minmax(120px, 160px) minmax(320px, 1fr) minmax(200px, 260px);
   gap: 10px;
   align-items: start;
   margin: 8px 0;
+}
+
+.ilb-flow-canvas {
+  min-width: 0;
+}
+
+@container (max-width: 740px) {
+  .ilb-flow-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ilb-flow-outline,
+  .ilb-flow-props {
+    position: static;
+    max-height: none;
+  }
 }
 
 .ilb-flow-outline,
@@ -2067,6 +2083,19 @@ body.ilb-overlay-open .ilb-fab {
   min-width: 0;
 }
 
+.ilb-editor-flow-open.ilb-editor-cols {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ilb-editor-flow-open .ilb-editor-summary {
+  display: none;
+}
+
+.ilb-flow,
+.ilb-flow-host {
+  container-type: inline-size;
+}
+
 .ilb-editor-summary {
   position: sticky;
   top: 0;
@@ -2088,19 +2117,6 @@ body.ilb-overlay-open .ilb-fab {
   word-break: break-word;
 }
 
-/* 窗子不够宽时，三栏会让每栏都窄到没法用：退回一列 */
-.ilb-root[data-density="standard"] .ilb-flow-workspace,
-.ilb-root[data-density="compact"] .ilb-flow-workspace {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.ilb-root[data-density="standard"] .ilb-flow-outline,
-.ilb-root[data-density="standard"] .ilb-flow-props,
-.ilb-root[data-density="compact"] .ilb-flow-outline,
-.ilb-root[data-density="compact"] .ilb-flow-props {
-  position: static;
-  max-height: none;
-}
 /* ============================================================
    v0.22.0 鎵嬫満绔細搴曟爮鍥哄畾銆侀《閮ㄥ父椹绘姌鍙犲尯銆佺揣鍑戝崱鐗囥€佹帓搴?   ============================================================ */
 

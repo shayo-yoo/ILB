@@ -77,8 +77,10 @@ test('worldbooks.exportBook：带 schema_version，且改导出结果不影响�
   seed(repository);
   const out = await api.worldbooks.exportBook('book-src');
   assert.equal(out.ok, true);
+  assert.equal(out.kind, 'ilb-book');
   assert.equal(out.schema_version, 2);
   assert.equal(out.book.book_id, 'book-src');
+  assert.deepEqual(out.book, repository.getBook('book-src'));
   out.book.name = '改坏了';
   out.book.entries.length = 0;
   const again = await api.worldbooks.get('book-src');
@@ -132,6 +134,20 @@ test('worldbooks.importBook：skip 不动原件，overwrite 换内容但保留 i
   assert.equal(after.entries.length, 1);
   assert.equal(after.created_at, before.created_at);
   assert.equal(original.book_id, after.book_id);
+});
+
+test('worldbooks.importBook：要求正确 kind，并拒绝未来 schema 版本', async () => {
+  const { api, repository } = makeHarness();
+  const wrongKind = await api.worldbooks.importBook({ kind: 'native-world', schema_version: 2, book: { book_id: 'x', name: 'X' } });
+  assert.equal(wrongKind.ok, false);
+  assert.equal(wrongKind.error.code, 'NOT_SUPPORTED');
+  const future = await api.worldbooks.importBook({ kind: 'ilb-book', schema_version: 3, book: { book_id: 'future', name: '未来' } });
+  assert.equal(future.ok, false);
+  assert.equal(future.error.code, 'NOT_SUPPORTED');
+  assert.equal(repository.listBooks().length, 0);
+  const old = await api.worldbooks.importBook({ kind: 'ilb-book', schema_version: 1, book: { book_id: 'old', name: '旧书', entries: [] } });
+  assert.equal(old.ok, true);
+  assert.equal(old.action, 'created');
 });
 
 test('worldbooks.importBook：坏数据返回 BAD_PAYLOAD，不抛异常', async () => {

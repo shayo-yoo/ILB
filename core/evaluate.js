@@ -99,9 +99,10 @@ function normalizeInjection(injection, settings) {
 }
 
 /** 触发词判定 */
-export function evalTrigger(trigger, text) {
+export function evalTrigger(trigger, text, random = {}) {
   const t = trigger ?? {};
   const opts = { caseSensitive: t.matchCase === true, wholeWords: t.wholeWords === true };
+  if (t.mode === 'ilb') return evalIlbTrigger(t, text, opts, random);
   const any = toStringArray(t.any);
   const all = toStringArray(t.all);
   const not = toStringArray(t.not);
@@ -141,6 +142,50 @@ export function evalTrigger(trigger, text) {
   }
 
   return { passed: true, reason: '出现了触发词' };
+}
+
+function evalIlbTrigger(trigger, text, opts, random = {}) {
+  const groups = Array.isArray(trigger.groups) ? trigger.groups : [];
+  const seed = random.seed ?? 0;
+  const id = String(random.id ?? 'trigger');
+  const unit = typeof random.unit === 'function' ? random.unit : (key) => hashToUnit(`${seed}:${id}:${key}`);
+  if (groups.length === 0) return { passed: false, reason: '进阶触发模式没有设置匹配组' };
+
+  const results = groups.map((group, groupIndex) => {
+    const terms = Array.isArray(group?.terms) ? group.terms : [];
+    const hits = terms.map((term, termIndex) => {
+      const termText = typeof term === 'string' ? term : term?.text;
+      const matched = containsNeedle(text, termText, opts);
+      if (!matched) return { matched: false, text: String(termText ?? '') };
+      const probability = typeof term === 'string' || term?.probability == null
+        ? clamp(num(group?.probability, 100), 0, 100)
+        : clamp(num(term.probability, 100), 0, 100);
+      const roll = probability >= 100 ? 0 : unit(`g${groupIndex}:t${termIndex}`) * 100;
+      const passed = probability > 0 && roll < probability;
+      return { matched: passed, text: String(termText ?? ''), probability, roll };
+    });
+    const logic = ['any', 'all', 'not'].includes(group?.logic) ? group.logic : 'any';
+    const matchedHits = hits.filter((hit) => hit.matched).length;
+    let passed = logic === 'all' ? hits.length > 0 && matchedHits === hits.length : logic === 'not' ? matchedHits === 0 : matchedHits > 0;
+    const probability = clamp(num(group?.probability, 100), 0, 100);
+    let probabilityFailed = false;
+    if (passed && probability < 100) {
+      const roll = unit(`g${groupIndex}:group`) * 100;
+      passed = probability > 0 && roll < probability;
+      probabilityFailed = !passed;
+    }
+    return { passed, logic, hits, probability, probabilityFailed };
+  });
+
+  const passedGroups = results.filter((result) => result.passed).length;
+  const combine = ['all', 'any', 'not'].includes(trigger.combine) ? trigger.combine : 'all';
+  const passed = combine === 'all' ? passedGroups === results.length : combine === 'not' ? passedGroups === 0 : passedGroups > 0;
+  if (passed) {
+    const matched = results.flatMap((result) => result.hits.filter((hit) => hit.matched).map((hit) => hit.text));
+    return { passed: true, reason: matched.length ? `进阶触发命中：${matched.slice(0, 5).join('、')}` : '进阶触发条件满足', groups: results };
+  }
+  const failed = results.find((result) => !result.passed);
+  return { passed: false, reason: `进阶触发未满足（${failed?.logic ?? combine} 组条件不成立）`, groups: results };
 }
 
 /** 条件卡片判定（ILB-4.4） */
@@ -337,7 +382,9 @@ export function evaluate(request = {}, options = {}) {
     const text = buildSourceText(messages, scanDepth, userInput, source);
     const trig = logic.trigger ?? {};
     const meta = trig.meta ?? 'none';
-    const hasWords = toStringArray(trig.any).length + toStringArray(trig.all).length + toStringArray(trig.regex).length > 0;
+    const hasWords = trig.mode === 'ilb'
+      ? (Array.isArray(trig.groups) && trig.groups.some((group) => Array.isArray(group?.terms) && group.terms.length > 0))
+      : toStringArray(trig.any).length + toStringArray(trig.all).length + toStringArray(trig.regex).length > 0;
     if (mode === 'auto' && meta !== 'none') {
       // 元触发器（ILB-4.20）：不看词，看"这轮是谁在说话"
       const last = messages.length ? messages[messages.length - 1] : null;
@@ -351,7 +398,7 @@ export function evaluate(request = {}, options = {}) {
         return null;
       }
     } else if (mode === 'auto' && hasWords) {
-      const t = evalTrigger(trig, text);
+      const t = evalTrigger(trig, text, { seed, id: logic.id });
       if (!t.passed) {
         diagnostics.push({ entryId: logic.id, passed: false, stage: 'trigger', reason: `逻辑没触发：${t.reason}` });
         return null;
@@ -480,7 +527,7 @@ export function evaluate(request = {}, options = {}) {
     const trig =
       flowOnly || entry.always === true
         ? { passed: true, reason: flowOnly ? '由判定流程决定' : '常驻条目' }
-        : evalTrigger(entry.trigger, text);
+        : evalTrigger(entry.trigger, text, { seed, id: entry.id });
     if (!trig.passed) {
       diagnostics.push({ entryId: entry.id, passed: false, stage: 'trigger', reason: trig.reason });
       continue;
@@ -677,7 +724,7 @@ export function evaluate(request = {}, options = {}) {
         const source = entry.trigger?.source ?? 'both';
         const entryText = source === 'both' ? layerText : `${buildSourceText(messages, scanDepth, userInput, source)}\n${layerContents.join('\n')}`;
         const flowOnly = hasFlow(entry) && entry.logic?.mode === 'only';
-        const trig = flowOnly ? { passed: true, reason: '由判定流程决定' } : evalTrigger(entry.trigger, entryText);
+        const trig = flowOnly ? { passed: true, reason: '由判定流程决定' } : evalTrigger(entry.trigger, entryText, { seed, id: entry.id });
         if (!trig.passed) continue;
         const when = evalWhenArray(entry.when, { text: entryText, activated, vars: effVars, messageCount: msgCount });
         if (!when.passed) {

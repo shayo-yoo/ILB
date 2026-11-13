@@ -23,7 +23,23 @@ export function renderLogicView(ctx) {
   const books = repository.listBooks();
   const book = books.find((b) => b.book_id === state.activeBookId) ?? null;
   const listHost = el('div', { class: 'ilb-logic-list' });
+  const batchHost = el('div', { class: 'ilb-batch-host' });
   const mobile = ctx.layout?.() === 'mobile';
+  const selectMode = () => state.logicSelectMode === true;
+  const selected = state.logicSelected instanceof Set ? state.logicSelected : (state.logicSelected = new Set());
+  const selectionContext = state.logicSelectionContext ?? { groupId: null, bookId: null };
+  let activeRows = [];
+  const currentSelectionContext = () => ({ groupId: currentGroup()?.id ?? null, bookId: book?.book_id ?? null });
+  function syncSelectionContext() {
+    const next = currentSelectionContext();
+    if (selectionContext.groupId !== next.groupId || selectionContext.bookId !== next.bookId) {
+      selected.clear();
+      state.logicSelectMode = false;
+      selectionContext.groupId = next.groupId;
+      selectionContext.bookId = next.bookId;
+      state.logicSelectionContext = selectionContext;
+    }
+  }
 
   // 组：默认帮用户建一个「独立逻辑」组，不用先点新建也能直接建逻辑。
   function groups() {
@@ -258,22 +274,140 @@ export function renderLogicView(ctx) {
     /* 菜单自身会收起；这里留一个空实现给删除前调用，避免以后换实现时忘掉 */
   }
 
+  function logicById(id) {
+    const fromBook = bookLogics().find((l) => l.id === id);
+    if (fromBook) return { logic: fromBook, fromBook: true };
+    const standalone = repository.listStandaloneLogics?.(currentGroup()?.id) ?? [];
+    const found = standalone.find((l) => l.id === id);
+    return found ? { logic: found, fromBook: false } : null;
+  }
+
+  function applyBatch(mutate, label) {
+    const targets = activeRows.filter((row) => selected.has(row.logic.id));
+    if (!targets.length) {
+      ctx.toast('先勾选几条当前列表中的逻辑', 'warn');
+      return;
+    }
+    let count = 0;
+    const freshBook = book ? repository.listBooks().find((b) => b.book_id === book.book_id) : null;
+    const bookIds = new Set(targets.filter((row) => row.fromBook).map((row) => row.logic.id));
+    if (freshBook && bookIds.size) {
+      for (const logic of freshBook.logic ?? []) {
+        if (!bookIds.has(logic.id)) continue;
+        mutate(logic);
+        logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
+        count += 1;
+      }
+      repository.saveBook(freshBook);
+    }
+    const standaloneIds = new Set(targets.filter((row) => !row.fromBook && row.groupId === currentGroup()?.id).map((row) => row.logic.id));
+    for (const logic of repository.listStandaloneLogics?.(currentGroup()?.id) ?? []) {
+      if (!standaloneIds.has(logic.id)) continue;
+      mutate(logic);
+      logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
+      repository.saveStandaloneLogic(logic);
+      count += 1;
+    }
+    ctx.toast(`已对 ${count} 条逻辑执行：${label}`);
+    draw();
+  }
+
+  function batchDelete() {
+    const targets = activeRows.filter((row) => selected.has(row.logic.id));
+    if (!targets.length) return;
+    if (!window.confirm(`删除选中的 ${targets.length} 条逻辑？删了就找不回来了。`)) return;
+    const bookIds = new Set(targets.filter((row) => row.fromBook).map((row) => row.logic.id));
+    if (book && bookIds.size) {
+      const freshBook = repository.listBooks().find((b) => b.book_id === book.book_id);
+      if (freshBook) {
+        freshBook.logic = (freshBook.logic ?? []).filter((l) => !bookIds.has(l.id));
+        repository.saveBook(freshBook);
+      }
+    }
+    let count = bookIds.size;
+    for (const row of targets.filter((item) => !item.fromBook && item.groupId === currentGroup()?.id)) {
+      if (repository.listStandaloneLogics?.(currentGroup()?.id).some((logic) => logic.id === row.logic.id)) {
+        repository.deleteStandaloneLogic(row.logic.id);
+        count += 1;
+      }
+    }
+    selected.clear();
+    ctx.toast(`已删除 ${count} 条逻辑`);
+    draw();
+  }
+
+  function openBatchSettings() {
+    const enabled = selectBox('', [
+      { value: '', label: '不修改启用状态' },
+      { value: 'on', label: '启用' },
+      { value: 'off', label: '停用' },
+    ]);
+    const triggerMode = selectBox('', [
+      { value: '', label: '不修改触发模式' },
+      { value: 'native', label: '类原版模式' },
+      { value: 'ilb', label: 'ILB 进阶模式' },
+    ]);
+    const weight = el('input', { class: 'ilb-input', type: 'number', placeholder: '留空 = 不修改' });
+    const exposed = selectBox('', [
+      { value: '', label: '不修改 AI 调用权限' },
+      { value: 'on', label: '允许 AI 调用' },
+      { value: 'off', label: '禁止 AI 调用' },
+    ]);
+    ctx.openOverlay({
+      title: '批量修改逻辑设置',
+      nodes: [hint('只修改选中的逻辑，不修改名称、触发词、正文和流程。'),
+        field('启用状态', enabled), field('触发模式', triggerMode), field('输出权重', weight), field('AI 调用', exposed)],
+      footer: [
+        button('应用', () => {
+          const e = enabled.value;
+          const mode = triggerMode.value;
+          const w = weight.value.trim();
+          const ai = exposed.value;
+          applyBatch((logic) => {
+            if (e) logic.enabled = e === 'on';
+            if (mode) logic.trigger = { ...(logic.trigger ?? {}), mode };
+            if (w !== '') logic.output = { ...(logic.output ?? {}), weight: Number(w) || 0 };
+            if (ai) logic.call = { ...(logic.call ?? {}), exposed: ai === 'on' };
+          }, '修改通用设置');
+          ctx.closeOverlay();
+        }, { primary: true }),
+        button('取消', () => ctx.closeOverlay(), { ghost: true }),
+      ],
+    });
+  }
+
+  function drawBatchBar(rows) {
+    if (!selectMode()) return null;
+    return el('div', { class: 'ilb-batchbar' }, [
+      button('修改设置…', openBatchSettings, { ghost: true }),
+      el('span', { class: 'ilb-counter', text: selected.size ? `已选 ${selected.size} 条逻辑` : '选择模式' }),
+      button('全选当前结果', () => { for (const row of rows) selected.add(row.logic.id); draw(); }, { ghost: true }),
+      button('清空选择', () => { selected.clear(); draw(); }, { ghost: true }),
+      button('启用', () => applyBatch((l) => { l.enabled = true; }, '启用'), { ghost: true }),
+      button('停用', () => applyBatch((l) => { l.enabled = false; }, '停用'), { ghost: true }),
+      button('删除', batchDelete, { ghost: true }),
+    ]);
+  }
+
   function renderCard(logic, opts) {
     const isMobile = ctx.layout?.() === 'mobile';
+    const checked = selected.has(logic.id);
     const expanded = expandedLogic.has(logic.id);
     const badges = [];
     if (logic.enabled === false) badges.push(badge('已停用', 'warn'));
     if (logic.call?.exposed) badges.push(badge('AI 可调用', 'ok'));
     if (logic.output?.text) badges.push(badge('有正文'));
-    return el('div', { class: `ilb-card ilb-rule-card ilb-logic-card${logic.enabled === false ? ' ilb-card-off' : ''}` }, [
+    return el('div', { class: `ilb-card ilb-rule-card ilb-logic-card${logic.enabled === false ? ' ilb-card-off' : ''}${selectMode() && checked ? ' ilb-card-selected' : ''}` }, [
       el('div', { class: 'ilb-rule-head' }, [
+        selectMode() ? checkbox(checked, (on) => { if (on) selected.add(logic.id); else selected.delete(logic.id); draw(); }, '选择这条逻辑') : null,
         el('div', { class: 'ilb-rule-titles' }, [
           el('div', { class: 'ilb-title', text: logic.name || '未命名逻辑' }),
         ]),
         inlineSwitch(logic.enabled !== false, (on) => {
           logic.enabled = on;
           logic.ui = { ...(logic.ui ?? {}), updatedAt: Date.now() };
-          saveBook();
+          if (opts.fromBook) saveBook();
+          else repository.saveStandaloneLogic(logic);
           draw();
         }, '启用这条逻辑'),
         menuFor(logic, opts),
@@ -329,7 +463,7 @@ export function renderLogicView(ctx) {
       }
       draw();
     };
-    const nodes = Array.isArray(logic.logic?.nodes) ? logic.logic.nodes.length : 0;
+    const nodes = Array.isArray(logic.flow?.nodes) ? logic.flow.nodes.length : 0;
     const params = Array.isArray(logic.call?.params) ? logic.call.params.length : 0;
     return settingsGrid([
       ['启用', inlineSwitch(logic.enabled !== false, (on) => persist((l) => { l.enabled = on; }), '启用这条逻辑')],
@@ -363,8 +497,10 @@ export function renderLogicView(ctx) {
     const list = groups();
     const group = currentGroup();
     if (group) state.logicGroupId = group.id;
+    syncSelectionContext();
     const standalone = standaloneOf(group);
     const fromBook = bookLogics();
+    const visibleRows = [];
 
     // 组工具条
     const groupBar = el('div', { class: 'ilb-plus-bar' }, [
@@ -381,6 +517,8 @@ export function renderLogicView(ctx) {
           })),
           onPick: (value) => {
             state.logicGroupId = value;
+            selected.clear();
+            state.logicSelectMode = false;
             draw();
           },
         }), { className: 'ilb-group-select', placeholder: '选择组' })
@@ -391,6 +529,13 @@ export function renderLogicView(ctx) {
     ]);
 
     listHost.appendChild(groupBar);
+    listHost.appendChild(el('div', { class: 'ilb-toolbar' }, [
+      button(selectMode() ? '退出选择' : '选择逻辑', () => {
+        state.logicSelectMode = !selectMode();
+        if (!state.logicSelectMode) selected.clear();
+        draw();
+      }, { ghost: true }),
+    ]));
 
     if (group) {
       const followLabel = group.followBookId
@@ -442,6 +587,7 @@ export function renderLogicView(ctx) {
       } else {
         const sorted = ctx.sortedLogics?.({ logic: standalone }) ?? standalone;
         for (const logic of sorted) {
+          visibleRows.push({ logic, fromBook: false, groupId: group.id });
           listHost.appendChild(renderCard(logic, { target: { kind: 'group', id: group.id, name: group.name, book }, fromBook: false }));
         }
       }
@@ -460,12 +606,20 @@ export function renderLogicView(ctx) {
       } else {
         const sortedBook = ctx.sortedLogics?.(book) ?? fromBook;
         for (const logic of sortedBook) {
+          visibleRows.push({ logic, fromBook: true, bookId: book.book_id });
           listHost.appendChild(renderCard(logic, { target: book, fromBook: true }));
         }
       }
     } else if (books.length > 0) {
       listHost.appendChild(hint('没有选中世界书也能用逻辑组；想编辑某本书里的逻辑，先在「规则」页选一本书。'));
     }
+
+    activeRows = visibleRows.slice();
+    const visibleIds = new Set(activeRows.map((row) => row.logic.id));
+    for (const id of [...selected]) if (!visibleIds.has(id)) selected.delete(id);
+    batchHost.innerHTML = '';
+    const batchBar = drawBatchBar(visibleRows);
+    if (batchBar) batchHost.appendChild(batchBar);
   }
 
   // 第一次进来：没有组就顺手建一个默认组，省得用户先找「新建组」
@@ -474,6 +628,7 @@ export function renderLogicView(ctx) {
   draw();
   return el('div', {}, [
     mobile ? null : ctx.sortBar?.('logic'),
+    batchHost,
     listHost,
   ]);
 }

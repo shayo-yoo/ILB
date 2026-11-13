@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { evaluate, evalTrigger, evalCondition, previewEntry } from '../core/evaluate.js';
-import { normalizeBook } from '../core/model.js';
+import { normalizeBook, normalizeTrigger } from '../core/model.js';
 import { resolveBooks } from '../core/resolve-books.js';
 import { convertNativeWorld } from '../core/import-native.js';
 import { mergeImportedBook } from '../core/merge-book.js';
@@ -82,6 +82,41 @@ test('触发词：第二组词按四选一的逻辑判定', () => {
   assert.equal(t('AND_ALL', ['夜', '雨'], '王城下雨了'), false);
   assert.equal(t('NOT_ANY', ['雪'], '王城下雨了'), true);
   assert.equal(t('NOT_ALL', ['雨', '雪'], '王城下雨了'), true);
+});
+
+test('触发模式：缺省与非法模式回退 native，进阶组字段安全归一化', () => {
+  assert.equal(normalizeTrigger({}).mode, 'native');
+  assert.equal(normalizeTrigger({ mode: 'unknown' }).mode, 'native');
+  const trigger = normalizeTrigger({
+    mode: 'ilb', combine: 'any',
+    groups: [{ logic: 'all', probability: 130, terms: [{ text: '王城', probability: -4 }, '夜巡', { text: '' }] }],
+  });
+  assert.equal(trigger.mode, 'ilb');
+  assert.equal(trigger.combine, 'any');
+  assert.deepEqual(trigger.groups[0].terms, [{ text: '王城', probability: 0 }, { text: '夜巡', probability: null }]);
+  assert.equal(trigger.groups[0].probability, 100);
+});
+
+test('ILB 触发：组内 any/all/not 与组间 all/any/not', () => {
+  const group = (logic, ...terms) => ({ logic, terms });
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('any', '海', '王城')] }, '王城').passed, true);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('all', '王城', '夜巡')] }, '王城夜巡').passed, true);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('all', '王城', '夜巡')] }, '王城').passed, false);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('not', '雪')] }, '王城').passed, true);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('any', '王城'), group('any', '夜巡')], combine: 'all' }, '王城').passed, false);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('any', '王城'), group('any', '夜巡')], combine: 'any' }, '王城').passed, true);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [group('any', '王城')], combine: 'not' }, '王城').passed, false);
+});
+
+test('ILB 触发：词级/组级概率使用稳定 seed，并给出可读原因', () => {
+  const trigger = { mode: 'ilb', groups: [{ logic: 'any', terms: [{ text: '王城', probability: 0 }] }] };
+  assert.equal(evalTrigger(trigger, '王城', { seed: 9, id: 'T::1' }).passed, false);
+  const hit = evalTrigger({ mode: 'ilb', groups: [{ logic: 'any', probability: 100, terms: [{ text: '王城', probability: 100 }] }] }, '王城', { seed: 9, id: 'T::1' });
+  assert.equal(hit.passed, true);
+  assert.match(hit.reason, /王城/);
+  const groupChance = { mode: 'ilb', groups: [{ logic: 'any', probability: 0, terms: ['王城'] }] };
+  assert.match(evalTrigger(groupChance, '王城', { seed: 9, id: 'T::1' }).reason, /未满足/);
+  assert.equal(evalTrigger({ mode: 'ilb', groups: [] }, '王城').passed, false);
 });
 
 test('常驻条目不需要触发词', () => {

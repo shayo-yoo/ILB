@@ -58,6 +58,10 @@ export function openEditor(ctx, book, existing) {
   // 等候模式（ILB-4.14）：不自己出现，只等独立逻辑点名。
   const waitBox = checkbox(entry.wait === true, () => {});
   // 只看谁说的话（ILB-4.15）：两边 / 只看用户 / 只看 AI。
+  const triggerEngineMode = selectBox(entry.trigger?.mode ?? 'native', [
+    { value: 'native', label: '类原版模式（兼容导入）' },
+    { value: 'ilb', label: 'ILB 进阶模式（多组/概率）' },
+  ], () => { redrawTrigger(); });
   const sourceSelect = selectBox(entry.trigger?.source ?? 'both', TRIGGER_SOURCES.map((value) => ({
     value,
     label: value === 'both' ? '用户和 AI 都看' : value === 'user' ? '只看用户说的话' : '只看 AI 说的话',
@@ -84,9 +88,45 @@ export function openEditor(ctx, book, existing) {
   const secondaryLogic = selectBox(entry.trigger?.secondary?.logic ?? 'AND_ANY', SECONDARY_LOGIC.map((v) => ({ value: v, label: SECONDARY_LABEL[v] })), () => {});
   const secondaryKeys = el('input', { class: 'ilb-input', type: 'text', value: (entry.trigger?.secondary?.keys ?? []).join(', '), placeholder: '第二组触发词（可以留空）' });
   const triggerHost = el('div', { class: 'ilb-subsection' });
+  let advancedGroups = JSON.parse(JSON.stringify(entry.trigger?.groups ?? []));
+  let advancedCombine = entry.trigger?.combine ?? 'all';
+
+  function drawAdvancedTrigger() {
+    triggerHost.appendChild(el('div', { class: 'ilb-actions' }, [
+      button('进阶触发说明', () => ctx.showHelp?.('advanced-trigger'), { ghost: true, title: '查看进阶模式怎么填写' }),
+    ]));
+    triggerHost.appendChild(hint('每行一组：组内逻辑 | 统一概率 | 词1[:词概率], 词2[:词概率]。词概率留空时继承组概率；组间可选全部满足、任一满足或全部不满足。'));
+    const combine = selectBox(advancedCombine, [
+      { value: 'all', label: '所有组都满足' },
+      { value: 'any', label: '任一组满足' },
+      { value: 'not', label: '所有组都不满足' },
+    ], (value) => { advancedCombine = value; markDirty(); });
+    triggerHost.appendChild(field('组间组合', combine));
+    const rows = advancedGroups.map((group) => {
+      const terms = (group.terms ?? []).map((term) => `${term.text}${term.probability == null ? '' : `:${term.probability}`}`).join(', ');
+      return `${group.logic ?? 'any'} | ${group.probability ?? 100} | ${terms}`;
+    });
+    const input = el('textarea', { class: 'ilb-textarea', rows: String(Math.max(4, rows.length + 1)), placeholder: 'any | 100 | 王城, 帝都:60' }, [rows.join('\n')]);
+    input.addEventListener('input', () => {
+      advancedGroups = input.value.split('\n').map((line, index) => {
+        const [rawLogic, rawProbability, rawTerms] = line.split('|');
+        const terms = String(rawTerms ?? '').split(',').map((part) => {
+          const [text, chance] = part.trim().split(':');
+          return { text: String(text ?? '').trim(), probability: chance == null || chance === '' ? null : Math.max(0, Math.min(100, Number(chance) || 0)) };
+        }).filter((term) => term.text);
+        return { id: `g${index + 1}`, logic: ['any', 'all', 'not'].includes(String(rawLogic).trim()) ? String(rawLogic).trim() : 'any', probability: Math.max(0, Math.min(100, Number(rawProbability) || 0)), terms };
+      }).filter((group) => group.terms.length);
+      markDirty();
+    });
+    triggerHost.appendChild(field('触发组（词级概率可省略）', input));
+  }
 
   function redrawTrigger() {
     triggerHost.innerHTML = '';
+    if (triggerEngineMode.value === 'ilb') {
+      drawAdvancedTrigger();
+      return;
+    }
     const mode = triggerMode.value;
     if (mode === 'always') {
       triggerHost.appendChild(hint('常驻条目每一轮都会出现（除非被预算挤掉）。适合放"一直要遵守的写法要求"。'));
@@ -235,6 +275,7 @@ export function openEditor(ctx, book, existing) {
     }
     flowOpen = !flowOpen;
     flowToggle.textContent = flowOpen ? '收起流程' : '编辑流程';
+    editorRoot.classList.toggle('ilb-editor-flow-open', flowOpen);
     renderFlowHost();
   }, { ghost: true });
 
@@ -267,6 +308,10 @@ export function openEditor(ctx, book, existing) {
   function buildEntry() {
     const mode = triggerMode.value;
     const trigger = {
+      ...(entry.trigger ?? {}),
+      mode: triggerEngineMode.value,
+      combine: advancedCombine,
+      groups: triggerEngineMode.value === 'ilb' ? advancedGroups : (entry.trigger?.groups ?? []),
       any: [],
       all: [],
       not: [],
@@ -274,7 +319,7 @@ export function openEditor(ctx, book, existing) {
       matchCase: matchCase.checked,
       wholeWords: wholeWords.checked,
     };
-    if (mode === 'keyword') {
+    if (triggerEngineMode.value === 'native' && mode === 'keyword') {
       trigger.any = splitList(anyInput);
       trigger.all = splitList(allInput);
       trigger.not = splitList(notInput);
@@ -413,6 +458,7 @@ export function openEditor(ctx, book, existing) {
     field('正文（会出现在提示词里）', contentInput),
 
     el('h5', { class: 'ilb-section-title', text: '什么时候出现' }),
+    field('匹配引擎', triggerEngineMode),
     field('触发方式', triggerMode),
     field('谁说的话算数', sourceSelect, '默认两边都看。只看 AI 时，用户说触发词不会让它出现（也能靠独立逻辑点名）。'),
     el('label', { class: 'ilb-inline' }, [

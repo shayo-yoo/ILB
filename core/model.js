@@ -35,8 +35,14 @@ function pickOne(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
 
+function normalizePercent(value, fallback = 100) {
+  return Math.min(100, Math.max(0, Math.round(num(value, fallback))));
+}
+
 export function defaultTrigger() {
   return {
+    mode: 'native',
+    groups: [],
     any: [],
     all: [],
     not: [],
@@ -64,6 +70,20 @@ export function normalizeTrigger(raw) {
   const t = raw && typeof raw === 'object' ? raw : {};
   return {
     ...defaultTrigger(),
+    mode: pickOne(t.mode, ['native', 'ilb'], 'native'),
+    combine: pickOne(t.combine, ['all', 'any', 'not'], 'all'),
+    groups: asArray(t.groups).slice(0, 32).map((group) => ({
+      id: str(group?.id, ''),
+      logic: pickOne(group?.logic, ['any', 'all', 'not'], 'any'),
+      probability: normalizePercent(group?.probability, 100),
+      terms: asArray(group?.terms).slice(0, 64).map((term) => {
+        if (typeof term === 'string') return { text: term, probability: null };
+        return {
+          text: str(term?.text, ''),
+          probability: term?.probability == null ? null : normalizePercent(term.probability, 100),
+        };
+      }).filter((term) => term.text.length > 0),
+    })).filter((group) => group.terms.length > 0),
     any: asArray(t.any).map((x) => str(x)),
     all: asArray(t.all).map((x) => str(x)),
     not: asArray(t.not).map((x) => str(x)),

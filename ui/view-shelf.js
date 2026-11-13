@@ -4,7 +4,6 @@
 
 import { makeEmptyBook, bookTokenEstimate, strategyOf } from '../core/model.js';
 import { bindingAvatarsOf, bindingVote, describeBinding, pickBinding, bindingWhoName } from '../core/bindings.js';
-import { exportNativeWorld } from '../core/export-native.js';
 import { estimateTokens } from '../core/budget.js';
 import { filterBooks } from '../core/search.js';
 import { sourceHashOf } from '../core/import-native.js';
@@ -15,7 +14,7 @@ import {
   el, button, checkbox, badge, toolbar, filterBar, hint, emptyText, counter,
   searchInput, selectBox, actionRow, metaLine, downloadJson, field, focusSearch,
 } from './widgets.js';
-import { openImportDialog } from './importer.js';
+import { openImportDialog, openIlbBookImportDialog } from './importer.js';
 import { settingRow } from './card-kit.js';
 import { openMenu as openCardMenu, closeMenu as closeCardMenu } from './menu.js';
 
@@ -264,10 +263,14 @@ export function renderShelf(ctx) {
   }
 
   function exportBook(book) {
-    const { native, warnings } = exportNativeWorld(book);
-    downloadJson(`${book.name || 'ilb-book'}.json`, native);
-    if (warnings.length) ctx.toast(`导出完成，但有 ${warnings.length} 处原生格式装不下`, 'warn');
-    else ctx.toast('导出完成');
+    const payload = repository.exportBook(book.book_id);
+    if (!payload) {
+      ctx.toast('导出失败：找不到这本书', 'error');
+      return;
+    }
+    const name = String(book.name || 'worldbook').replace(/[\\/:*?"<>|]/g, '_');
+    downloadJson(`ILB-${name}.json`, payload);
+    ctx.toast('已导出 ILB 专有格式世界书');
   }
 
   function copyBook(book) {
@@ -734,6 +737,7 @@ export function renderShelf(ctx) {
   const view = el('div', {}, [
     mobile ? null : toolbar([
       button('新建书', createBook),
+      button('导入 ILB 书籍 JSON', () => openIlbBookImportDialog(ctx)),
       button('导入原生世界书', () => openImportDialog(ctx)),
       button('一键导入全部（跳过已导入）', () => openImportDialog(ctx, { preselect: 'new', title: '一键导入未导入过的书' }), { ghost: true }),
       button('导入记录', showImportLog, { ghost: true }),

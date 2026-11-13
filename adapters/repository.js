@@ -665,6 +665,7 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     const book = findBookById(id);
     if (!book) return null;
     return {
+      kind: 'ilb-book',
       schema_version: DATA_VERSION,
       exported_at: Date.now(),
       book: safeClone(book, {}),
@@ -689,7 +690,18 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
    * @returns {{id:string, action:'created'|'skipped'|'overwritten'}}
    */
   function importBook(blob, opts = {}) {
-    const raw = blob && typeof blob === 'object' && blob.book && typeof blob.book === 'object' ? blob.book : blob;
+    const wrapped = blob && typeof blob === 'object' && !Array.isArray(blob) && blob.book && typeof blob.book === 'object';
+    if (wrapped && blob.kind != null && blob.kind !== 'ilb-book') {
+      const err = new Error(`不支持的世界书格式：${String(blob.kind)}`);
+      err.code = 'NOT_SUPPORTED';
+      throw err;
+    }
+    if (wrapped && blob.kind === 'ilb-book' && (!Number.isInteger(Number(blob.schema_version)) || Number(blob.schema_version) < 1)) {
+      const err = new Error('ILB 世界书文件缺少有效的 schema_version');
+      err.code = 'BAD_PAYLOAD';
+      throw err;
+    }
+    const raw = wrapped ? blob.book : blob;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       const err = new Error('导入的内容不是一本有效世界书');
       err.code = 'BAD_PAYLOAD';

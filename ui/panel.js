@@ -36,7 +36,7 @@ import { renderLogicView } from './view-logic.js';
 import { openEditor, openPreview } from './editor.js';
 import { openLogicEditor } from './logic-editor.js';
 import { openGuide } from './guide.js';
-import { openImportDialog } from './importer.js';
+import { openImportDialog, openIlbBookImportDialog } from './importer.js';
 import { renderSnapshots } from './view-snapshots.js';
 import { renderState } from './view-state.js';
 import { renderDiagnostics } from './view-diagnostics.js';
@@ -101,6 +101,9 @@ export function createPanel(deps) {
     shelfMode: uiState.shelfMode === 'comfort' ? 'comfort' : 'compact',
     // 逻辑页当前选中的逻辑组
     logicGroupId: null,
+    // 逻辑列表选择状态：只作用于当前组/当前筛选结果
+    logicSelected: new Set(),
+    logicSelectMode: false,
     // 搜索范围（v0.24.0）：书架默认只搜书名/来源；规则默认搜全部字段
     searchScope: {
       books: uiState.searchScope?.books === 'entries' ? 'entries' : 'book',
@@ -158,6 +161,9 @@ export function createPanel(deps) {
       state.activeTab = tab;
       state.selected = new Set();
       state.ruleSelectMode = false;
+      state.logicSelected = new Set();
+      state.logicSelectMode = false;
+      state.logicSelectionContext = { groupId: null, bookId: null };
       state.topOpen = null;
       render();
     };
@@ -402,6 +408,7 @@ export function createPanel(deps) {
     newLogic: newLogicFlow,
     newBook: createBookFlow,
     importNative: () => openImportDialog(ctx),
+    importIlbBook: () => openIlbBookImportDialog(ctx),
     importAllNew: () => openImportDialog(ctx, { preselect: 'new', title: '一键导入未导入过的书' }),
   };
 
@@ -615,6 +622,7 @@ export function createPanel(deps) {
       if (state.activeTab === 'shelf') {
         return actionRow([
           button('新建世界书', createBookFlow, { ghost: true }),
+          button('导入 ILB 书籍 JSON', () => openIlbBookImportDialog(ctx), { ghost: true }),
           button('导入原生世界书', () => openImportDialog(ctx), { ghost: true }),
           button('一键导入未导入的', () => openImportDialog(ctx, { preselect: 'new', title: '一键导入未导入过的书' }), { ghost: true }),
         ]);
@@ -717,6 +725,10 @@ export function createPanel(deps) {
     const apply = () => {
       state.activeBookId = value || null;
       state.selected = new Set();
+      state.ruleSelectMode = false;
+      state.logicSelected = new Set();
+      state.logicSelectMode = false;
+      state.logicSelectionContext = { groupId: null, bookId: state.activeBookId };
       state.ruleQuery = '';
       render();
     };

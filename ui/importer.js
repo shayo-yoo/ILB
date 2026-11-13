@@ -137,6 +137,79 @@ function showReport(ctx, report, skipped) {
  * @param {{preselect?: 'new'|string[], policy?: string}} options
  *   preselect='new' 表示"一键导入全部"：把所有还没导入过的都勾上。
  */
+function askIlbConflict(ctx, fileName, error) {
+  return new Promise((resolve) => {
+    const closeWith = (choice) => {
+      ctx.closeOverlay();
+      resolve(choice);
+    };
+    ctx.openOverlay(`书籍已存在 · ${fileName}`, [
+      hint(`「${error.name || error.id}」已存在。选择如何处理；默认不会覆盖现有书籍。`),
+      el('div', { class: 'ilb-actions' }, [
+        button('另存为新书', () => closeWith('new'), { primary: true }),
+        button('覆盖现有书', () => closeWith('overwrite'), { ghost: true }),
+        button('跳过', () => closeWith('skip'), { ghost: true }),
+      ]),
+    ]);
+  });
+}
+
+/** 从本地 JSON 文件导入 ILB 专有世界书，与原生书籍目录导入分开。 */
+export async function openIlbBookImportDialog(ctx) {
+  const { repository } = ctx;
+  const input = el('input', { type: 'file', accept: '.json,application/json', multiple: true, class: 'ilb-input' });
+  const status = el('div', { class: 'ilb-file-list' }, [hint('选择一个或多个 ILB 专有世界书 JSON 文件。只接受 kind 为 ilb-book 的文件。')]);
+  const runButton = button('导入所选文件', () => run(), { primary: true, disabled: true });
+  input.addEventListener('change', () => {
+    const files = [...(input.files ?? [])];
+    status.innerHTML = '';
+    status.appendChild(files.length
+      ? hint(`已选择 ${files.length} 个文件：${files.map((file) => file.name).join('、')}`)
+      : hint('尚未选择文件。'));
+    runButton.disabled = files.length === 0;
+  });
+
+  async function run() {
+    const files = [...(input.files ?? [])];
+    if (!files.length) return;
+    runButton.disabled = true;
+    const results = [];
+    for (const file of files) {
+      try {
+        const payload = JSON.parse(await file.text());
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.kind !== 'ilb-book') {
+          results.push(`${file.name}：不是 ILB 专有世界书文件（缺少 kind: "ilb-book"）`);
+          continue;
+        }
+        let result;
+        try {
+          result = repository.importBook(payload, { onConflict: 'ask' });
+        } catch (err) {
+          if (err?.code !== 'CONFLICT') throw err;
+          const choice = await askIlbConflict(ctx, file.name, err);
+          if (choice === 'skip') {
+            results.push(`${file.name}：已跳过`);
+            continue;
+          }
+          result = repository.importBook(payload, { onConflict: choice });
+        }
+        ctx.state.activeBookId = result.id;
+        results.push(`${file.name}：${result.action === 'overwritten' ? '已覆盖' : result.action === 'skipped' ? '已跳过' : '已导入'}`);
+      } catch (err) {
+        results.push(`${file.name}：导入失败（${err?.message ?? err}）`);
+      }
+    }
+    ctx.render();
+    ctx.openOverlay('ILB 书籍导入结果', [el('ul', { class: 'ilb-warn-list' }, results.map((line) => el('li', { text: line })))]);
+  }
+
+  ctx.openOverlay({
+    title: '导入 ILB 专有世界书',
+    nodes: [hint('选择 ILB 导出的 JSON 文件。原生世界书请使用「导入原生世界书」入口。'), input, status],
+    footer: [runButton, button('取消', () => ctx.closeOverlay(), { ghost: true })],
+  });
+}
+
 export async function openImportDialog(ctx, options = {}) {
   const { repository, nativeWorlds } = ctx;
   const dialogTitle = options.title ?? '导入原生世界书';

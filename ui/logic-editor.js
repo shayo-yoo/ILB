@@ -45,11 +45,42 @@ export function openLogicEditor(ctx, target, existing) {
   const anyInput = el('input', { class: 'ilb-input', type: 'text', value: (logic.trigger?.any ?? []).join(', '), placeholder: '例如：抽卡, 开箱' });
   const allInput = el('input', { class: 'ilb-input', type: 'text', value: (logic.trigger?.all ?? []).join(', '), placeholder: '这些词必须同时出现' });
   const notInput = el('input', { class: 'ilb-input', type: 'text', value: (logic.trigger?.not ?? []).join(', '), placeholder: '出现这些词就不触发' });
+  const triggerEngineMode = selectBox(logic.trigger?.mode ?? 'native', [
+    { value: 'native', label: '类原版模式（兼容导入）' },
+    { value: 'ilb', label: 'ILB 进阶模式（多组/概率）' },
+  ], () => drawTriggerSettings());
+  const advancedInput = el('textarea', { class: 'ilb-textarea', rows: '3', placeholder: 'any | 100 | 关键词, 另一个词:60' }, [
+    (logic.trigger?.groups ?? []).map((g) => `${g.logic ?? 'any'} | ${g.probability ?? 100} | ${(g.terms ?? []).map((t) => `${t.text}${t.probability == null ? '' : `:${t.probability}`}`).join(', ')}`).join('\n'),
+  ]);
+  const combineSelect = selectBox(logic.trigger?.combine ?? 'all', [
+    { value: 'all', label: '所有组都满足' }, { value: 'any', label: '任一组满足' }, { value: 'not', label: '所有组都不满足' },
+  ], () => {});
   const sourceSelect = selectBox(logic.trigger?.source ?? 'both', TRIGGER_SOURCES.map((value) => ({
     value,
     label: value === 'both' ? '用户和 AI 都看' : value === 'user' ? '只看用户说的话' : '只看 AI 说的话',
   })), () => {});
-  const metaSelect = selectBox(logic.trigger?.meta ?? 'none', META_TRIGGERS.map((value) => ({ value, label: META_LABEL[value] })), () => {});
+  const metaSelect = selectBox(logic.trigger?.meta ?? 'none', META_TRIGGERS.map((value) => ({ value, label: META_LABEL[value] })), () => drawTriggerSettings());
+  const triggerSettings = el('div', { class: 'ilb-subsection' });
+  const nativeSettings = el('div', { class: 'ilb-subsection' }, [
+    field('出现任意一个', anyInput, '英文逗号分隔。留空表示它只能被「调用」或「激活」。'),
+    field('必须同时出现', allInput),
+    field('排除词', notInput),
+  ]);
+  const advancedSettings = el('div', { class: 'ilb-subsection' }, [
+    el('div', { class: 'ilb-actions' }, [
+      button('进阶触发说明', () => ctx.showHelp?.('advanced-trigger'), { ghost: true, title: '查看进阶模式怎么填写' }),
+    ]),
+    field('进阶触发组', advancedInput, '每行：组内逻辑 | 组概率 | 词, 词:词概率。'),
+    field('组间组合', combineSelect),
+  ]);
+  function drawTriggerSettings() {
+    triggerSettings.innerHTML = '';
+    if (metaSelect.value === 'always') {
+      triggerSettings.appendChild(hint('每轮都运行：不看触发词，匹配模式与关键词配置会保留，改回按词运行后继续生效。'));
+    } else {
+      triggerSettings.appendChild(triggerEngineMode.value === 'ilb' ? advancedSettings : nativeSettings);
+    }
+  }
   const textInput = el('textarea', { class: 'ilb-textarea', rows: '4' }, [logic.output?.text ?? '']);
   const positionSelect = selectBox(logic.output?.position ?? 'in_chat', POSITIONS.map((value) => ({
     value,
@@ -88,6 +119,13 @@ export function openLogicEditor(ctx, target, existing) {
       name: nameInput.value.trim() || '未命名逻辑',
       enabled: enabledBox.checked,
       trigger: {
+        ...(logic.trigger ?? {}),
+        mode: triggerEngineMode.value,
+        combine: combineSelect.value,
+        groups: triggerEngineMode.value === 'ilb' ? advancedInput.value.split('\n').map((line, index) => {
+          const [rawLogic, rawProbability, rawTerms] = line.split('|');
+          return { id: `g${index + 1}`, logic: ['any', 'all', 'not'].includes(String(rawLogic).trim()) ? String(rawLogic).trim() : 'any', probability: Math.max(0, Math.min(100, Number(rawProbability) || 0)), terms: String(rawTerms ?? '').split(',').map((part) => { const [text, chance] = part.trim().split(':'); return { text: String(text ?? '').trim(), probability: chance == null || chance === '' ? null : Math.max(0, Math.min(100, Number(chance) || 0)) }; }).filter((term) => term.text), };
+        }).filter((group) => group.terms.length) : (logic.trigger?.groups ?? []),
         any: splitList(anyInput),
         all: splitList(allInput),
         not: splitList(notInput),
@@ -132,6 +170,7 @@ export function openLogicEditor(ctx, target, existing) {
     ctx.toast(index >= 0 ? '逻辑已保存' : '逻辑已添加');
   }
 
+  drawTriggerSettings();
   drawFlow();
   // 和规则编辑器一样：正文自己滚，保存/取消固定在浮层底部（footer），
   // 滚到流程图最下面也不用回头找按钮。
@@ -143,11 +182,10 @@ export function openLogicEditor(ctx, target, existing) {
       el('label', { class: 'ilb-inline' }, [enabledBox, el('span', { class: 'ilb-sub', text: '启用这条逻辑' })]),
 
       el('h5', { class: 'ilb-section-title', text: '什么时候运行' }),
-      field('出现任意一个', anyInput, '英文逗号分隔。留空表示它只能被「调用」或「激活」，不会自己出现。'),
-      field('必须同时出现', allInput),
-      field('排除词', notInput),
+      field('运行时机', metaSelect, '「每轮都跑」不看触发词，适合初始化；「每次 AI 回复后」适合在旁白之后结算。'),
+      field('匹配模式', triggerEngineMode),
+      triggerSettings,
       field('谁说的话算数', sourceSelect, '只看 AI 时，可以在 AI 说到某个词时运行——不用先命中一条世界书条目。'),
-      field('什么时候跑', metaSelect, '「每轮都跑」不看触发词，适合初始化；「每次 AI 回复后」适合在旁白之后结算。'),
 
       el('h5', { class: 'ilb-section-title', text: '运行后写点什么' }),
       field('正文（会出现在提示词里）', textInput, '可以留空：有些逻辑只负责改状态、点别的条目，不需要自己说话。'),
@@ -166,5 +204,6 @@ export function openLogicEditor(ctx, target, existing) {
       button(existing ? '保存' : '添加', save),
       button('取消', () => ctx.closeOverlay(), { ghost: true }),
     ],
+    wide: true,
   });
 }

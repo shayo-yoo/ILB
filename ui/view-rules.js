@@ -33,6 +33,7 @@ export function describeTrigger(entry) {
   const parts = [];
   if (any.length) parts.push(`出现任一：${any.slice(0, 4).join('、')}`);
   if (all.length) parts.push(`同时出现：${all.slice(0, 4).join('、')}`);
+  if (entry.trigger?.mode === 'ilb') parts.push(`进阶触发 ${entry.trigger?.groups?.length ?? 0} 组`);
   if (entry.trigger?.regex?.length) parts.push('含正则');
   if (entry.when?.length) parts.push(`+${entry.when.length} 个条件`);
   const timed = entry.timed ?? {};
@@ -139,6 +140,43 @@ export function renderRules(ctx) {
     draw();
   }
 
+  function openBatchSettings() {
+    const mode = selectBox('', [
+      { value: '', label: '不修改触发模式' },
+      { value: 'native', label: '类原版模式' },
+      { value: 'ilb', label: 'ILB 进阶模式' },
+    ]);
+    const probability = el('input', { class: 'ilb-input', type: 'number', min: '0', max: '100', placeholder: '留空 = 不修改' });
+    const weight = el('input', { class: 'ilb-input', type: 'number', placeholder: '留空 = 不修改' });
+    const group = el('input', { class: 'ilb-input', type: 'text', placeholder: '留空 = 不修改；输入「清空」可取消分组' });
+    ctx.openOverlay({
+      title: '批量修改通用设置',
+      nodes: [
+        hint('只修改选中的规则；正文、触发词、条件和流程不会被改动。'),
+        field('触发模式', mode),
+        field('整体概率 (%)', probability),
+        field('权重', weight),
+        field('分组', group),
+      ],
+      footer: [
+        button('应用', () => {
+          const selectedMode = mode.value;
+          const p = probability.value.trim();
+          const w = weight.value.trim();
+          const g = group.value.trim();
+          applyBatch((entry) => {
+            if (selectedMode) entry.trigger = { ...(entry.trigger ?? {}), mode: selectedMode };
+            if (p !== '') { entry.useProbability = true; entry.probability = Math.max(0, Math.min(100, Number(p) || 0)); }
+            if (w !== '') entry.weight = Number(w) || 0;
+            if (g !== '') entry.group = g === '清空' ? null : g;
+          }, '修改通用设置');
+          ctx.closeOverlay();
+        }, { primary: true }),
+        button('取消', () => ctx.closeOverlay(), { ghost: true }),
+      ],
+    });
+  }
+
   function applyBatch(mutate, label) {
     const targets = book.entries.filter((e) => state.selected.has(e.id));
     if (targets.length === 0) {
@@ -232,16 +270,34 @@ export function renderRules(ctx) {
       persist((e) => { e.group = String(groupInput.value ?? '').trim() || null; });
     });
 
+    const time = entry.timed ?? {};
+    const mode = selectBox(entry.trigger?.mode ?? 'native', [
+      { value: 'native', label: '类原版模式' },
+      { value: 'ilb', label: 'ILB 进阶模式' },
+    ], (value) => persist((e) => { e.trigger = { ...(e.trigger ?? {}), mode: value }; }));
+    const role = selectBox(entry.injection?.role ?? 'system', [
+      { value: 'system', label: '系统' }, { value: 'user', label: '用户' }, { value: 'assistant', label: '角色' },
+    ], (value) => persist((e) => { e.injection = { ...(e.injection ?? {}), role: value }; }));
+    const timed = (key) => numberBox(time[key] ?? 0, (value) => (e) => { e.timed = { ...(e.timed ?? {}), [key]: value }; }, { min: 0, max: 999 });
     return settingsGrid([
       ['启用', inlineSwitch(entry.enabled !== false, (on) => persist((e) => { e.enabled = on; }), '启用这条')],
+      ['触发模式', mode],
       ['权重', numberBox(entry.weight ?? 100, (value) => (e) => { e.weight = value; })],
       ['概率', probabilityCell],
       ['分组', groupInput],
       ['注入位置', selectBox(entry.injection?.position ?? 'after_char', POSITIONS.map((p) => ({ value: p, label: POSITION_LABEL[p] })), (value) => {
         persist((e) => { e.injection = { ...(e.injection ?? {}), position: value }; });
       })],
+      ['身份', role],
       ['深度', numberBox(entry.injection?.depth ?? 4, (value) => (e) => { e.injection = { ...(e.injection ?? {}), depth: value }; }, { min: 0, max: 999 })],
+      ['延迟', timed('delay')],
+      ['持续', timed('sticky')],
+      ['冷却', timed('cooldown')],
       ['常驻', checkbox(entry.always === true, (on) => persist((e) => { e.always = on; }), '常驻')],
+      ['等候模式', checkbox(entry.wait === true, (on) => persist((e) => { e.wait = on; }), '只等逻辑点名')],
+      ['允许连锁', checkbox(entry.chain?.participate !== false, (on) => persist((e) => { e.chain = { ...(e.chain ?? {}), participate: on }; }), '允许被连锁带出')],
+      ['条件', el('span', { class: 'ilb-sub', text: entry.when?.length ? `${entry.when.length} 个条件（请进编辑器调整）` : '无条件' })],
+      ['流程', el('span', { class: 'ilb-sub', text: entry.logic?.nodes?.length ? `${entry.logic.nodes.length} 步（请进编辑器调整）` : '无流程' })],
     ]);
   }
 
@@ -338,6 +394,7 @@ export function renderRules(ctx) {
         state.selected.clear();
         ctx.render();
       }, { ghost: true }),
+      button('修改设置…', openBatchSettings, { ghost: true }),
       button('启用', () => applyBatch((e) => { e.enabled = true; }, '启用'), { ghost: true }),
       button('停用', () => applyBatch((e) => { e.enabled = false; }, '停用'), { ghost: true }),
       button('设为常驻', () => applyBatch((e) => { e.always = true; }, '设为常驻'), { ghost: true }),

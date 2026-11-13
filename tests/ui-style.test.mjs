@@ -37,3 +37,23 @@ test('浮窗底色把同一层 tint 叠两遍（宿主 tint 半透明 + blurStre
   assert.ok(tint.length >= 3, '底色与渐变应当都用同一个 tint');
   assert.doesNotMatch(rule[0], /backdrop-filter/, '不要靠 backdrop-filter：blurStrength 可能是 0');
 });
+
+test('悬浮书籍栏沿用双层 tint，滚动内容不透字', () => {
+  const rule = css.match(/\.ilb-bookbar\s*\{[^}]*\}/);
+  assert.ok(rule, '找不到 .ilb-bookbar');
+  assert.match(rule[0], /background-color:\s*var\(--SmartThemeBlurTintColor/);
+  assert.match(rule[0], /background-image:\s*linear-gradient\(/);
+});
+
+test('进阶触发说明文案已注册', () => {
+  const help = readFileSync(new URL('../data/help/zh-cn.json', import.meta.url), 'utf8');
+  assert.match(help, /"advanced-trigger"/);
+  assert.match(help, /组内逻辑/);
+  assert.match(help, /每轮都跑/);
+});
+
+test('流程中栏有最小宽度，窄容器回退单列', () => {
+  assert.match(css, /\.ilb-flow-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(120px, 160px\) minmax\(320px, 1fr\)/);
+  assert.match(css, /@container\s*\(max-width:\s*740px\)/);
+  assert.match(css, /\.ilb-editor-flow-open\.ilb-editor-cols\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+});

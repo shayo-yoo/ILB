@@ -58,7 +58,7 @@ console.log('面板：', JSON.stringify(panel));
 await screenshot(page.send, 'tests/live/last-panel.png');
 console.log('截图：tests/live/last-panel.png');
 
-const ok = state.api === '1.2' && state.caps.includes('ui') && state.callAsync === 'function'
+const ok = state.api === '1.4' && state.caps.includes('ui') && state.callAsync === 'function'
   && panel.shell === 'desktop' && panel.overflowNodes === 0;
 console.log(ok ? '✅ 通过' : '❌ 有项目没通过');
 page.close();
