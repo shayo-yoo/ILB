@@ -525,6 +525,7 @@ export function createPanel(deps) {
     const groups = [
       canBook ? ['book', '书籍'] : null,
       ['new', '新建'],
+      state.activeTab === 'rules' || state.activeTab === 'logic' ? ['select', '选择'] : null,
       list ? ['sort', '排序'] : null,
       canFilter() ? ['filter', '筛选'] : null,
       ['vars', '变量'],
@@ -634,6 +635,23 @@ export function createPanel(deps) {
         return actionRow([button('新建逻辑', newLogicFlow, { ghost: true })]);
       }
       return hint('这一页没有新建操作。');
+    }
+    if (id === 'select') {
+      const isRules = state.activeTab === 'rules';
+      const active = isRules ? state.ruleSelectMode === true : state.logicSelectMode === true;
+      return actionRow([
+        button(active ? '退出选择模式' : `选择${isRules ? '规则' : '逻辑'}`, () => {
+          if (isRules) {
+            state.ruleSelectMode = !active;
+            if (active) state.selected.clear();
+          } else {
+            state.logicSelectMode = !active;
+            if (active) state.logicSelected.clear();
+          }
+          render();
+        }, { ghost: true }),
+        hint(active ? '已进入选择模式：勾选列表卡片后可批量操作。' : '进入后勾选多条，再批量启用、停用、修改设置或删除。'),
+      ]);
     }
     if (id === 'sort') return sortBar(SORT_LISTS[state.activeTab]);
     if (id === 'filter') {
