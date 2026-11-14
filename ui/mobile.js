@@ -307,6 +307,15 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     // 有没保存的修改时，先经过那一层的 onBeforeClose（编辑器会在里面弹三选一）。
     if (!force && sheets.length > 0 && !askClose(sheets[sheets.length - 1])) return false;
     clearSheets();
+    const back = lastFocus;
+    lastFocus = null;
+    // Move focus out before hiding the top-layer dialog/aria state.
+    try {
+      if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
+      else fab.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
     open = false;
     try {
       if (modalMode) dialog.close();
@@ -322,14 +331,6 @@ export function createMobileUi({ repository, notify, onOpen, status, openState }
     unlockScroll();
     fab.hidden = false;
     fab.setAttribute('aria-expanded', 'false');
-    const back = lastFocus;
-    lastFocus = null;
-    try {
-      if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
-      else fab.focus({ preventScroll: true });
-    } catch {
-      /* ignore */
-    }
     console.info('[ILB] 手机界面已关闭');
     return true;
   }

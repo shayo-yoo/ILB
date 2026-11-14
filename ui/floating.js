@@ -276,15 +276,17 @@ export function createFloatingWindow({ repository, notify, onOpen, onDensity, on
       }
       if (allow === false) return false;
     }
-    open = false;
-    applyOpenState();
-    scheduleSave();
+    // Move focus out before aria-hidden is applied; otherwise browsers warn that
+    // the focused close button is being hidden from assistive technology.
     try {
       if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus({ preventScroll: true });
       else fab.focus({ preventScroll: true });
     } catch {
       /* ignore */
     }
+    open = false;
+    applyOpenState();
+    scheduleSave();
     return true;
   }
 
