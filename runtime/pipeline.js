@@ -108,6 +108,7 @@ export function buildResolveInput({ repository, context, settings, hostContext =
   const autoPlan = snapshotActivationPlan(repository.listSnapshots?.() ?? [], auto, snapshotContext, resolveContext.manualState);
   const autoSnapshots = autoPlan.snapshots;
   resolveContext.manualState = autoPlan.manualState;
+  resolveContext.snapshotForced = autoPlan.forced ?? {};
   resolveContext.autoSnapshots = autoSnapshots;
   resolveContext.autoSnapshotMode = autoPlan.mode;
   const resolved = resolveBooks(books, resolveContext, providers);

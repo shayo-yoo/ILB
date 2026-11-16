@@ -197,12 +197,15 @@ export function snapshotActivationPlan(snapshots, config = {}, context = {}, cur
   const key = `${String(context.chatId ?? '')}::${String(context.character?.avatar ?? '')}`;
   const only = matched.some((snapshot) => snapshotActivationMode(snapshot) === 'only');
   const next = only ? Object.fromEntries(Object.keys(currentManual).map((id) => [id, false])) : { ...currentManual };
+  const forced = {};
   for (const snapshot of matched) {
     for (const book of Array.isArray(snapshot.payload) ? snapshot.payload : []) {
-      if (book?.book_id && (only ? book.manual === true : book.manual === true)) next[book.book_id] = true;
+      if (!book?.book_id) continue;
+      if (book.manual === true) { next[book.book_id] = true; forced[book.book_id] = 'on'; }
+      else if (only) forced[book.book_id] = 'off';
     }
   }
-  return { matched: true, key, snapshots: matched, manualState: next, mode: only ? 'only' : 'normal' };
+  return { matched: true, key, snapshots: matched, manualState: next, forced, mode: only ? 'only' : 'normal' };
 }
 
 export function listNamed(snapshots) {

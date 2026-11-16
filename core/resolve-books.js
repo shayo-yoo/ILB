@@ -139,6 +139,9 @@ function decideBook(book, { bound, manualState, context, providers, hostContext,
   const override = BOOK_OVERRIDES.includes(book.activation?.override) ? book.activation.override : 'auto';
   const manualOn = manualState[book.book_id] ?? book.activation?.manual !== false;
   const base = { strategy, override };
+  const snapshotForced = context.snapshotForced && context.snapshotForced[book.book_id];
+  if (snapshotForced === 'off') return { ...base, enabled: false, rule: 'snapshot-force-off', reason: '被当前快照强制关闭' };
+  if (snapshotForced === 'on') return { ...base, enabled: true, rule: 'snapshot-force-on', reason: '被当前快照强制开启' };
 
   // 2) 强制停用：比什么策略都大
   if (override === 'off') {

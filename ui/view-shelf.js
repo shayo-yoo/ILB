@@ -390,6 +390,10 @@ export function renderShelf(ctx) {
     { value: 'on', label: '强制启用' },
     { value: 'off', label: '强制停用' },
   ];
+  const BINDING_MODE_OPTIONS = [
+    { value: 'character', label: '角色匹配' },
+    { value: 'chat', label: '对话匹配' },
+  ];
 
   function policyLabel(value) {
     return BINDING_POLICY_OPTIONS.find((item) => item.value === value)?.label ?? value;
@@ -415,7 +419,11 @@ export function renderShelf(ctx) {
       el('strong', { text: who }),
       el('span', { class: 'ilb-sub', text: avatar }),
     ]);
-    const policy = selectBox(row.policy, BINDING_POLICY_OPTIONS, (value) => {
+    const mode = selectBox(row.mode ?? 'character', BINDING_MODE_OPTIONS, (value) => {
+      try { repository.updateBinding(row.id, { mode: value }); ctx.toast('激活模式已更新'); } catch (err) { ctx.toast(`更新失败：${err?.message ?? err}`, 'warn'); }
+      draw(); reopen();
+    });
+    const policy = selectBox(row.policy === 'off' ? 'off' : 'on', [{ value: 'on', label: '开启' }, { value: 'off', label: '关闭' }], (value) => {
       try {
         repository.updateBinding(row.id, { policy: value });
         ctx.toast(`已设为「${policyLabel(value)}」`);
@@ -438,6 +446,7 @@ export function renderShelf(ctx) {
     return el('div', { class: 'ilb-bind-row' }, [
       nameNode,
       row.orphanedAt ? badge('角色已改名或删除', 'warn') : null,
+      mode,
       policy,
       remove,
     ]);
@@ -452,7 +461,8 @@ export function renderShelf(ctx) {
       ]);
     }
     let chosen = characters[0].avatar;
-    let policy = 'auto';
+    let policy = 'on';
+    let mode = 'character';
     const characterSearch = el('input', { class: 'ilb-input ilb-character-search', type: 'search', placeholder: '搜索角色卡…' });
     const pick = selectBox(chosen, characters.map((card) => ({ value: card.avatar, label: card.name || card.avatar })), (value) => {
       chosen = value;
@@ -461,9 +471,8 @@ export function renderShelf(ctx) {
       const query = String(characterSearch.value ?? '').toLowerCase().trim();
       for (const item of [...pick.options]) item.hidden = Boolean(query) && !String(item.textContent ?? '').toLowerCase().includes(query);
     });
-    const policySelect = selectBox('auto', BINDING_POLICY_OPTIONS, (value) => {
-      policy = value;
-    });
+    const modeSelect = selectBox('character', BINDING_MODE_OPTIONS, (value) => { mode = value; });
+    const policySelect = selectBox('on', [{ value: 'on', label: '开启' }, { value: 'off', label: '关闭' }], (value) => { policy = value; });
     const add = button('关联到这本书', () => {
       const card = characters.find((item) => item.avatar === chosen) ?? characters[0];
       try {
@@ -471,6 +480,7 @@ export function renderShelf(ctx) {
           character: { avatar: card.avatar, name: card.name },
           bookId: book.book_id,
           policy,
+          mode,
         });
         ctx.toast(`已关联「${card.name || card.avatar}」`);
       } catch (err) {
@@ -483,6 +493,7 @@ export function renderShelf(ctx) {
       el('span', { class: 'ilb-set-label', text: '新增' }),
       characterSearch,
       pick,
+      modeSelect,
       policySelect,
       add,
     ]);
