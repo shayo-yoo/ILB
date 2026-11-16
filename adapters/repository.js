@@ -533,6 +533,15 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     return safeClone(b.autoSnapshot, {});
   }
 
+  function updateSnapshotBindings(id, bindings) {
+    const b = bucket();
+    const snapshot = b.snapshots.find((s) => s && s.id === String(id));
+    if (!snapshot) return false;
+    snapshot.bindings = Array.isArray(bindings) ? safeClone(bindings, []) : [];
+    commit();
+    return true;
+  }
+
   /** 保存一份快照；超出上限时按"最早"顶掉（ILB-6.11.4） */
   function saveSnapshot(snapshot) {
     if (!snapshot || !snapshot.id) throw new Error('快照缺少 id');
@@ -859,6 +868,7 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     getSnapshot,
     getAutoSnapshot,
     saveAutoSnapshot,
+    updateSnapshotBindings,
     saveSnapshot,
     deleteSnapshot,
     renameSnapshot,

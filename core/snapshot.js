@@ -59,6 +59,7 @@ export function createSnapshot(books, manualState, options = {}) {
     at: now,
     kind: name ? 'named' : 'quick',
     auto: options.auto === true,
+    bindings: Array.isArray(options.bindings) ? clone(options.bindings, []) : [],
     context: {
       chatId: String(options.chatId ?? '').trim(),
       character: {
@@ -156,6 +157,14 @@ export function normalizeAutoSnapshot(raw = {}) {
 
 export function autoSnapshotMatches(snapshot, context = {}) {
   if (!snapshot || !snapshot.id) return false;
+  const bindings = Array.isArray(snapshot.bindings) ? snapshot.bindings : [];
+  if (bindings.length > 0) {
+    return bindings.some((binding) => {
+      if (binding?.type === 'chat') return String(binding.id ?? '') === String(context.chatId ?? '');
+      if (binding?.type === 'character') return String(binding.avatar ?? '') === String(context.character?.avatar ?? '');
+      return false;
+    });
+  }
   const wanted = snapshot.context ?? {};
   if (wanted.chatId && String(wanted.chatId) !== String(context.chatId ?? '')) return false;
   const wc = wanted.character ?? {};

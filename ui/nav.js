@@ -32,18 +32,19 @@ export const NAV_GROUPS = [
 export const TAB_LABEL = { ...Object.fromEntries(TABS.map((tab) => [tab.id, tab.label])), more: '更多' };
 
 /** 标准宽度时顶部常显的页面：平常用的三页。 */
-export const DESKTOP_PRIMARY = ['shelf', 'rules', 'logic'];
+export const DESKTOP_PRIMARY = ['shelf', 'rules', 'logic', 'snapshots'];
 /** 标准宽度时收进「更多」的低频页面。 */
-export const DESKTOP_OVERFLOW = ['snapshots', 'state', 'diagnostics', 'settings'];
+export const DESKTOP_OVERFLOW = ['state', 'diagnostics', 'settings'];
 
 /** 手机底部四个入口：三页常用 + 一个「更多」。 */
 export const MOBILE_PRIMARY = [
   { id: 'shelf', label: '书架', glyph: '书' },
   { id: 'rules', label: '规则', glyph: '条' },
   { id: 'logic', label: '逻辑', glyph: '流' },
+  { id: 'snapshots', label: '快照', glyph: '快' },
 ];
-export const MOBILE_MORE = ['snapshots', 'state', 'diagnostics', 'settings'];
-export const MOBILE_TABS = [...MOBILE_PRIMARY, { id: 'more', label: '更多', glyph: '⋯' }];
+export const MOBILE_MORE = ['state', 'diagnostics', 'settings'];
+export const MOBILE_TABS = MOBILE_PRIMARY;
 
 export function isTab(tab) {
   return TABS.some((item) => item.id === tab);

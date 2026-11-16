@@ -25,6 +25,13 @@ export function renderSnapshots(ctx) {
     : { avatar: '', name: '' };
   const autoConfig = normalizeAutoSnapshot(repository.getAutoSnapshot?.() ?? {});
   const autoIds = new Set(autoConfig.snapshotIds);
+  const currentCharacter = character;
+  const currentChat = chatId;
+  if (ctx.state?.snapshotBindingsId) {
+    const target = snapshots.find((snapshot) => snapshot.id === ctx.state.snapshotBindingsId);
+    if (target) return bindingsPage(target);
+    ctx.state.snapshotBindingsId = null;
+  }
 
   function save(name) {
     const books = repository.listBooks();
@@ -75,6 +82,36 @@ export function renderSnapshots(ctx) {
     ctx.render();
   }
 
+  function bindingsPage(snapshot) {
+    const bindings = Array.isArray(snapshot.bindings) ? snapshot.bindings.slice() : [];
+    const saveBindings = () => {
+      repository.updateSnapshotBindings?.(snapshot.id, bindings);
+      ctx.render();
+    };
+    const rows = bindings.map((binding, index) => el('div', { class: 'ilb-snapshot-binding-row' }, [
+      el('span', { class: 'ilb-badge', text: binding.type === 'chat' ? '对话' : '角色' }),
+      el('span', { class: 'ilb-snapshot-binding-name', text: binding.name || binding.id || binding.avatar || '未命名' }),
+      el('input', { type: 'checkbox', checked: binding.enabled !== false, onchange: (event) => { binding.enabled = event.target.checked; saveBindings(); } }),
+      button('移除', () => { bindings.splice(index, 1); saveBindings(); }, { ghost: true }),
+    ]));
+    const addCurrentChat = button('添加当前对话', () => {
+      if (!currentChat || bindings.some((item) => item.type === 'chat' && item.id === currentChat)) return;
+      bindings.push({ type: 'chat', id: currentChat, name: currentChat, enabled: true });
+      saveBindings();
+    }, { ghost: true });
+    const addCurrentCharacter = button('添加当前对话角色', () => {
+      if (!currentCharacter.avatar || bindings.some((item) => item.type === 'character' && item.avatar === currentCharacter.avatar)) return;
+      bindings.push({ type: 'character', avatar: currentCharacter.avatar, name: currentCharacter.name, enabled: true });
+      saveBindings();
+    }, { ghost: true });
+    return el('div', {}, [
+      el('div', { class: 'ilb-toolbar' }, [button('返回快照', () => ctx.render(), { ghost: true })]),
+      el('div', { class: 'ilb-actions' }, [addCurrentChat, addCurrentCharacter]),
+      hint('绑定项只读显示名称；右侧复选框控制该绑定是否参与自动快照激活。'),
+      rows.length ? el('div', { class: 'ilb-cardlist' }, rows) : emptyText('还没有绑定对话或角色卡。'),
+    ]);
+  }
+
   function row(snapshot) {
     const badges = [badge(snapshot.name ? '常用' : '临时', snapshot.name ? 'ok' : '')];
     if (snapshot.auto) badges.push(badge('自动备份'));
@@ -92,11 +129,7 @@ export function renderSnapshots(ctx) {
         button('回到这个状态', () => restore(snapshot), { primary: true }),
         button(snapshot.name ? '改名' : '命名', () => rename(snapshot), { ghost: true }),
         button('删除', () => remove(snapshot), { ghost: true }),
-        button(autoIds.has(String(snapshot.id)) ? '取消自动' : '设为自动', () => {
-          if (autoIds.has(String(snapshot.id))) autoIds.delete(String(snapshot.id));
-          else autoIds.add(String(snapshot.id));
-          autoApply();
-        }, { ghost: true }),
+        button('绑定设置', () => { ctx.state.snapshotBindingsId = snapshot.id; ctx.render(); }, { ghost: true }),
       ]),
     ]);
   }

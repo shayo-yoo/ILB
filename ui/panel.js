@@ -529,6 +529,7 @@ export function createPanel(deps) {
       list ? ['sort', '排序'] : null,
       canFilter() ? ['filter', '筛选'] : null,
       ['vars', '变量'],
+      ['more', '更多'],
     ].filter(Boolean);
 
     const rows = {};
@@ -690,6 +691,14 @@ export function createPanel(deps) {
       ]);
     }
     if (id === 'vars') return varsRow();
+    if (id === 'more') {
+      return actionRow([
+        button('状态', () => setTab('state'), { ghost: true }),
+        button('诊断', () => setTab('diagnostics'), { ghost: true }),
+        button('设置', () => setTab('settings'), { ghost: true }),
+        button('使用说明', () => openGuide(ctx).catch(() => {}), { ghost: true }),
+      ]);
+    }
     return null;
   }
 
@@ -716,17 +725,7 @@ export function createPanel(deps) {
   // ---- 手机「更多」页 ----
 
   function renderMorePage() {
-    const nodes = moreItems().map((tab) => button(tab.label, () => setTab(tab.id), { ghost: true }));
-    return el('div', { class: 'ilb-card' }, [
-      hint('快照、状态、诊断、设置都在这里；命名与电脑上一致。'),
-      actionRow(nodes),
-      actionRow([
-        button('使用说明', () => {
-          openGuide(ctx).catch((err) => console.warn('[ILB] 使用说明打不开', err));
-        }, { ghost: true }),
-        button(`「${TAB_LABEL[state.activeTab] ?? '当前页'}」的说明`, () => showHelp(state.activeTab), { ghost: true }),
-      ]),
-    ]);
+    return hint('请使用顶部「更多」折叠菜单访问状态、诊断和设置。');
   }
 
   // ---- 桌面：当前书籍栏 ----
