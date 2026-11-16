@@ -4,7 +4,7 @@
 
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
-import { selectAutoSnapshots } from '../core/snapshot.js';
+import { selectAutoSnapshots, snapshotActivationPlan } from '../core/snapshot.js';
 import { applyDoubleInjectPolicy } from '../core/double-inject.js';
 import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { summarizeHostContext } from '../core/host-context.js';
@@ -104,12 +104,12 @@ export function buildResolveInput({ repository, context, settings, hostContext =
     bindings: typeof repository.listBindings === 'function' ? repository.listBindings() : [],
   };
   const auto = typeof repository.getAutoSnapshot === 'function' ? repository.getAutoSnapshot() : { enabled: false };
-  const autoSnapshots = selectAutoSnapshots(repository.listSnapshots?.() ?? [], auto, {
-    chatId,
-    character: { avatar: context?.characterId ?? '', name: context?.name2 ?? '' },
-  });
+  const snapshotContext = { chatId, character: { avatar: hostContext?.character?.avatar ?? context?.characterId ?? '', name: hostContext?.character?.name ?? context?.name2 ?? '' } };
+  const autoPlan = snapshotActivationPlan(repository.listSnapshots?.() ?? [], auto, snapshotContext, resolveContext.manualState);
+  const autoSnapshots = autoPlan.snapshots;
+  resolveContext.manualState = autoPlan.manualState;
   resolveContext.autoSnapshots = autoSnapshots;
-  resolveContext.autoSnapshotMode = auto.mode;
+  resolveContext.autoSnapshotMode = autoPlan.mode;
   const resolved = resolveBooks(books, resolveContext, providers);
   return { chatId, books, request, resolveContext, resolved };
 }

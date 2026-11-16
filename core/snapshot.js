@@ -186,7 +186,23 @@ export function selectAutoSnapshots(snapshots, config = {}, context = {}) {
     const selectedByLegacyConfig = cfg.snapshotIds.length === 0 || cfg.snapshotIds.includes(String(s.id));
     return mode !== 'off' && selectedByLegacyConfig && autoSnapshotMatches(s, context);
   });
-  return selected.filter((s) => snapshotActivationMode(s) === 'only').length ? selected.filter((s) => snapshotActivationMode(s) === 'only').slice(-1) : selected;
+  const only = selected.filter((s) => snapshotActivationMode(s) === 'only');
+  return only.length ? only : selected;
+}
+
+/** 计算上下文切换时应写入的手动开关；不匹配时 matched=false，调用方不得改动。 */
+export function snapshotActivationPlan(snapshots, config = {}, context = {}, currentManual = {}) {
+  const matched = selectAutoSnapshots(snapshots, config, context);
+  if (matched.length === 0) return { matched: false, key: '', snapshots: [], manualState: { ...currentManual }, mode: 'none' };
+  const key = `${String(context.chatId ?? '')}::${String(context.character?.avatar ?? '')}`;
+  const only = matched.some((snapshot) => snapshotActivationMode(snapshot) === 'only');
+  const next = only ? Object.fromEntries(Object.keys(currentManual).map((id) => [id, false])) : { ...currentManual };
+  for (const snapshot of matched) {
+    for (const book of Array.isArray(snapshot.payload) ? snapshot.payload : []) {
+      if (book?.book_id && (only ? book.manual === true : book.manual === true)) next[book.book_id] = true;
+    }
+  }
+  return { matched: true, key, snapshots: matched, manualState: next, mode: only ? 'only' : 'normal' };
 }
 
 export function listNamed(snapshots) {
