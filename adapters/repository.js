@@ -6,7 +6,7 @@
 import { DEFAULT_SETTINGS } from '../core/settings-defaults.js';
 import { normalizeBook, normalizeLogic } from '../core/model.js';
 import { DATA_VERSION, migrateBucket } from '../core/migrate.js';
-import { createSnapshot, evictSnapshots } from '../core/snapshot.js';
+import { createSnapshot, evictSnapshots, normalizeAutoSnapshot } from '../core/snapshot.js';
 import { normalizeBinding, normalizeBindings, planRename } from '../core/bindings.js';
 
 function safeClone(v, fallback) {
@@ -30,6 +30,7 @@ function emptyState() {
     importLog: [],
     ui: {},
     snapshots: [],
+    autoSnapshot: { enabled: false, mode: 'normal', snapshotIds: [] },
     // 触发次数（v0.22.0）：只做界面排序用，不参与判定。老存档里没有这个键，读的时候补空。
     stats: emptyStats(),
     // 独立逻辑（v0.23.0）：逻辑组 + 不挂在任何书上的逻辑。老存档没有这两个键，读的时候补空。
@@ -107,6 +108,7 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     b.importLog = Array.isArray(b.importLog) ? b.importLog : [];
     b.ui = b.ui && typeof b.ui === 'object' ? b.ui : {};
     b.snapshots = Array.isArray(b.snapshots) ? b.snapshots : [];
+     b.autoSnapshot = normalizeAutoSnapshot(b.autoSnapshot);
     b.stats = b.stats && typeof b.stats === 'object' ? b.stats : emptyStats();
     b.stats.entries = b.stats.entries && typeof b.stats.entries === 'object' ? b.stats.entries : {};
     b.stats.logics = b.stats.logics && typeof b.stats.logics === 'object' ? b.stats.logics : {};
@@ -520,6 +522,17 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     return listSnapshots().find((s) => s && s.id === String(id)) ?? null;
   }
 
+  function getAutoSnapshot() {
+    return safeClone(bucket().autoSnapshot, { enabled: false, mode: 'normal', snapshotIds: [] });
+  }
+
+  function saveAutoSnapshot(patch = {}) {
+    const b = bucket();
+    b.autoSnapshot = normalizeAutoSnapshot({ ...b.autoSnapshot, ...safeClone(patch, {}) });
+    commit();
+    return safeClone(b.autoSnapshot, {});
+  }
+
   /** 保存一份快照；超出上限时按"最早"顶掉（ILB-6.11.4） */
   function saveSnapshot(snapshot) {
     if (!snapshot || !snapshot.id) throw new Error('快照缺少 id');
@@ -844,6 +857,8 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     deleteStandaloneLogic,
     listSnapshots,
     getSnapshot,
+    getAutoSnapshot,
+    saveAutoSnapshot,
     saveSnapshot,
     deleteSnapshot,
     renameSnapshot,

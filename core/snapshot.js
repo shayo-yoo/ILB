@@ -5,8 +5,9 @@
 
 import { makeId } from './ids.js';
 
-export const NAMED_SNAPSHOT_LIMIT = 10;
-export const QUICK_SNAPSHOT_LIMIT = 5;
+// 快照不设数量上限；旧常量仅供兼容读取，不再用于淘汰。
+export const NAMED_SNAPSHOT_LIMIT = Infinity;
+export const QUICK_SNAPSHOT_LIMIT = Infinity;
 
 function clone(v, fallback) {
   try {
@@ -27,7 +28,7 @@ function isOn(manualState, book) {
  * 把"当前状态"压成一份快照。
  * @param {Array} books
  * @param {object} manualState
- * @param {{name?: string, note?: string, now?: number, auto?: boolean}} options
+ * @param {{name?: string, note?: string, now?: number, auto?: boolean, chatId?: string, character?: {avatar?: string, name?: string}, characterAvatar?: string, characterName?: string}} options
  */
 export function createSnapshot(books, manualState, options = {}) {
   const now = Number(options.now) || Date.now();
@@ -58,6 +59,13 @@ export function createSnapshot(books, manualState, options = {}) {
     at: now,
     kind: name ? 'named' : 'quick',
     auto: options.auto === true,
+    context: {
+      chatId: String(options.chatId ?? '').trim(),
+      character: {
+        avatar: String(options.character?.avatar ?? options.characterAvatar ?? '').trim(),
+        name: String(options.character?.name ?? options.characterName ?? '').trim(),
+      },
+    },
     payload,
     summary: summarizePayload(payload),
   };
@@ -133,30 +141,35 @@ export function applySnapshot(snapshot, books, manualState) {
 /** 超出上限时丢掉最早的；已命名的与未命名的分开算（ILB-6.11.4）
  *  排序用 promotedAt ?? at：把一份旧快照改名成"常用"时，它算新加入的，不该被立刻顶掉。
  */
-export function evictSnapshots(snapshots, options = {}) {
-  const namedLimit = Number(options.namedLimit) || NAMED_SNAPSHOT_LIMIT;
-  const quickLimit = Number(options.quickLimit) || QUICK_SNAPSHOT_LIMIT;
-  const recency = (s) => Number(s?.promotedAt ?? s?.at) || 0;
-  const list = (Array.isArray(snapshots) ? snapshots : [])
-    .filter((s) => s && s.id)
-    .slice()
-    .sort((a, b) => recency(b) - recency(a));
+export function evictSnapshots(snapshots) {
+  // 历史 API 保留，但快照现在不设数量上限；只过滤无效记录并保持原顺序。
+  return (Array.isArray(snapshots) ? snapshots : []).filter((s) => s && s.id);
+}
 
-  const kept = [];
-  let named = 0;
-  let quick = 0;
-  for (const item of list) {
-    const isNamed = item.kind === 'named' || Boolean(String(item.name ?? '').trim());
-    if (isNamed) {
-      if (named >= namedLimit) continue;
-      named += 1;
-    } else {
-      if (quick >= quickLimit) continue;
-      quick += 1;
-    }
-    kept.push(item);
-  }
-  return kept;
+export const AUTO_SNAPSHOT_MODES = ['normal', 'only'];
+
+export function normalizeAutoSnapshot(raw = {}) {
+  const mode = AUTO_SNAPSHOT_MODES.includes(raw.mode) ? raw.mode : 'normal';
+  const ids = Array.isArray(raw.snapshotIds) ? raw.snapshotIds.map(String).filter(Boolean) : [];
+  return { enabled: raw.enabled === true, mode, snapshotIds: [...new Set(ids)] };
+}
+
+export function autoSnapshotMatches(snapshot, context = {}) {
+  if (!snapshot || !snapshot.id) return false;
+  const wanted = snapshot.context ?? {};
+  if (wanted.chatId && String(wanted.chatId) !== String(context.chatId ?? '')) return false;
+  const wc = wanted.character ?? {};
+  const cc = context.character ?? {};
+  if (wc.avatar && String(wc.avatar) !== String(cc.avatar ?? '')) return false;
+  if (wc.name && String(wc.name) !== String(cc.name ?? '')) return false;
+  return true;
+}
+
+export function selectAutoSnapshots(snapshots, config = {}, context = {}) {
+  const cfg = normalizeAutoSnapshot(config);
+  if (!cfg.enabled) return [];
+  const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => cfg.snapshotIds.includes(String(s.id)) && autoSnapshotMatches(s, context));
+  return cfg.mode === 'only' ? selected.slice(-1) : selected;
 }
 
 export function listNamed(snapshots) {

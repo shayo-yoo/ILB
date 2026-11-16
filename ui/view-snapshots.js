@@ -3,7 +3,7 @@
 
 import {
   createSnapshot, applySnapshot, describeSnapshot, listNamed, listQuick,
-  NAMED_SNAPSHOT_LIMIT, QUICK_SNAPSHOT_LIMIT,
+  normalizeAutoSnapshot,
 } from '../core/snapshot.js';
 import { el, button, badge, hint, emptyText, card, actionRow, metaLine } from './widgets.js';
 
@@ -18,6 +18,13 @@ export function renderSnapshots(ctx) {
     type: 'text',
     placeholder: '给这份快照起个名字（留空就是临时快照）',
   });
+  const host = typeof ctx.getHostContext === 'function' ? ctx.getHostContext() : null;
+  const chatId = String(ctx.getChatId?.() ?? host?.chatId ?? '').trim();
+  const character = host?.character
+    ? { avatar: String(host.character.avatar ?? ''), name: String(host.character.name ?? '') }
+    : { avatar: '', name: '' };
+  const autoConfig = normalizeAutoSnapshot(repository.getAutoSnapshot?.() ?? {});
+  const autoIds = new Set(autoConfig.snapshotIds);
 
   function save(name) {
     const books = repository.listBooks();
@@ -25,7 +32,9 @@ export function renderSnapshots(ctx) {
       ctx.toast('还没有书，先导入或新建一本', 'warn');
       return;
     }
-    const snapshot = createSnapshot(books, repository.getManualState(), { name });
+    const snapshot = createSnapshot(books, repository.getManualState(), {
+      name, chatId, character,
+    });
     repository.saveSnapshot(snapshot);
     ctx.toast(name ? `已保存常用快照「${name}」` : '已保存一份临时快照');
     ctx.render();
@@ -36,7 +45,9 @@ export function renderSnapshots(ctx) {
     if (!window.confirm(`回到「${label}」？当前的开/关状态会先被自动备份一份，弄错了还能回来。`)) return;
     const books = repository.listBooks();
     const manual = repository.getManualState();
-    const backup = createSnapshot(books, manual, { name: '', auto: true, note: '恢复前自动备份' });
+    const backup = createSnapshot(books, manual, {
+      name: '', auto: true, note: '恢复前自动备份', chatId, character,
+    });
     repository.saveSnapshot(backup);
 
     const result = applySnapshot(snapshot, books, manual);
@@ -67,6 +78,7 @@ export function renderSnapshots(ctx) {
   function row(snapshot) {
     const badges = [badge(snapshot.name ? '常用' : '临时', snapshot.name ? 'ok' : '')];
     if (snapshot.auto) badges.push(badge('自动备份'));
+    if (autoIds.has(String(snapshot.id))) badges.push(badge(`自动·${autoConfig.mode === 'only' ? '仅激活' : '正常激活'}`, 'ok'));
     return card([
       el('div', { class: 'ilb-rule-head' }, [
         el('div', { class: 'ilb-rule-titles' }, [
@@ -80,9 +92,27 @@ export function renderSnapshots(ctx) {
         button('回到这个状态', () => restore(snapshot), { primary: true }),
         button(snapshot.name ? '改名' : '命名', () => rename(snapshot), { ghost: true }),
         button('删除', () => remove(snapshot), { ghost: true }),
+        button(autoIds.has(String(snapshot.id)) ? '取消自动' : '设为自动', () => {
+          if (autoIds.has(String(snapshot.id))) autoIds.delete(String(snapshot.id));
+          else autoIds.add(String(snapshot.id));
+          autoApply();
+        }, { ghost: true }),
       ]),
     ]);
   }
+
+  const autoMode = el('select', { class: 'ilb-select' }, [
+    el('option', { value: 'normal', text: '正常激活：保留其他世界书' }),
+    el('option', { value: 'only', text: '仅激活：临时关闭其他世界书' }),
+  ]);
+  autoMode.value = autoConfig.mode;
+  const autoToggle = el('input', { type: 'checkbox', checked: autoConfig.enabled, class: 'ilb-check' });
+  const autoApply = () => {
+    const ids = [...autoIds];
+    repository.saveAutoSnapshot({ enabled: autoToggle.checked, mode: autoMode.value, snapshotIds: ids });
+    ctx.toast(autoToggle.checked ? `已启用自动快照（${autoMode.value === 'only' ? '仅激活' : '正常激活'}）` : '已关闭自动快照');
+    ctx.render();
+  };
 
   return el('div', {}, [
     el('div', { class: 'ilb-toolbar' }, [
@@ -95,7 +125,12 @@ export function renderSnapshots(ctx) {
       button('保存为临时快照', () => save(''), { ghost: true }),
       button('?', () => ctx.showHelp('snapshots'), { ghost: true, title: '这一页怎么用' }),
     ]),
-    hint(`常用快照最多 ${NAMED_SNAPSHOT_LIMIT} 份、临时快照最多 ${QUICK_SNAPSHOT_LIMIT} 份。满了以后，最旧的那份会被新的顶掉。`),
+    el('div', { class: 'ilb-settings-row' }, [
+      el('label', { class: 'ilb-inline' }, [autoToggle, el('span', { class: 'ilb-sub', text: '启用自动激活快照' })]),
+      autoMode,
+      button('应用自动设置', autoApply, { ghost: true }),
+    ]),
+    hint('快照数量不设上限。保存的快照会记录当前聊天和角色卡，可在自动设置中选择匹配的快照。'),
     hint('快照只记「哪些条目开着、哪几本书在场」。它不会改正文和触发词，所以在两个风格之间来回切是安全的。'),
 
     el('h4', { text: `常用快照（${named.length}）` }),

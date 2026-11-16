@@ -4,6 +4,7 @@
 
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
+import { selectAutoSnapshots } from '../core/snapshot.js';
 import { applyDoubleInjectPolicy } from '../core/double-inject.js';
 import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { summarizeHostContext } from '../core/host-context.js';
@@ -102,6 +103,13 @@ export function buildResolveInput({ repository, context, settings, hostContext =
     // 角色卡关联（v0.28.0）：没有就是空数组，判定层照样走 1.3 的老路
     bindings: typeof repository.listBindings === 'function' ? repository.listBindings() : [],
   };
+  const auto = typeof repository.getAutoSnapshot === 'function' ? repository.getAutoSnapshot() : { enabled: false };
+  const autoSnapshots = selectAutoSnapshots(repository.listSnapshots?.() ?? [], auto, {
+    chatId,
+    character: { avatar: context?.characterId ?? '', name: context?.name2 ?? '' },
+  });
+  resolveContext.autoSnapshots = autoSnapshots;
+  resolveContext.autoSnapshotMode = auto.mode;
   const resolved = resolveBooks(books, resolveContext, providers);
   return { chatId, books, request, resolveContext, resolved };
 }

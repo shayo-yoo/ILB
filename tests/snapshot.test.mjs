@@ -87,31 +87,21 @@ test('applySnapshot：改的是副本，不动传进来的数组', () => {
   assert.equal(original[0].entries[0].enabled, false);
 });
 
-test('evictSnapshots：常用与临时分开算上限', () => {
-  const many = [];
-  for (let i = 1; i <= NAMED_SNAPSHOT_LIMIT + 2; i += 1) {
-    many.push({ id: `n${i}`, kind: 'named', name: `常用${i}`, at: i });
-  }
-  for (let i = 1; i <= QUICK_SNAPSHOT_LIMIT + 2; i += 1) {
-    many.push({ id: `q${i}`, kind: 'quick', name: '', at: 100 + i });
-  }
-  const kept = evictSnapshots(many);
-  assert.equal(kept.filter((s) => s.kind === 'named').length, NAMED_SNAPSHOT_LIMIT);
-  assert.equal(kept.filter((s) => s.kind === 'quick').length, QUICK_SNAPSHOT_LIMIT);
-  // 留下的是最新的
-  assert.ok(kept.some((s) => s.id === `n${NAMED_SNAPSHOT_LIMIT + 2}`));
-  assert.ok(!kept.some((s) => s.id === 'n1'));
+test('evictSnapshots：现在不设数量上限，只过滤无效记录并保留顺序', () => {
+  const many = Array.from({ length: 100 }, (_, i) => ({ id: `s${i}`, kind: i % 2 ? 'quick' : 'named', at: i }));
+  const kept = evictSnapshots([...many, null, { id: '' }]);
+  assert.equal(kept.length, 100);
+  assert.deepEqual(kept.map((s) => s.id), many.map((s) => s.id));
 });
 
-test('evictSnapshots：刚改名的旧快照不会被立刻顶掉', () => {
-  const list = [];
-  for (let i = 1; i <= NAMED_SNAPSHOT_LIMIT; i += 1) {
-    list.push({ id: `n${i}`, kind: 'named', name: `名${i}`, at: i });
-  }
-  list.push({ id: 'old', kind: 'named', name: '刚改名', at: 0, promotedAt: 999 });
-  const kept = evictSnapshots(list);
-  assert.ok(kept.some((s) => s.id === 'old'));
-  assert.equal(kept.length, NAMED_SNAPSHOT_LIMIT);
+test('快照可绑定聊天与角色卡，并支持自动匹配模式', async () => {
+  const { autoSnapshotMatches, selectAutoSnapshots } = await import('../core/snapshot.js');
+  const snapshot = createSnapshot(books(), {}, {
+    name: '战斗', chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' }, auto: true,
+  });
+  assert.equal(autoSnapshotMatches(snapshot, { chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' } }), true);
+  assert.equal(autoSnapshotMatches(snapshot, { chatId: 'chat-2', character: { avatar: 'hero.png' } }), false);
+  assert.equal(selectAutoSnapshots([snapshot], { enabled: true, mode: 'normal', snapshotIds: [snapshot.id] }, { chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' } }).length, 1);
 });
 
 test('listNamed / listQuick：按名字认定，不只看 kind', () => {

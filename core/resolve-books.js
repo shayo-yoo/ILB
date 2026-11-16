@@ -42,6 +42,14 @@ export function resolveBooks(books, context = {}, providers = []) {
   // 角色卡关联（v0.28.0）：谁在场、关联怎么说。没有关联、或读不到宿主上下文时
   // 投票一律弃权（null），下面的判定与 1.3 逐字一致。
   const bindings = asArray(context.bindings);
+  const autoSnapshots = asArray(context.autoSnapshots);
+  if (autoSnapshots.length > 0) {
+    const latest = autoSnapshots[autoSnapshots.length - 1];
+    const applied = applyAutoSnapshotState(latest, books, manualState);
+    if (context.autoSnapshotMode === 'only') {
+      for (const id of Object.keys(manualState)) if (!applied.ids.has(id)) manualState[id] = false;
+    }
+  }
   const avatars = bindingAvatarsOf(hostContext);
   const isGroup = Boolean(hostContext && hostContext.group && hostContext.group.id);
 
@@ -99,6 +107,16 @@ export function resolveBooks(books, context = {}, providers = []) {
     hostContext,
     isPooled: (id) => poolIds.has(id),
   };
+}
+
+function applyAutoSnapshotState(snapshot, books, manualState) {
+  const ids = new Set();
+  for (const saved of asArray(snapshot?.payload)) {
+    if (!saved?.book_id) continue;
+    ids.add(String(saved.book_id));
+    if (typeof saved.manual === 'boolean') manualState[saved.book_id] = saved.manual;
+  }
+  return { ids };
 }
 
 function decideBook(book, { bound, manualState, context, providers, hostContext, hostEnabled, bindings, avatars, isGroup }) {
