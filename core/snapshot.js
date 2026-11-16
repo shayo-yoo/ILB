@@ -183,7 +183,9 @@ export function selectAutoSnapshots(snapshots, config = {}, context = {}) {
   const cfg = normalizeAutoSnapshot(config);
   const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => {
     const mode = snapshotActivationMode(s);
-    const selectedByLegacyConfig = cfg.snapshotIds.length === 0 || cfg.snapshotIds.includes(String(s.id));
+    const selectedByLegacyConfig = Array.isArray(s.bindings) || s.activationMode != null
+      ? true
+      : (cfg.snapshotIds.length === 0 || cfg.snapshotIds.includes(String(s.id)));
     return mode !== 'off' && selectedByLegacyConfig && autoSnapshotMatches(s, context);
   });
   const only = selected.filter((s) => snapshotActivationMode(s) === 'only');
@@ -203,6 +205,14 @@ export function snapshotActivationPlan(snapshots, config = {}, context = {}, cur
       if (!book?.book_id) continue;
       if (book.manual === true) { next[book.book_id] = true; forced[book.book_id] = 'on'; }
       else if (only) forced[book.book_id] = 'off';
+    }
+  }
+  // 快照本身是独立状态：正常激活也必须明确强制开启快照内书籍，不能依赖书当前策略。
+  if (!only) {
+    for (const snapshot of matched) {
+      for (const book of Array.isArray(snapshot.payload) ? snapshot.payload : []) {
+        if (book?.book_id && book.manual === true) forced[book.book_id] = 'on';
+      }
     }
   }
   return { matched: true, key, snapshots: matched, manualState: next, forced, mode: only ? 'only' : 'normal' };
