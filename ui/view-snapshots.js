@@ -93,8 +93,13 @@ export function renderSnapshots(ctx) {
     const rows = bindings.map((binding, index) => el('div', { class: 'ilb-card ilb-snapshot-binding-card' }, [
       el('div', { class: 'ilb-snapshot-binding-type', text: binding.type === 'chat' ? '对话' : '角色' }),
       el('div', { class: 'ilb-snapshot-binding-name', text: binding.name || binding.id || binding.avatar || '未命名', title: binding.name || binding.id || binding.avatar || '未命名' }),
-      el('input', { class: 'ilb-snapshot-binding-enabled', type: 'checkbox', checked: binding.enabled !== false, title: '启用此绑定', onchange: (event) => { binding.enabled = event.target.checked; saveBindings(); } }),
-      button('移除', () => { bindings.splice(index, 1); saveBindings(); }, { ghost: true }),
+      el('div', { class: 'ilb-snapshot-binding-footer' }, [
+        button('移除', () => { bindings.splice(index, 1); saveBindings(); }, { ghost: true }),
+        el('label', { class: 'ilb-snapshot-binding-toggle' }, [
+          el('span', { class: 'ilb-sub', text: '启用' }),
+          el('input', { class: 'ilb-snapshot-binding-enabled', type: 'checkbox', checked: binding.enabled !== false, title: '启用此绑定', onchange: (event) => { binding.enabled = event.target.checked; saveBindings(); } }),
+        ]),
+      ]),
     ]));
     const addCurrentChat = button('添加当前对话', () => {
       if (!hasCurrentChat) { ctx.toast('当前没有打开对话，不能添加对话绑定', 'warn'); return; }
