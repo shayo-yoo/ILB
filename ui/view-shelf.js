@@ -301,7 +301,7 @@ export function renderShelf(ctx) {
    * 用一层普通的 ILB 浮层：确认后关掉这层、删书、再关掉调用方的抽屉。
    */
   function removeBook(book, onDeleted = null) {
-    closeMenu();
+    closeCardMenu();
     const bound = boundCountOf(book.book_id);
     const lines = [hint('这本书的规则和逻辑会一起删掉，删了就找不回来了。')];
     if (bound > 0) lines.push(hint(`还有 ${bound} 个角色关联着这本书，删除会一起解除这些关联。`));
@@ -324,7 +324,7 @@ export function renderShelf(ctx) {
   }
 
   function showMeta(book) {
-    closeMenu();
+    closeCardMenu();
     const text = JSON.stringify(book, null, 2);
     ctx.openOverlay(`《${book.name || book.book_id}》的完整元数据`, [
       hint('这是这本书在存档里的原始形状。只读，改这里的文字不会改数据。'),
