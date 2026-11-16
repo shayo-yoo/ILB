@@ -718,7 +718,7 @@ step('导航按浮窗内部宽度换形态：宽屏左侧分组、标准顶部�
   const mobileNav = walk(host).find((n) => String(n.className ?? '') === 'ilb-m-nav');
   if (!mobileNav) throw new Error('手机上找不到底部四个入口');
   const entries = mobileNav.children.map((n) => walk(n).map((x) => String(x.textContent ?? '')).join(''));
-  const must = ['书架', '规则', '逻辑', '更多'];
+  const must = ['书架', '规则', '逻辑', '快照'];
   for (const label of must) {
     if (!entries.some((e) => e.includes(label))) throw new Error(`手机底部缺少「${label}」`);
   }
