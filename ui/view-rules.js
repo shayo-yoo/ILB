@@ -238,15 +238,15 @@ export function renderRules(ctx) {
       if (!target) return;
       mutate(target);
       target.ui = { ...(target.ui ?? {}), updatedAt: Date.now() };
-      repository.saveBook(fresh);
-      draw();
+      // saveBook/listBooks 都会做规范化并返回副本；把规范化后的结果同步回
+      // 当前页面持有的 book，避免下一次 draw/操作仍拿着旧闭包对象把刚才的改动盖回去。
+      const saved = repository.saveBook(fresh);
+      Object.assign(book, saved);
     };
     const numberBox = (value, onInput, { min = 0, max = 9999 } = {}) => {
       const input = el('input', {
         class: 'ilb-input ilb-num', type: 'number', value: String(value ?? 0), min: String(min), max: String(max),
       });
-      // 详情页的设置属于“改完立即落盘”：使用 input 而不是 change，
-      // 这样数字输入在用户键入过程中也会同步保存，不会因关闭抽屉丢失最后一次修改。
       input.addEventListener('input', () => {
         const raw = String(input.value ?? '').trim();
         if (raw === '') return;
@@ -273,7 +273,8 @@ export function renderRules(ctx) {
     const groupInput = el('input', {
       class: 'ilb-input', type: 'text', value: String(entry.group ?? ''), placeholder: '不分组', 'aria-label': '分组',
     });
-    groupInput.addEventListener('change', () => {
+    // 文本设置也要实时落盘；仅监听 change 会在抽屉直接关闭时丢掉最后输入。
+    groupInput.addEventListener('input', () => {
       persist((e) => { e.group = String(groupInput.value ?? '').trim() || null; });
     });
 
