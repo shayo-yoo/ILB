@@ -224,6 +224,9 @@ export function defaultLogic(overrides = {}) {
     localId: '',
     name: '',
     enabled: true,
+    // 逻辑整体概率（与条目一致）：只有打开开关才按 probability 掷骰
+    useProbability: false,
+    probability: 100,
     trigger: defaultTrigger(),
     scope: { within: null },
     when: [],
@@ -248,6 +251,8 @@ export function normalizeLogic(raw, bookId) {
   out.localId = localId;
   out.name = str(src.name, '') || '未命名逻辑';
   out.enabled = src.enabled !== false;
+  out.useProbability = src.useProbability === true;
+  out.probability = Math.min(100, Math.max(0, Math.round(num(src.probability, 100))));
   out.trigger = normalizeTrigger(src.trigger);
   const within = src.scope?.within;
   out.scope = { within: Number.isFinite(Number(within)) ? Math.min(50, Math.max(1, Math.trunc(Number(within)))) : null };

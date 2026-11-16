@@ -414,6 +414,15 @@ export function evaluate(request = {}, options = {}) {
       diagnostics.push({ entryId: logic.id, passed: false, stage: 'when', reason: when.reason });
       return mode === 'auto' ? null : { passed: false, reason: when.reason, writes: {}, extra: [], activations: [] };
     }
+    // 逻辑整体概率：与条目概率保持同一可复现掷骰语义；未打开开关时视为 100%。
+    if (logic.useProbability === true) {
+      const probability = clamp(num(logic.probability, 100), 0, 100);
+      const roll = hashToUnit(`${seed}:${logic.id}`) * 100;
+      if (probability <= 0 || roll >= probability) {
+        diagnostics.push({ entryId: logic.id, passed: false, stage: 'probability', reason: probability <= 0 ? '概率设为 0' : `抽签没中（概率 ${probability}%）` });
+        return mode === 'auto' ? null : { passed: false, reason: '概率未通过', writes: {}, extra: [], activations: [] };
+      }
+    }
 
     // 参数绑定（v0.18）：先存旧值，跑完原样还回去——参数是"临时名字"，不写进聊天状态
     const savedArgs = new Map();

@@ -245,23 +245,30 @@ export function renderRules(ctx) {
       const input = el('input', {
         class: 'ilb-input ilb-num', type: 'number', value: String(value ?? 0), min: String(min), max: String(max),
       });
-      input.addEventListener('change', () => {
-        const next = Math.max(min, Math.min(max, Number(input.value) || 0));
+      // 详情页的设置属于“改完立即落盘”：使用 input 而不是 change，
+      // 这样数字输入在用户键入过程中也会同步保存，不会因关闭抽屉丢失最后一次修改。
+      input.addEventListener('input', () => {
+        const raw = String(input.value ?? '').trim();
+        if (raw === '') return;
+        const next = Math.max(min, Math.min(max, Number(raw) || 0));
         input.value = String(next);
         persist(onInput(next));
       });
       return input;
     };
+    const probabilityInput = numberBox(entry.probability ?? 50, (value) => (e) => {
+      e.probability = Math.min(100, value);
+    }, { max: 100 });
+    probabilityInput.disabled = entry.useProbability !== true;
     const probabilityCell = el('span', { class: 'ilb-set-inline' }, [
       checkbox(entry.useProbability === true, (on) => {
+        probabilityInput.disabled = !on;
         persist((e) => {
           e.useProbability = on;
-          if (on && !e.probability) e.probability = 50;
+          if (on && !Number.isFinite(Number(e.probability))) e.probability = 50;
         });
       }, '按概率出现'),
-      entry.useProbability
-        ? numberBox(entry.probability ?? 50, (value) => (e) => { e.probability = Math.min(100, value); }, { max: 100 })
-        : null,
+      probabilityInput,
     ]);
     const groupInput = el('input', {
       class: 'ilb-input', type: 'text', value: String(entry.group ?? ''), placeholder: '不分组', 'aria-label': '分组',

@@ -66,6 +66,16 @@ test('元触发器：always 不看触发词，每轮都跑', () => {
   assert.match(r.activated[0].content, /初始化了一次/);
 });
 
+test('独立逻辑概率开关：关闭时不拦截，打开后按可复现概率拦截', () => {
+  const base = { name: '概率逻辑', trigger: { meta: 'always' }, flow: { nodes: [{ kind: 'add', text: '通过' }] } };
+  const always = normalizeBook({ book_id: 'prob-off', entries: [], logic: [base] });
+  assert.equal(evaluate({ messages: [{ is_user: true, content: 'x' }] }, { logics: always.logic }).logicPassed.length, 1);
+  const enabled = normalizeBook({ book_id: 'prob-on', entries: [], logic: [{ ...base, useProbability: true, probability: 0 }] });
+  const blocked = evaluate({ messages: [{ is_user: true, content: 'x' }] }, { logics: enabled.logic });
+  assert.equal(blocked.logicPassed.length, 0);
+  assert.ok(blocked.diagnostics.some((item) => item.entryId === enabled.logic[0].id && item.stage === 'probability'));
+});
+
 test('元触发器：on_ai 只在最后一条是 AI 回复时跑，on_user 在用户发言时跑', () => {
   const book = normalizeBook({
     book_id: 'm2',

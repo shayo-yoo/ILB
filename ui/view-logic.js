@@ -463,10 +463,33 @@ export function renderLogicView(ctx) {
       }
       draw();
     };
+    const numberBox = (value, onInput, { min = 0, max = 9999 } = {}) => {
+      const input = el('input', {
+        class: 'ilb-input ilb-num', type: 'number', value: String(value ?? 0), min: String(min), max: String(max),
+      });
+      input.addEventListener('input', () => {
+        const raw = String(input.value ?? '').trim();
+        if (raw === '') return;
+        const next = Math.max(min, Math.min(max, Number(raw) || 0));
+        input.value = String(next);
+        persist(onInput(next));
+      });
+      return input;
+    };
+    const probabilityCell = el('span', { class: 'ilb-set-inline' }, [
+      checkbox(logic.useProbability === true, (on) => persist((l) => {
+        l.useProbability = on;
+        if (on && !Number.isFinite(Number(l.probability))) l.probability = 50;
+      }), '按概率运行'),
+      logic.useProbability === true
+        ? numberBox(logic.probability ?? 50, (value) => (l) => { l.probability = value; }, { max: 100 })
+        : null,
+    ]);
     const nodes = Array.isArray(logic.flow?.nodes) ? logic.flow.nodes.length : 0;
     const params = Array.isArray(logic.call?.params) ? logic.call.params.length : 0;
     return settingsGrid([
       ['启用', inlineSwitch(logic.enabled !== false, (on) => persist((l) => { l.enabled = on; }), '启用这条逻辑')],
+      ['概率', probabilityCell],
       ['AI 可调用', checkbox(logic.call?.exposed === true, (on) => {
         persist((l) => { l.call = { ...(l.call ?? {}), exposed: on }; });
       }, '允许按钮调用')],
