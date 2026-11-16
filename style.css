@@ -724,6 +724,30 @@ body.ilb-overlay-open .ilb-fab {
   min-width: 0;
 }
 
+.ilb-snapshot-card {
+  padding: 8px 10px;
+}
+.ilb-snapshot-card .ilb-rule-head { margin-bottom: 3px; }
+.ilb-snapshot-card .ilb-actions { gap: 4px; }
+
+.ilb-snapshot-binding-card {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 32px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  min-height: 44px;
+}
+.ilb-snapshot-binding-type { white-space: nowrap; }
+.ilb-snapshot-binding-name {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+.ilb-snapshot-binding-enabled { justify-self: end; margin: 0; }
+
+
 .ilb-rule-head {
   display: flex;
   gap: 6px;

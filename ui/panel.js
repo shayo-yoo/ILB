@@ -530,6 +530,7 @@ export function createPanel(deps) {
       canFilter() ? ['filter', '筛选'] : null,
       ['vars', '变量'],
       ['more', '更多'],
+      state.activeTab === 'snapshots' && state.snapshotBindingsId ? ['snapshot-bindings', '绑定'] : null,
     ].filter(Boolean);
 
     const rows = {};
@@ -697,6 +698,27 @@ export function createPanel(deps) {
         button('诊断', () => setTab('diagnostics'), { ghost: true }),
         button('设置', () => setTab('settings'), { ghost: true }),
         button('使用说明', () => openGuide(ctx).catch(() => {}), { ghost: true }),
+      ]);
+    }
+    if (id === 'snapshot-bindings') {
+      const snapshot = repository.getSnapshot?.(state.snapshotBindingsId);
+      if (!snapshot) return hint('快照不存在。');
+      const hasChat = String(getChatId?.() ?? '') !== '' && String(getChatId?.() ?? '') !== 'default';
+      const host = ctx.getHostContext?.();
+      const hasCharacter = Boolean(host?.contextAvailable === true && host?.character?.avatar);
+      return actionRow([
+        button('添加当前对话', () => {
+          if (!hasChat) return notify('当前没有打开对话，不能添加对话绑定', 'warn');
+          const items = Array.isArray(snapshot.bindings) ? snapshot.bindings.slice() : [];
+          if (!items.some((item) => item.type === 'chat' && item.id === String(getChatId()))) items.push({ type: 'chat', id: String(getChatId()), name: String(getChatId()), enabled: true });
+          repository.updateSnapshotBindings(snapshot.id, items); render();
+        }, { ghost: true }),
+        button('添加当前对话角色', () => {
+          if (!hasCharacter) return notify('当前没有打开对话角色，不能添加角色绑定', 'warn');
+          const items = Array.isArray(snapshot.bindings) ? snapshot.bindings.slice() : [];
+          if (!items.some((item) => item.type === 'character' && item.avatar === host.character.avatar)) items.push({ type: 'character', avatar: host.character.avatar, name: host.character.name, enabled: true });
+          repository.updateSnapshotBindings(snapshot.id, items); render();
+        }, { ghost: true }),
       ]);
     }
     return null;
