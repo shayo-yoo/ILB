@@ -3,7 +3,7 @@
 
 import {
   createSnapshot, applySnapshot, describeSnapshot, listNamed, listQuick,
-  normalizeAutoSnapshot,
+  normalizeAutoSnapshot, snapshotActivationMode,
 } from '../core/snapshot.js';
 import { el, button, badge, hint, emptyText, card, actionRow, metaLine } from './widgets.js';
 import { openMenu as openCardMenu } from './menu.js';
@@ -124,12 +124,19 @@ export function renderSnapshots(ctx) {
   function row(snapshot) {
     const badges = [badge(snapshot.name ? '常用' : '临时', snapshot.name ? 'ok' : '')];
     if (snapshot.auto) badges.push(badge('自动备份'));
-    if (autoIds.has(String(snapshot.id))) badges.push(badge(`自动·${autoConfig.mode === 'only' ? '仅激活' : '正常激活'}`, 'ok'));
-    const autoBox = el('input', { type: 'checkbox', class: 'ilb-snapshot-auto-toggle', checked: autoIds.has(String(snapshot.id)), title: '自动激活此快照', onchange: (event) => {
-      if (event.target.checked) autoIds.add(String(snapshot.id)); else autoIds.delete(String(snapshot.id));
-      repository.saveAutoSnapshot({ enabled: autoIds.size > 0, mode: autoMode.value, snapshotIds: [...autoIds] });
+    const activationMode = snapshotActivationMode(snapshot);
+    badges.push(badge(activationMode === 'only' ? '仅激活' : activationMode === 'normal' ? '激活' : '不激活', activationMode === 'off' ? '' : 'ok'));
+    const activationSelect = el('select', { class: 'ilb-select ilb-snapshot-activation' }, [
+      el('option', { value: 'normal', text: '激活' }),
+      el('option', { value: 'only', text: '仅激活' }),
+      el('option', { value: 'off', text: '不激活' }),
+    ]);
+    activationSelect.value = activationMode;
+    activationSelect.addEventListener('change', () => {
+      snapshot.activationMode = activationSelect.value;
+      repository.saveSnapshot(snapshot);
       ctx.render();
-    } });
+    });
     const more = el('button', { class: 'ilb-icon-btn', type: 'button', text: '⋯', title: '更多操作', 'aria-label': '更多操作', onclick: (event) => {
       event.stopPropagation();
       if (typeof more.getBoundingClientRect === 'function') openCardMenu(more, [
@@ -143,30 +150,18 @@ export function renderSnapshots(ctx) {
           el('div', { class: 'ilb-title', text: snapshot.name || (snapshot.auto ? '（自动备份）' : '（未命名）') }),
           metaLine([el('span', { class: 'ilb-sub', text: describeSnapshot(snapshot) })]),
         ]),
-        el('div', { class: 'ilb-badges' }, [autoBox, ...badges]),
+        el('div', { class: 'ilb-badges' }, badges),
       ]),
       snapshot.note ? el('div', { class: 'ilb-sub', text: snapshot.note }) : null,
+      activationSelect,
       actionRow([
         button('回到这个状态', () => restore(snapshot), { primary: true }),
-        button(snapshot.name ? '改名' : '命名', () => rename(snapshot), { ghost: true }),
+
         button('绑定设置', () => { ctx.state.snapshotBindingsId = snapshot.id; ctx.render(); }, { ghost: true }),
         more,
       ]),
     ], 'ilb-snapshot-card');
   }
-
-  const autoMode = el('select', { class: 'ilb-select' }, [
-    el('option', { value: 'normal', text: '正常激活：保留其他世界书' }),
-    el('option', { value: 'only', text: '仅激活：临时关闭其他世界书' }),
-  ]);
-  autoMode.value = autoConfig.mode;
-  const autoToggle = el('input', { type: 'checkbox', checked: autoConfig.enabled, class: 'ilb-check' });
-  const autoApply = () => {
-    const ids = [...autoIds];
-    repository.saveAutoSnapshot({ enabled: autoToggle.checked, mode: autoMode.value, snapshotIds: ids });
-    ctx.toast(autoToggle.checked ? `已启用自动快照（${autoMode.value === 'only' ? '仅激活' : '正常激活'}）` : '已关闭自动快照');
-    ctx.render();
-  };
 
   return el('div', {}, [
     el('div', { class: 'ilb-toolbar' }, [
@@ -179,12 +174,7 @@ export function renderSnapshots(ctx) {
       button('保存为临时快照', () => save(''), { ghost: true }),
       button('?', () => ctx.showHelp('snapshots'), { ghost: true, title: '这一页怎么用' }),
     ]),
-    el('div', { class: 'ilb-settings-row' }, [
-      el('span', { class: 'ilb-sub', text: '自动激活模式（每张快照可单独勾选）' }),
-      autoMode,
-      button('应用模式', () => { repository.saveAutoSnapshot({ enabled: autoIds.size > 0, mode: autoMode.value, snapshotIds: [...autoIds] }); ctx.render(); }, { ghost: true }),
-    ]),
-    hint('快照数量不设上限。保存的快照会记录当前聊天和角色卡，可在自动设置中选择匹配的快照。'),
+    hint('快照数量不设上限。每张快照可单独选择“激活 / 仅激活 / 不激活”。'),
     hint('快照只记「哪些条目开着、哪几本书在场」。它不会改正文和触发词，所以在两个风格之间来回切是安全的。'),
 
     el('h4', { text: `常用快照（${named.length}）` }),

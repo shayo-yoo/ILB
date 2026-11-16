@@ -453,8 +453,13 @@ export function renderShelf(ctx) {
     }
     let chosen = characters[0].avatar;
     let policy = 'auto';
+    const characterSearch = el('input', { class: 'ilb-input ilb-character-search', type: 'search', placeholder: '搜索角色卡…' });
     const pick = selectBox(chosen, characters.map((card) => ({ value: card.avatar, label: card.name || card.avatar })), (value) => {
       chosen = value;
+    });
+    characterSearch.addEventListener('input', () => {
+      const query = String(characterSearch.value ?? '').toLowerCase().trim();
+      for (const item of [...pick.options]) item.hidden = Boolean(query) && !String(item.textContent ?? '').toLowerCase().includes(query);
     });
     const policySelect = selectBox('auto', BINDING_POLICY_OPTIONS, (value) => {
       policy = value;
@@ -476,6 +481,7 @@ export function renderShelf(ctx) {
     }, { primary: true });
     return el('div', { class: 'ilb-bind-add' }, [
       el('span', { class: 'ilb-set-label', text: '新增' }),
+      characterSearch,
       pick,
       policySelect,
       add,

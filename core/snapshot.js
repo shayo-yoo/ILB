@@ -147,7 +147,12 @@ export function evictSnapshots(snapshots) {
   return (Array.isArray(snapshots) ? snapshots : []).filter((s) => s && s.id);
 }
 
-export const AUTO_SNAPSHOT_MODES = ['normal', 'only'];
+export const AUTO_SNAPSHOT_MODES = ['normal', 'only', 'off'];
+
+export function snapshotActivationMode(snapshot) {
+  const mode = snapshot?.activationMode ?? (snapshot?.auto === true ? 'normal' : 'off');
+  return AUTO_SNAPSHOT_MODES.includes(mode) ? mode : 'off';
+}
 
 export function normalizeAutoSnapshot(raw = {}) {
   const mode = AUTO_SNAPSHOT_MODES.includes(raw.mode) ? raw.mode : 'normal';
@@ -177,8 +182,8 @@ export function autoSnapshotMatches(snapshot, context = {}) {
 export function selectAutoSnapshots(snapshots, config = {}, context = {}) {
   const cfg = normalizeAutoSnapshot(config);
   if (!cfg.enabled) return [];
-  const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => cfg.snapshotIds.includes(String(s.id)) && autoSnapshotMatches(s, context));
-  return cfg.mode === 'only' ? selected.slice(-1) : selected;
+  const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => cfg.snapshotIds.includes(String(s.id)) && snapshotActivationMode(s) !== 'off' && autoSnapshotMatches(s, context));
+  return selected.filter((s) => snapshotActivationMode(s) === 'only').length ? selected.filter((s) => snapshotActivationMode(s) === 'only').slice(-1) : selected;
 }
 
 export function listNamed(snapshots) {
