@@ -181,8 +181,11 @@ export function autoSnapshotMatches(snapshot, context = {}) {
 
 export function selectAutoSnapshots(snapshots, config = {}, context = {}) {
   const cfg = normalizeAutoSnapshot(config);
-  if (!cfg.enabled) return [];
-  const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => cfg.snapshotIds.includes(String(s.id)) && snapshotActivationMode(s) !== 'off' && autoSnapshotMatches(s, context));
+  const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => {
+    const mode = snapshotActivationMode(s);
+    const selectedByLegacyConfig = cfg.snapshotIds.length === 0 || cfg.snapshotIds.includes(String(s.id));
+    return mode !== 'off' && selectedByLegacyConfig && autoSnapshotMatches(s, context);
+  });
   return selected.filter((s) => snapshotActivationMode(s) === 'only').length ? selected.filter((s) => snapshotActivationMode(s) === 'only').slice(-1) : selected;
 }
 
