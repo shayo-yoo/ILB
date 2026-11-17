@@ -122,6 +122,7 @@ async function boot() {
 
   const pipeline = createPipeline({
     repository,
+    readRegexScripts: () => host.getRegexScripts?.() ?? null,
     injector,
     registry,
     // 每轮判定时同步读一次：读到的是"这一刻"的角色与聊天，不是启动时的快照

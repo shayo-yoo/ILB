@@ -50,11 +50,13 @@ function fromModules(modules, via) {
   const getRequestHeaders = pick(modules, ['getRequestHeaders']);
   const eventSource = pickValue(modules, ['eventSource']);
   const eventTypes = pickValue(modules, ['event_types']);
+  const regexScripts = pickValue(modules, ['regexScripts', 'regex_scripts']);
 
   return {
     getContext,
     getEventSource: () => eventSource ?? globalThis.SillyTavern?.eventSource ?? null,
     getEventTypes: () => eventTypes ?? globalThis.SillyTavern?.eventTypes ?? null,
+    getRegexScripts: () => regexScripts ?? globalThis.SillyTavern?.regexScripts ?? null,
     getRequestHeaders: () => {
       if (!getRequestHeaders) return {};
       try {
@@ -87,6 +89,7 @@ function fromGlobal() {
       getContext: () => g.getContext(),
       getEventSource: () => g.eventSource ?? null,
       getEventTypes: () => g.eventTypes ?? null,
+      getRegexScripts: () => g.regexScripts ?? null,
       getRequestHeaders: () => {
         try {
           return g.getRequestHeaders?.() ?? {};

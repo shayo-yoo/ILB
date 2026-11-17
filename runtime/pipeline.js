@@ -5,6 +5,7 @@
 import { evaluate } from '../core/evaluate.js';
 import { resolveBooks } from '../core/resolve-books.js';
 import { selectAutoSnapshots, snapshotActivationPlan } from '../core/snapshot.js';
+import { hiddenEntryIdsByRegex } from '../core/regex-visibility.js';
 import { applyDoubleInjectPolicy } from '../core/double-inject.js';
 import { runnableStandaloneLogics } from '../core/logic-groups.js';
 import { summarizeHostContext } from '../core/host-context.js';
@@ -237,6 +238,10 @@ export function createPipeline(deps) {
 
     let result;
     try {
+      // 正则扩展可把命中的世界书规则标为不可见；只有明确拿到脚本时才过滤，避免宿主版本差异影响旧行为。
+      const regexScripts = typeof deps.readRegexScripts === 'function' ? deps.readRegexScripts() : [];
+      const hidden = hiddenEntryIdsByRegex(resolved.pool ?? [], regexScripts);
+      if (hidden.size) resolved.pool = (resolved.pool ?? []).filter((entry) => !hidden.has(String(entry?.id)));
       // 独立逻辑（ILB-4.14）：只取"启用的书"里的逻辑，和条目的激活范围保持一致。
       const activeIds = new Set(resolved.activeBooks ?? []);
       const logics = books.filter((book) => activeIds.has(book.book_id)).flatMap((book) => book.logic ?? []);
