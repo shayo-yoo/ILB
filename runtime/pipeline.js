@@ -138,6 +138,8 @@ export function createPipeline(deps) {
   let lastHostContext = null;
   /** 这一轮"没做"的原因（例如总开关被关掉）。和"出错"分开记，避免误报红旗。 */
   let lastSkip = null;
+  /** 会话级触发次数：只活在内存里，重启酒馆就清零（诊断页排序用） */
+  const sessionCounts = new Map();
 
   function readContext(getContext) {
     const ctx = getContext();
@@ -279,7 +281,10 @@ export function createPipeline(deps) {
     // 给界面排序用；统计写盘失败不影响这一轮注入。
     try {
       for (const item of result?.activated ?? []) {
-        if (item?.entryId) repository.recordTrigger?.('entries', item.entryId, currentChatId);
+        if (item?.entryId) {
+          repository.recordTrigger?.('entries', item.entryId, currentChatId);
+          sessionCounts.set(String(item.entryId), (sessionCounts.get(String(item.entryId)) ?? 0) + 1);
+        }
       }
       for (const id of result?.logicPassed ?? []) {
         repository.recordTrigger?.('logics', id, currentChatId);
@@ -386,6 +391,71 @@ export function createPipeline(deps) {
       }
       const providers = registry.activationProviders.list().map(({ id, impl }) => ({ id, label: impl?.label, test: impl?.test }));
       return { context: ctx, settings, hostContext, ...buildResolveInput({ repository, context: ctx, settings, hostContext, providers }) };
+    },
+    /** 会话级触发次数（内存计数，重启清零）：诊断排序用 */
+    getSessionCounts() {
+      return new Map(sessionCounts);
+    },
+    /**
+     * 模拟一次注入：完整走一遍"取上下文 → 解析在场书 → 判定"，但**不注入、不写状态、不发事件**。
+     * 诊断页用它回答"如果现在注入，会是什么激活了什么"。
+     */
+    simulate(getContext) {
+      let ctx;
+      try {
+        ctx = readContext(getContext);
+      } catch (err) {
+        return { ok: false, message: String(err?.message ?? err) };
+      }
+      let settings;
+      try {
+        settings = repository.getSettings();
+      } catch (err) {
+        return { ok: false, message: `读取设置失败：${err?.message ?? err}` };
+      }
+      if (settings.enabled === false) return { ok: false, message: '总开关已关闭：模拟也不会注入任何东西。' };
+      let hostContext = null;
+      try {
+        hostContext = typeof deps.readHostContext === 'function' ? deps.readHostContext() : null;
+      } catch {
+        hostContext = null;
+      }
+      try {
+        const chatId = resolveChatId(ctx);
+        const input = buildResolveInput({
+          repository,
+          context: ctx,
+          settings,
+          hostContext,
+          chatState: repository.getChatState(chatId),
+          vars: repository.getVars(chatId),
+          providers: registry.activationProviders.list().map(({ id, impl }) => ({ id, label: impl?.label, test: impl?.test })),
+        });
+        let resolved = input.resolved;
+        try {
+          resolved = applyDoubleInjectPolicy(resolved, input.books, settings.doubleInjectPolicy ?? 'warn').resolved;
+        } catch {
+          /* 同源策略算不出来就按原样模拟 */
+        }
+        const regexScripts = typeof deps.readRegexScripts === 'function' ? deps.readRegexScripts() : [];
+        const hidden = hiddenEntryIdsByRegex(resolved.pool ?? [], regexScripts);
+        if (hidden.size) resolved.pool = (resolved.pool ?? []).filter((entry) => !hidden.has(String(entry?.id)));
+        const activeIds = new Set(resolved.activeBooks ?? []);
+        const logics = input.books.filter((book) => activeIds.has(book.book_id)).flatMap((book) => book.logic ?? []);
+        const result = evaluate(input.request, { resolved, settings, logics });
+        return {
+          ok: true,
+          at: Date.now(),
+          simulated: true,
+          activated: result.activated.map((a) => a.entryId),
+          budget: result.budget,
+          books: result.books,
+          diagnostics: result.diagnostics,
+          host: summarizeHostContext(hostContext),
+        };
+      } catch (err) {
+        return { ok: false, message: String(err?.message ?? err) };
+      }
     },
     /** 供诊断面板用：这一轮为什么没出现/为什么出现 */
     describeLastRun() {

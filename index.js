@@ -158,6 +158,7 @@ async function boot() {
     repository,
     nativeWorlds,
     pipeline,
+    getContext,
     // 导航要按"浮窗内部宽度"换形态，所以只能给闭包：建面板时壳还没建出来。
     getLayout: () => {
       try {

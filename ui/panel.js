@@ -61,7 +61,7 @@ const BOOK_TABS = new Set(['rules', 'logic']);
 const SORT_LISTS = { shelf: 'shelf', rules: 'rules', logic: 'logic' };
 
 export function createPanel(deps) {
-  const { repository, nativeWorlds, pipeline, notify, getChatId, getLayout, getDensity, getNavRoot, getHeaderRoot, setHeaderFolded } = deps;
+  const { repository, nativeWorlds, pipeline, notify, getChatId, getLayout, getDensity, getNavRoot, getHeaderRoot, setHeaderFolded, getContext } = deps;
   const { getHostContext, describeHost, listCharacters } = deps;
 
   const VIEWS = {
@@ -367,6 +367,7 @@ export function createPanel(deps) {
     nativeWorlds,
     pipeline,
     getChatId,
+    getContext: typeof getContext === 'function' ? getContext : () => null,
     notify,
     getHostContext: typeof getHostContext === 'function' ? getHostContext : () => null,
     // v0.29.0：书架的「角色关联」要列出全部角色卡来挑；宿主读不到时返回空数组，界面照常可用

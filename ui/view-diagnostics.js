@@ -1,6 +1,6 @@
 // ui/view-diagnostics.js —— 诊断页：上一轮每条规则为什么出现 / 没出现（ILB-6.3）
 
-import { el, hint, badge, button, card, emptyText } from './widgets.js';
+import { el, hint, badge, button, card, emptyText, selectBox } from './widgets.js';
 import { HOST_SOURCE_LABEL, summarizeHostContext } from '../core/host-context.js';
 
 const STAGE_LABEL = {
@@ -40,9 +40,44 @@ function timeText(ts) {
   }
 }
 
+/** 可折叠卡片：折叠状态存 ctx.state.diagFolds（只活在这一页里，不落盘） */
+function foldCard(ctx, key, title, nodes, extra = []) {
+  const state = ctx.state ?? {};
+  if (!(state.diagFolds instanceof Set)) state.diagFolds = new Set();
+  const folded = state.diagFolds.has(key);
+  const head = el('div', { class: 'ilb-rule-head' }, [
+    el('h5', { class: 'ilb-section-title', text: title }),
+    ...extra,
+    button(folded ? '展开 ▾' : '收起 ▴', () => {
+      if (folded) state.diagFolds.delete(key);
+      else state.diagFolds.add(key);
+      ctx.render?.();
+    }, { ghost: true }),
+  ]);
+  return el('div', { class: 'ilb-card' }, folded ? [head] : [head, ...nodes].filter(Boolean));
+}
+
 export function renderDiagnostics(ctx) {
   const { pipeline, repository } = ctx;
-  const last = pipeline?.describeLastRun ? pipeline.describeLastRun() : { ran: false };
+  const state = ctx.state ?? {};
+  let last = pipeline?.describeLastRun ? pipeline.describeLastRun() : { ran: false };
+  if (state.diagSimulated && typeof pipeline?.simulate === 'function') {
+    let simulated = null;
+    try {
+      simulated = pipeline.simulate(ctx.getContext?.());
+    } catch (err) {
+      simulated = { ok: false, message: String(err?.message ?? err) };
+    }
+    if (simulated?.ok) last = simulated;
+    else if (simulated) {
+      return el('div', { class: 'ilb-view' }, [
+        el('div', { class: 'ilb-summary' }, [badge('模拟失败', 'warn'), el('span', { text: simulated.message ?? '未知原因' })]),
+        button('返回真实诊断', () => { state.diagSimulated = false; ctx.render?.(); }, { ghost: true }),
+      ]);
+    }
+  }
+  const simulated = last.simulated === true;
+  const counts = typeof pipeline?.getSessionCounts === 'function' ? pipeline.getSessionCounts() : new Map();
   const titles = new Map();
   for (const b of repository.listBooks()) {
     for (const e of b.entries ?? []) titles.set(e.id, `${b.name} / ${e.title || e.id}`);
@@ -67,15 +102,22 @@ export function renderDiagnostics(ctx) {
 
   const budget = last.budget ?? { limit: 0, used: 0, dropped: 0 };
   root.appendChild(el('div', { class: 'ilb-summary' }, [
-    el('span', { text: `上一次运行：${timeText(last.at)}` }),
+    el('span', { text: `${simulated ? '模拟运行' : '上一次运行'}：${timeText(last.at)}` }),
+    simulated ? badge('模拟结果，未真的注入', 'warn') : null,
     badge(`注入 ${last.activated?.length ?? 0} 条`, (last.activated?.length ?? 0) ? 'ok' : 'warn'),
     el('span', { text: `预算 ${budget.used} / ${budget.limit} 字` }),
     el('span', { text: `在场书 ${last.books?.active?.length ?? 0} 本` }),
-  ]));
+    button(simulated ? '返回真实诊断' : '模拟注入', () => {
+      state.diagSimulated = !simulated;
+      ctx.render?.();
+    }, { ghost: true, title: '按当前状态完整模拟一次判定：不注入、不写状态' }),
+  ].filter(Boolean)));
 
   if (last.error) root.appendChild(el('p', { class: 'ilb-error', text: `这一步出了错：${last.error}` }));
 
   root.appendChild(renderHostCard(ctx, last));
+  const booksCard = renderBooksCard(ctx, last);
+  if (booksCard) root.appendChild(booksCard);
 
   const inactive = last.books?.inactive ?? [];
   const bookNames = new Map(repository.listBooks().map((b) => [b.book_id, b.name]));
@@ -105,19 +147,37 @@ export function renderDiagnostics(ctx) {
     root.appendChild(hint('这一轮没有任何规则参与判定。可能是所有书都被关掉了，也可能书里还没有规则。'));
   } else {
     const passed = rows.filter((r) => r.passed).length;
+    const onlyInjected = state.diagOnlyInjected === true;
+    const sortByHits = state.diagSort !== 'order';
+    const shown = rows
+      .map((r) => ({ ...r, hits: counts.get(String(r.entryId)) ?? 0 }))
+      .filter((r) => !onlyInjected || r.passed)
+      .sort((a, b) => (sortByHits ? b.hits - a.hits : 0));
     root.appendChild(el('div', { class: 'ilb-inline' }, [
       el('strong', { text: `共 ${rows.length} 条参与判定，${passed} 条出现` }),
+      button(onlyInjected ? '显示全部判定' : '仅显示上一轮参与注入', () => {
+        state.diagOnlyInjected = !onlyInjected;
+        ctx.render?.();
+      }, { ghost: true }),
+      selectBox(sortByHits ? 'hits' : 'order', [
+        { value: 'order', label: '按判定顺序' },
+        { value: 'hits', label: '按触发次数（本次会话）' },
+      ], (value) => {
+        state.diagSort = value === 'hits' ? 'hits' : 'order';
+        ctx.render?.();
+      }),
       button('检查所有书的结构', () => runHealthCheck(ctx), { ghost: true }),
       button('?', () => ctx.showHelp('diagnostics'), { ghost: true, title: '这一页怎么看' }),
     ]));
 
     const list = el('div', { class: 'ilb-cardlist' });
-    for (const r of rows) {
+    for (const r of shown) {
       list.appendChild(el('div', { class: `ilb-card ${r.passed ? '' : 'ilb-card-off'}` }, [
         el('div', { class: 'ilb-rule-head' }, [
           el('span', { class: 'ilb-rule-titles' }, [el('strong', { text: titles.get(r.entryId) ?? r.entryId })]),
           badge(r.passed ? '出现' : '没出现', r.passed ? 'ok' : 'warn'),
-        ]),
+          r.hits ? badge(`本轮会话命中 ${r.hits} 次`) : null,
+        ].filter(Boolean)),
         el('div', { class: 'ilb-meta' }, [
           el('span', { text: `卡在：${STAGE_LABEL[r.stage] ?? r.stage ?? '—'}` }),
           el('span', { text: r.reason ?? '' }),
@@ -125,6 +185,7 @@ export function renderDiagnostics(ctx) {
         ]),
       ]));
     }
+    if (shown.length === 0) list.appendChild(emptyText('这一轮没有规则真的被注入。'));
     root.appendChild(list);
   }
 
@@ -173,9 +234,9 @@ function renderHostCard(ctx, last) {
   for (const w of host?.warnings ?? []) nodes.push(hint(String(w)));
 
   if (ids.length) {
-    nodes.push(el('ul', { class: 'ilb-warn-list' }, ids.map((id) => el('li', {
-      text: `${nameOf.get(id) ?? id}：${details[id].enabled ? '启用' : '停用'} —— ${details[id].reason ?? RULE_LABEL[details[id].rule] ?? details[id].rule}`,
-    }))));
+    const enabledIds = ids.filter((id) => details[id].enabled);
+    const disabledIds = ids.filter((id) => !details[id].enabled);
+    nodes.push(hint(`参与判定 ${ids.length} 本：启用 ${enabledIds.length}、停用 ${disabledIds.length}。`));
     const di = last.books?.doubleInject ?? null;
     const dupIds = Array.isArray(di?.duplicates)
       ? di.duplicates
@@ -189,7 +250,22 @@ function renderHostCard(ctx, last) {
   } else {
     nodes.push(hint('上一次运行没有留下每本书的启用原因（还没跑过，或者是老版本的数据）。'));
   }
-  return el('div', { class: 'ilb-card' }, nodes);
+  return foldCard(ctx, 'host', '酒馆联动', nodes.slice(1));
+}
+
+/** 参与判定的世界书：单独一张可折叠卡片，回答"这一轮到底哪些书进了判定、为什么" */
+function renderBooksCard(ctx, last) {
+  const details = last.books?.details ?? {};
+  const ids = Object.keys(details);
+  if (ids.length === 0) return null;
+  const books = ctx.repository.listBooks();
+  const nameOf = new Map(books.map((b) => [b.book_id, b.name]));
+  const enabled = ids.filter((id) => details[id].enabled);
+  const rows = ids.map((id) => el('li', {
+    text: `${nameOf.get(id) ?? id}：${details[id].enabled ? '启用' : '停用'} —— ${details[id].reason ?? RULE_LABEL[details[id].rule] ?? details[id].rule}`,
+  }));
+  return foldCard(ctx, 'books', `参与判定的世界书（${ids.length} 本，启用 ${enabled.length}）`,
+    [el('ul', { class: 'ilb-warn-list' }, rows)]);
 }
 
 function runHealthCheck(ctx) {
