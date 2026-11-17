@@ -61,19 +61,26 @@ export function renderDiagnostics(ctx) {
   const { pipeline, repository } = ctx;
   const state = ctx.state ?? {};
   let last = pipeline?.describeLastRun ? pipeline.describeLastRun() : { ran: false };
-  if (state.diagSimulated && typeof pipeline?.simulate === 'function') {
-    let simulated = null;
+  if (state.diagSimulated && typeof pipeline?.simulate !== 'function') {
+    return el('div', { class: 'ilb-view' }, [
+      el('div', { class: 'ilb-summary' }, [badge('模拟不可用', 'warn'), el('span', { text: '当前版本的运行时没有提供模拟接口。' })]),
+      button('退出模拟', () => { state.diagSimulated = false; ctx.render?.(); }, { ghost: true }),
+    ]);
+  }
+
+  if (state.diagSimulated) {
+    let simulatedResult = null;
     try {
       // 传函数而不是结果：管道内部自己决定何时取上下文，拿不到时给出人话
-      simulated = pipeline.simulate(typeof ctx.getContext === 'function' ? ctx.getContext : ctx.getContext);
+      simulatedResult = pipeline.simulate(typeof ctx.getContext === 'function' ? ctx.getContext : ctx.getContext);
     } catch (err) {
-      simulated = { ok: false, message: String(err?.message ?? err) };
+      simulatedResult = { ok: false, message: String(err?.message ?? err) };
     }
-    if (simulated?.ok) last = simulated;
-    else if (simulated) {
+    if (simulatedResult?.ok) last = simulatedResult;
+    else {
       return el('div', { class: 'ilb-view' }, [
-        el('div', { class: 'ilb-summary' }, [badge('模拟失败', 'warn'), el('span', { text: simulated.message ?? '未知原因' })]),
-        button('返回真实诊断', () => { state.diagSimulated = false; ctx.render?.(); }, { ghost: true }),
+        el('div', { class: 'ilb-summary' }, [badge('模拟失败', 'warn'), el('span', { text: simulatedResult?.message ?? '未知原因' })]),
+        button('退出模拟', () => { state.diagSimulated = false; ctx.render?.(); }, { ghost: true }),
       ]);
     }
   }
@@ -96,8 +103,11 @@ export function renderDiagnostics(ctx) {
   }
 
   if (!last.ran) {
-    root.appendChild(hint('还没有跑过。回到聊天界面发一条消息，然后再回到这里。'));
+    root.appendChild(hint(simulated ? '模拟没有产生可显示的结果（可能是所有书都没参与判定）。' : '还没有跑过。回到聊天界面发一条消息，然后再回到这里。'));
     if (last.error) root.appendChild(el('p', { class: 'ilb-error', text: `上一次出错：${last.error}` }));
+    if (simulated) {
+      root.appendChild(button('返回真实诊断', () => { state.diagSimulated = false; ctx.render?.(); }, { ghost: true }));
+    }
       return root;
   }
 
@@ -108,10 +118,10 @@ export function renderDiagnostics(ctx) {
     badge(`注入 ${last.activated?.length ?? 0} 条`, (last.activated?.length ?? 0) ? 'ok' : 'warn'),
     el('span', { text: `预算 ${budget.used} / ${budget.limit} 字` }),
     el('span', { text: `在场书 ${last.books?.active?.length ?? 0} 本` }),
-    button(simulated ? '返回真实诊断' : '模拟注入', () => {
+    button(simulated ? '退出模拟' : '模拟注入', () => {
       state.diagSimulated = !simulated;
       ctx.render?.();
-    }, { ghost: true, title: '按当前状态完整模拟一次判定：不注入、不写状态' }),
+    }, { ghost: true, primary: simulated, title: '按当前状态完整模拟一次判定：不注入、不写状态' }),
   ].filter(Boolean)));
 
   if (last.error) root.appendChild(el('p', { class: 'ilb-error', text: `这一步出了错：${last.error}` }));

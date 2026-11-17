@@ -454,8 +454,13 @@ export function createPipeline(deps) {
         const result = evaluate(input.request, { resolved, settings, logics });
         return {
           ok: true,
+          // ran 必须为 true：诊断页用它判断"有没有结果可以画"，少这个字段会走进"还没跑过"的分支，
+          // 用户看到的就是一片空白、也找不到返回按钮。
+          ran: true,
           at: Date.now(),
           simulated: true,
+          skipped: null,
+          aiCalls: Array.isArray(result.callLog) ? result.callLog : [],
           activated: result.activated.map((a) => a.entryId),
           budget: result.budget,
           books: result.books,

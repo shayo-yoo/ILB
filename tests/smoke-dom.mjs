@@ -227,6 +227,19 @@ for (const tab of ['shelf', 'rules', 'snapshots', 'state', 'diagnostics', 'setti
   });
 }
 
+step('诊断：模拟注入能画出结果，也能退出', () => {
+  panel.setTab('diagnostics');
+  panel.state.diagSimulated = true;
+  panel.render();
+  const text = walk(panel.element ?? hostEl).map((n) => String(n.textContent ?? '')).join(' ');
+  if (!text.includes('模拟')) throw new Error(`模拟模式下没有标注“模拟”：${text.slice(0, 80)}`);
+  if (!text.includes('退出模拟')) throw new Error('模拟模式下找不到退出按钮');
+  panel.state.diagSimulated = false;
+  panel.render();
+  const after = walk(panel.element ?? hostEl).map((n) => String(n.textContent ?? '')).join(' ');
+  if (after.includes('模拟运行')) throw new Error('退出模拟后仍然停在模拟结果上');
+});
+
 step('打开规则编辑器', () => {
   panel.setTab('rules');
   const book = repository.getBook('book-t');
