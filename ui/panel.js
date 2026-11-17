@@ -367,7 +367,16 @@ export function createPanel(deps) {
     nativeWorlds,
     pipeline,
     getChatId,
-    getContext: typeof getContext === 'function' ? getContext : () => null,
+    getContext: typeof getContext === 'function'
+      ? getContext
+      : (() => {
+        try {
+          const g = globalThis.SillyTavern;
+          return typeof g?.getContext === 'function' ? g.getContext() : null;
+        } catch {
+          return null;
+        }
+      }),
     notify,
     getHostContext: typeof getHostContext === 'function' ? getHostContext : () => null,
     // v0.29.0：书架的「角色关联」要列出全部角色卡来挑；宿主读不到时返回空数组，界面照常可用

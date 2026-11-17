@@ -142,6 +142,7 @@ export function createPipeline(deps) {
   const sessionCounts = new Map();
 
   function readContext(getContext) {
+    if (typeof getContext !== 'function') throw new Error('拿不到读取上下文的入口（getContext）');
     const ctx = getContext();
     if (!ctx || typeof ctx !== 'object') throw new Error('拿不到 SillyTavern 的上下文');
     return ctx;
@@ -400,10 +401,18 @@ export function createPipeline(deps) {
      * 模拟一次注入：完整走一遍"取上下文 → 解析在场书 → 判定"，但**不注入、不写状态、不发事件**。
      * 诊断页用它回答"如果现在注入，会是什么激活了什么"。
      */
-    simulate(getContext) {
+    simulate(getContextOrContext) {
+      // 既接受"取上下文的函数"，也接受已经取好的上下文对象：两种调用方式都不会炸。
+      const resolve = typeof getContextOrContext === 'function'
+        ? getContextOrContext
+        : (() => {
+          if (getContextOrContext && typeof getContextOrContext === 'object') return getContextOrContext;
+          const g = globalThis.SillyTavern;
+          return typeof g?.getContext === 'function' ? g.getContext() : null;
+        });
       let ctx;
       try {
-        ctx = readContext(getContext);
+        ctx = readContext(resolve);
       } catch (err) {
         return { ok: false, message: String(err?.message ?? err) };
       }

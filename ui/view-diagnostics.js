@@ -64,7 +64,8 @@ export function renderDiagnostics(ctx) {
   if (state.diagSimulated && typeof pipeline?.simulate === 'function') {
     let simulated = null;
     try {
-      simulated = pipeline.simulate(ctx.getContext?.());
+      // 传函数而不是结果：管道内部自己决定何时取上下文，拿不到时给出人话
+      simulated = pipeline.simulate(typeof ctx.getContext === 'function' ? ctx.getContext : ctx.getContext);
     } catch (err) {
       simulated = { ok: false, message: String(err?.message ?? err) };
     }
@@ -118,17 +119,16 @@ export function renderDiagnostics(ctx) {
   root.appendChild(renderHostCard(ctx, last));
   const booksCard = renderBooksCard(ctx, last);
   if (booksCard) root.appendChild(booksCard);
-
-  const inactive = last.books?.inactive ?? [];
-  const bookNames = new Map(repository.listBooks().map((b) => [b.book_id, b.name]));
-  if (inactive.length) {
-    root.appendChild(el('div', { class: 'ilb-card' }, [
-      el('h5', { class: 'ilb-section-title', text: '这轮没被启用的书' }),
-      el('ul', { class: 'ilb-warn-list' }, inactive.map((b) => {
-        const id = typeof b === 'string' ? b : b.book_id;
-        return el('li', { text: `${bookNames.get(id) ?? id}：${last.books?.reasons?.[id] ?? '未说明原因'}` });
-      })),
-    ]));
+  else {
+    const fallbackInactive = last.books?.inactive ?? [];
+    if (fallbackInactive.length) {
+      const bookNames = new Map(repository.listBooks().map((b) => [b.book_id, b.name]));
+      root.appendChild(foldCard(ctx, 'inactive', `这轮没被启用的书（${fallbackInactive.length}）`,
+        [el('ul', { class: 'ilb-warn-list' }, fallbackInactive.map((b) => {
+          const id = typeof b === 'string' ? b : b.book_id;
+          return el('li', { text: `${bookNames.get(id) ?? id}：${last.books?.reasons?.[id] ?? '未说明原因'}` });
+        }))]));
+    }
   }
 
   const calls = Array.isArray(last.aiCalls) ? last.aiCalls : [];
@@ -216,8 +216,9 @@ function renderHostCard(ctx, last) {
     desc = null;
   }
 
-  const nodes = [el('h5', { class: 'ilb-section-title', text: '酒馆联动' })];
-  nodes.push(el('p', { class: 'ilb-sub', text: summary?.line ?? '还没读到酒馆上下文（状态未知）' }));
+  const nodes = [];
+  const line = typeof summary === 'string' ? summary : summary?.line;
+  nodes.push(el('p', { class: 'ilb-sub', text: line || '还没读到酒馆上下文（状态未知）' }));
   if (desc && !desc.moduleLoaded) {
     nodes.push(hint(`读不到酒馆的世界书模块${desc.error ? `（${desc.error}）` : ''}：全局世界书与角色额外书暂时按手动控制，其余来源仍然可用。`));
   }
@@ -227,6 +228,8 @@ function renderHostCard(ctx, last) {
       class: 'ilb-sub',
       text: `读到的来源：${sources.map((s) => `${HOST_SOURCE_LABEL[s.kind] ?? s.kind}「${s.name}」`).join('、')}`,
     }));
+  } else if (host) {
+    nodes.push(hint('这一轮没有读到任何原生世界书来源（角色/聊天/Persona 都没有关联原生书）。'));
   }
   for (const kind of host?.unsupported ?? []) {
     nodes.push(hint(`${HOST_SOURCE_LABEL[kind] ?? kind}：当前宿主版本不支持自动识别（没有可靠的公开接口，ILB 不会去读页面 DOM 猜）。`));
@@ -234,9 +237,6 @@ function renderHostCard(ctx, last) {
   for (const w of host?.warnings ?? []) nodes.push(hint(String(w)));
 
   if (ids.length) {
-    const enabledIds = ids.filter((id) => details[id].enabled);
-    const disabledIds = ids.filter((id) => !details[id].enabled);
-    nodes.push(hint(`参与判定 ${ids.length} 本：启用 ${enabledIds.length}、停用 ${disabledIds.length}。`));
     const di = last.books?.doubleInject ?? null;
     const dupIds = Array.isArray(di?.duplicates)
       ? di.duplicates
@@ -250,7 +250,8 @@ function renderHostCard(ctx, last) {
   } else {
     nodes.push(hint('上一次运行没有留下每本书的启用原因（还没跑过，或者是老版本的数据）。'));
   }
-  return foldCard(ctx, 'host', '酒馆联动', nodes.slice(1));
+  if (nodes.length === 0) nodes.push(hint('没有可显示的酒馆联动信息。'));
+  return foldCard(ctx, 'host', '酒馆联动', nodes);
 }
 
 /** 参与判定的世界书：单独一张可折叠卡片，回答"这一轮到底哪些书进了判定、为什么" */
