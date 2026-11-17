@@ -47,6 +47,27 @@ function foldCard(ctx, key, title, nodes, extra = []) {
 }
 
 export function renderDiagnostics(ctx) {
+  let view = null;
+  try {
+    view = renderInner(ctx);
+  } catch (err) {
+    // 这一页出问题也不能给用户一片空白：把原因直接画出来（面板那边只会吞掉异常）。
+    return el('div', { class: 'ilb-view' }, [
+      el('div', { class: 'ilb-card' }, [
+        el('h5', { class: 'ilb-section-title', text: '诊断页出错了' }),
+        el('p', { class: 'ilb-error', text: String(err?.message ?? err) }),
+        hint('其它页还能用。把这一行报给开发者即可。'),
+        button('重画一次', () => ctx.render?.(), { ghost: true }),
+      ]),
+    ]);
+  }
+  if (!view || !(view.children?.length > 0) && !String(view.textContent ?? '').trim()) {
+    return el('div', { class: 'ilb-view' }, [hint('诊断暂时没有可显示的内容。发一条消息后再回来看看。')]);
+  }
+  return view;
+}
+
+function renderInner(ctx) {
   const { pipeline, repository } = ctx;
   const state = ctx.state ?? {};
   const exitSimulation = () => {

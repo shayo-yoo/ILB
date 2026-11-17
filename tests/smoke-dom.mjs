@@ -165,6 +165,7 @@ globalThis.fetch = async () => ({ ok: false, json: async () => ({}) });
 
 const { createRepository } = await import('../adapters/repository.js');
 const { createPipeline } = await import('../runtime/pipeline.js');
+const { openIlbBookImportDialog } = await import('../ui/importer.js');
 const { createRegistry } = await import('../runtime/registry.js');
 const { createPanel } = await import('../ui/panel.js');
 const { openOverlay } = await import('../ui/help.js');
@@ -240,8 +241,7 @@ step('诊断：模拟注入能画出结果，也能退出', () => {
   if (after.includes('模拟运行')) throw new Error('退出模拟后仍然停在模拟结果上');
 });
 
-step('诊断：只列规则，不再堆世界书清单', () => {
-  // 真的跑一轮，让诊断有规则级数据
+step('诊断：只列规则，不再堆世界书清单', () => {  // 真的跑一轮，让诊断有规则级数据
   pipeline.run(() => ({
     extensionSettings: {},
     characters: [{ avatar: 'a.png', name: 'A' }],
@@ -529,6 +529,42 @@ step('导入选择浮层能打开并渲染', async () => {
   const el = openImportDialog(ctx, { preselect: 'new' });
   if (!el) throw new Error('导入浮层没有返回元素');
   body.appendChild(el);
+});
+
+step('ILB JSON 导入浮层有可见的「选择文件…」按钮', () => {
+  const ctx = {
+    repository,
+    state: {},
+    toast: () => {},
+    render: () => {},
+    closeOverlay: () => {},
+    openOverlay: (opts) => {
+      const nodes = Array.isArray(opts) ? opts : (opts?.nodes ?? []);
+      const wrap = makeElement('div');
+      nodes.forEach((n) => n && wrap.appendChild(n));
+      body.appendChild(wrap);
+      return wrap;
+    },
+  };
+  // 函数是 async 的，但 openOverlay 在第一个 await 之前就调用了：同步拿得到内容
+  openIlbBookImportDialog(ctx);
+  const wrap = body.children[body.children.length - 1];
+  const labels = walk(wrap).map((n) => String(n.textContent ?? '')).join(' ');
+  if (!labels.includes('选择文件')) throw new Error('导入浮层里没有可点的「选择文件…」按钮');
+  if (!labels.includes('ILB 导出的 JSON')) throw new Error('导入浮层里没有说明文字');
+});
+
+step('诊断：全新存档（没跑过、没书）也不能是一片空白', () => {
+  const freshCtx = { extensionSettings: {} };
+  const freshRepo = createRepository({ getContext: () => freshCtx });
+  const freshPipeline = createPipeline({ repository: freshRepo, injector: { apply: () => true, clear() {} }, registry });
+  const freshPanel = createPanel({ repository: freshRepo, nativeWorlds, pipeline: freshPipeline, notify: () => {} });
+  // 直接指定标签再重画：setTab 会被未保存守卫拦住（冒烟里前面开过编辑器），与这一页无关
+  freshPanel.state.activeTab = 'diagnostics';
+  freshPanel.render();
+  const text = walk(freshPanel.element).map((n) => String(n.textContent ?? '')).join(' ');
+  if (!text.trim()) throw new Error(`诊断页在全新存档下完全空白（节点 ${walk(freshPanel.element).length} 个，tab=${freshPanel.state.activeTab}）`);
+  if (!text.includes('还没有跑过') && !text.includes('诊断')) throw new Error(`诊断页没有给出任何说明：${text.slice(0, 80)}`);
 });
 
 step('浮层有关闭按钮，点一下能关掉', () => {

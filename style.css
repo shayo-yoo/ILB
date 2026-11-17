@@ -702,6 +702,11 @@ body.ilb-overlay-open .ilb-fab {
   min-width: 0;
 }
 
+/* 文件选择框本身不显示：入口由旁边的「选择文件…」按钮负责（酒馆全局样式也会藏 input[type=file]）。 */
+.ilb-file-hidden {
+  display: none !important;
+}
+
 .ilb-section-title {
   margin: 8px 0 2px;
   font-size: 0.95em;

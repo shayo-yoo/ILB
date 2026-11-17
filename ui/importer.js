@@ -157,9 +157,13 @@ function askIlbConflict(ctx, fileName, error) {
 /** 从本地 JSON 文件导入 ILB 专有世界书，与原生书籍目录导入分开。 */
 export async function openIlbBookImportDialog(ctx) {
   const { repository } = ctx;
-  const input = el('input', { type: 'file', accept: '.json,application/json', multiple: true, class: 'ilb-input' });
+  // 酒馆的全局样式会把 input[type=file] 藏起来（display:none）：只挂 input 的话，
+  // 弹层里就只剩一行说明，用户看不到任何可点的东西（"点开是空白页"）。
+  // 所以真正的入口自己画一个按钮，input 只负责弹文件选择框。
+  const input = el('input', { type: 'file', accept: '.json,application/json', multiple: true, class: 'ilb-file-hidden' });
   const status = el('div', { class: 'ilb-file-list' }, [hint('选择一个或多个 ILB 专有世界书 JSON 文件。只接受 kind 为 ilb-book 的文件。')]);
   const runButton = button('导入所选文件', () => run(), { primary: true, disabled: true });
+  const pickButton = button('选择文件…', () => input.click(), { ghost: true });
   input.addEventListener('change', () => {
     const files = [...(input.files ?? [])];
     status.innerHTML = '';
@@ -205,7 +209,7 @@ export async function openIlbBookImportDialog(ctx) {
 
   ctx.openOverlay({
     title: '导入 ILB 专有世界书',
-    nodes: [hint('选择 ILB 导出的 JSON 文件。原生世界书请使用「导入原生世界书」入口。'), input, status],
+    nodes: [hint('选择 ILB 导出的 JSON 文件。原生世界书请使用「导入原生世界书」入口。'), pickButton, input, status],
     footer: [runButton, button('取消', () => ctx.closeOverlay(), { ghost: true })],
   });
 }
