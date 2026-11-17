@@ -240,6 +240,26 @@ step('诊断：模拟注入能画出结果，也能退出', () => {
   if (after.includes('模拟运行')) throw new Error('退出模拟后仍然停在模拟结果上');
 });
 
+step('诊断：只列规则，不再堆世界书清单', () => {
+  // 真的跑一轮，让诊断有规则级数据
+  pipeline.run(() => ({
+    extensionSettings: {},
+    characters: [{ avatar: 'a.png', name: 'A' }],
+    characterId: 0,
+    chatId: 'diag-chat',
+    name2: 'A',
+    chat: [{ is_user: true, mes: '王城的钟声' }],
+  }), 'test');
+  panel.setTab('diagnostics');
+  panel.state.diagOnlyInjected = false;
+  panel.render();
+  const text = walk(panel.element ?? hostEl).map((n) => String(n.textContent ?? '')).join(' ');
+  if (!text.includes('测试书')) throw new Error(`诊断里没有按书分组：${text.slice(0, 200)}`);
+  if (!text.includes('会触发') && !text.includes('没触发')) throw new Error(`诊断里没有列出具体规则：${text.slice(0, 200)}`);
+  if (text.includes('参与判定的世界书')) throw new Error('诊断里还在堆世界书清单');
+  if (text.includes('这轮没被启用的书')) throw new Error('诊断里还在堆未启用书清单');
+});
+
 step('打开规则编辑器', () => {
   panel.setTab('rules');
   const book = repository.getBook('book-t');
