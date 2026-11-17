@@ -149,13 +149,22 @@ export function evictSnapshots(snapshots) {
 
 export const AUTO_SNAPSHOT_MODES = ['normal', 'only', 'off'];
 
+/**
+ * 一份快照在"自动激活"里算什么状态。
+ *
+ * 只有用户在快照卡片上**明确选了**激活模式才算数：
+ *   - 自动备份 / 迁移备份（auto===true）永远不参与自动激活；
+ *   - 没有 activationMode 的老快照一律视为「不激活」。
+ * 这样"什么都没开"时不会凭空激活任何东西。
+ */
 export function snapshotActivationMode(snapshot) {
-  const mode = snapshot?.activationMode ?? (snapshot?.auto === true ? 'normal' : 'off');
+  if (!snapshot || snapshot.auto === true) return 'off';
+  const mode = snapshot.activationMode;
   return AUTO_SNAPSHOT_MODES.includes(mode) ? mode : 'off';
 }
 
 export function normalizeAutoSnapshot(raw = {}) {
-  const mode = AUTO_SNAPSHOT_MODES.includes(raw.mode) ? raw.mode : 'normal';
+  const mode = AUTO_SNAPSHOT_MODES.includes(raw.mode) ? raw.mode : 'off';
   const ids = Array.isArray(raw.snapshotIds) ? raw.snapshotIds.map(String).filter(Boolean) : [];
   return { enabled: raw.enabled === true, mode, snapshotIds: [...new Set(ids)] };
 }
@@ -183,39 +192,37 @@ export function selectAutoSnapshots(snapshots, config = {}, context = {}) {
   const cfg = normalizeAutoSnapshot(config);
   const selected = (Array.isArray(snapshots) ? snapshots : []).filter((s) => {
     const mode = snapshotActivationMode(s);
-    const selectedByLegacyConfig = Array.isArray(s.bindings) || s.activationMode != null
-      ? true
-      : (cfg.snapshotIds.length === 0 || cfg.snapshotIds.includes(String(s.id)));
-    return mode !== 'off' && selectedByLegacyConfig && autoSnapshotMatches(s, context);
+    if (mode === 'off') return false; // 没明确打开的快照一律不参与
+    // 兼容老配置：填了 snapshotIds 就只认这些 id
+    if (cfg.snapshotIds.length > 0 && !cfg.snapshotIds.includes(String(s.id))) return false;
+    return autoSnapshotMatches(s, context);
   });
   const only = selected.filter((s) => snapshotActivationMode(s) === 'only');
   return only.length ? only : selected;
 }
 
-/** 计算上下文切换时应写入的手动开关；不匹配时 matched=false，调用方不得改动。 */
+/**
+ * 命中快照后应该怎么影响这一轮：**只算临时强制开关，不写回手动状态**。
+ *
+ * 需求（v0.30 起）：快照不允许把世界书永久设成"已激活"，只在匹配到上下文时
+ * 一次性开 / 关；离开上下文或下次不匹配就等于什么都没发生（forced 为空）。
+ * 所以这里的 manualState 始终等于传进来的当前值，调用方不需要、也不应该落盘。
+ */
 export function snapshotActivationPlan(snapshots, config = {}, context = {}, currentManual = {}) {
   const matched = selectAutoSnapshots(snapshots, config, context);
-  if (matched.length === 0) return { matched: false, key: '', snapshots: [], manualState: { ...currentManual }, mode: 'none' };
+  if (matched.length === 0) return { matched: false, key: '', snapshots: [], manualState: { ...currentManual }, forced: {}, mode: 'none' };
   const key = `${String(context.chatId ?? '')}::${String(context.character?.avatar ?? '')}`;
   const only = matched.some((snapshot) => snapshotActivationMode(snapshot) === 'only');
-  const next = only ? Object.fromEntries(Object.keys(currentManual).map((id) => [id, false])) : { ...currentManual };
   const forced = {};
   for (const snapshot of matched) {
     for (const book of Array.isArray(snapshot.payload) ? snapshot.payload : []) {
       if (!book?.book_id) continue;
-      if (book.manual === true) { next[book.book_id] = true; forced[book.book_id] = 'on'; }
-      else if (only) forced[book.book_id] = 'off';
+      const id = String(book.book_id);
+      if (book.manual === true) forced[id] = 'on';          // 快照里开着的：这一轮强制开
+      else if (only) forced[id] = 'off';                     // 仅激活：快照里关着的强制关
     }
   }
-  // 快照本身是独立状态：正常激活也必须明确强制开启快照内书籍，不能依赖书当前策略。
-  if (!only) {
-    for (const snapshot of matched) {
-      for (const book of Array.isArray(snapshot.payload) ? snapshot.payload : []) {
-        if (book?.book_id && book.manual === true) forced[book.book_id] = 'on';
-      }
-    }
-  }
-  return { matched: true, key, snapshots: matched, manualState: next, forced, mode: only ? 'only' : 'normal' };
+  return { matched: true, key, snapshots: matched, manualState: { ...currentManual }, forced, mode: only ? 'only' : 'normal' };
 }
 
 export function listNamed(snapshots) {

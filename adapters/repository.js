@@ -526,13 +526,6 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     return safeClone(bucket().autoSnapshot, { enabled: false, mode: 'normal', snapshotIds: [] });
   }
 
-  function replaceManualState(next = {}) {
-    const b = bucket();
-    b.manualState = safeClone(next, {});
-    commit();
-    return safeClone(b.manualState, {});
-  }
-
   function saveAutoSnapshot(patch = {}) {
     const b = bucket();
     b.autoSnapshot = normalizeAutoSnapshot({ ...b.autoSnapshot, ...safeClone(patch, {}) });
@@ -875,7 +868,6 @@ export function createRepository({ getContext, namespace = 'independent_lorebook
     getSnapshot,
     getAutoSnapshot,
     saveAutoSnapshot,
-    replaceManualState,
     updateSnapshotBindings,
     saveSnapshot,
     deleteSnapshot,

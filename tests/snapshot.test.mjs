@@ -97,11 +97,46 @@ test('evictSnapshots：现在不设数量上限，只过滤无效记录并保留
 test('快照可绑定聊天与角色卡，并支持自动匹配模式', async () => {
   const { autoSnapshotMatches, selectAutoSnapshots } = await import('../core/snapshot.js');
   const snapshot = createSnapshot(books(), {}, {
-    name: '战斗', chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' }, auto: true,
+    name: '战斗', chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' },
   });
+  snapshot.activationMode = 'normal';
   assert.equal(autoSnapshotMatches(snapshot, { chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' } }), true);
   assert.equal(autoSnapshotMatches(snapshot, { chatId: 'chat-2', character: { avatar: 'hero.png' } }), false);
   assert.equal(selectAutoSnapshots([snapshot], { enabled: true, mode: 'normal', snapshotIds: [snapshot.id] }, { chatId: 'chat-1', character: { avatar: 'hero.png', name: 'Hero' } }).length, 1);
+});
+
+test('什么都没开时不会凭空激活：老快照与自动备份都不参与', async () => {
+  const { selectAutoSnapshots, snapshotActivationPlan, snapshotActivationMode } = await import('../core/snapshot.js');
+  const legacy = createSnapshot(books(), {}, { name: '老快照', chatId: 'c1' });
+  const backup = createSnapshot(books(), {}, { name: '', auto: true, chatId: 'c1' });
+  assert.equal(snapshotActivationMode(legacy), 'off');
+  assert.equal(snapshotActivationMode(backup), 'off');
+  assert.deepEqual(selectAutoSnapshots([legacy, backup], {}, { chatId: 'c1' }), []);
+  const plan = snapshotActivationPlan([legacy, backup], {}, { chatId: 'c1' }, { b1: true });
+  assert.equal(plan.matched, false);
+  assert.deepEqual(plan.forced, {});
+  assert.deepEqual(plan.manualState, { b1: true });
+});
+
+test('命中快照只算临时强制开关，不把手动状态改成"已激活"', async () => {
+  const { snapshotActivationPlan } = await import('../core/snapshot.js');
+  const snap = createSnapshot(books(), {}, { name: '战斗', chatId: 'c1' });
+  snap.activationMode = 'normal';
+  const plan = snapshotActivationPlan([snap], {}, { chatId: 'c1' }, { b1: false });
+  assert.equal(plan.matched, true);
+  assert.deepEqual(plan.manualState, { b1: false }, '手动状态必须原样返回，不能落盘成激活');
+  assert.deepEqual(plan.forced, { b1: 'on' });
+});
+
+test('多个仅激活快照同时命中：合并成一次临时允许集合', async () => {
+  const { snapshotActivationPlan } = await import('../core/snapshot.js');
+  const first = createSnapshot(books(), {}, { name: 'A', chatId: 'c1' });
+  first.activationMode = 'only';
+  const second = createSnapshot([{ ...books()[0], book_id: 'b2', name: '另一本' }], {}, { name: 'B', chatId: 'c1' });
+  second.activationMode = 'only';
+  const plan = snapshotActivationPlan([first, second], {}, { chatId: 'c1' }, { b1: true, b2: true });
+  assert.equal(plan.mode, 'only');
+  assert.deepEqual(plan.forced, { b1: 'on', b2: 'on' });
 });
 
 test('listNamed / listQuick：按名字认定，不只看 kind', () => {

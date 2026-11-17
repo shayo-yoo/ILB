@@ -45,6 +45,8 @@ export function renderSnapshots(ctx) {
     const snapshot = createSnapshot(books, repository.getManualState(), {
       name, chatId, character,
     });
+    // 新建的快照默认「不激活」：要不要自动激活必须由用户显式选择
+    snapshot.activationMode = 'off';
     repository.saveSnapshot(snapshot);
     ctx.toast(name ? `已保存常用快照「${name}」` : '已保存一份临时快照');
     ctx.render();
@@ -132,6 +134,11 @@ export function renderSnapshots(ctx) {
       el('option', { value: 'off', text: '不激活' }),
     ]);
     activationSelect.value = activationMode;
+    // 自动备份（恢复前/迁移前）永远不参与自动激活，避免"什么都没开却凭空激活"
+    if (snapshot.auto) {
+      activationSelect.disabled = true;
+      activationSelect.title = '自动备份不会参与自动激活';
+    }
     activationSelect.addEventListener('change', () => {
       snapshot.activationMode = activationSelect.value;
       repository.saveSnapshot(snapshot);

@@ -15,7 +15,6 @@ import { createRepository } from './adapters/repository.js';
 import { createNativeWorlds } from './adapters/native-worlds.js';
 import { createSillyTavernContext } from './adapters/sillytavern-context.js';
 import { createHostWatcher, bindingOpsFrom } from './adapters/sillytavern-events.js';
-import { snapshotActivationPlan } from './core/snapshot.js';
 import { createInjector } from './adapters/inject.js';
 import { createPipeline } from './runtime/pipeline.js';
 import { createApi } from './runtime/api.js';
@@ -378,25 +377,8 @@ async function boot() {
   // 事件订阅：任何一个处理器挂掉都不能影响扩展其他部分（ILB-2.5）
   // 角色 / 聊天 / 群聊 / Persona / 世界书关联的变更统一由 adapters/sillytavern-events.js 订阅，
   // 别处不再各自 source.on（ILB-4.9：订阅集中管理，UI 销毁时清理）。
-  let snapshotRestore = null;
-  function syncSnapshotsForContext() {
-    try {
-      const host = hostContext ? hostContext.read() : null;
-      const chatId = resolveChatId(getContext());
-      const character = { avatar: String(host?.character?.avatar ?? ''), name: String(host?.character?.name ?? '') };
-      const plan = snapshotActivationPlan(repository.listSnapshots(), repository.getAutoSnapshot?.() ?? {}, { chatId, character }, repository.getManualState());
-      if (plan.matched) {
-        if (!snapshotRestore) snapshotRestore = { key: plan.key, manual: repository.getManualState() };
-        repository.replaceManualState(plan.manualState);
-      } else if (snapshotRestore) {
-        repository.replaceManualState(snapshotRestore.manual);
-        snapshotRestore = null;
-      }
-    } catch (err) {
-      console.warn('[ILB] 快照上下文同步失败', err);
-    }
-  }
-
+  // 快照只在"真正要注入的那一刻"按当前上下文算临时强制开关（见 runtime/pipeline.js）。
+  // 这里不再写任何手动状态：进/退出聊天不该把书永久设成开或关，也不该顺手存快照。
   let watcher = null;
   try {
     const eventTypes = host.getEventTypes() ?? {};
@@ -413,7 +395,7 @@ async function boot() {
         },
         onChange: ({ reasons, groups, events }) => {
           try {
-            syncSnapshotsForContext();
+
             // 先让关联跟上角色卡的变化，再重画界面（顺序反了会闪一下旧关联）
             applyBindingOps(bindingOpsFrom(events));
             // 上一轮诊断是按旧角色算的：先清掉，免得界面显示过期结论
